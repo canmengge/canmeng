@@ -1,0 +1,997 @@
+import { defineStore } from "pinia";
+import { computed, reactive, ref } from "vue";
+import { Events } from "@wailsio/runtime";
+import { ArchiveService, EditorService } from "../../bindings/pvfine/services";
+import type { EditorAnnotation, FileMeta, TreeTag, ImageReference } from "../../bindings/pvfine/services/models";
+import {
+  RewritePlaceholderToSafeTable as callRewritePlaceholderToSafeTable,
+  type SafeTableRewriteResult,
+} from "../services/stringGuardApi";
+import { useArchiveStore } from "./archive";
+import { useExplorerStore } from "./explorer";
+import { useScriptStore } from "./script";
+
+export type EditorPaneId = string;
+export type SplitOrientation = "columns" | "rows";
+
+export interface EditorTab {
+  index: number;
+  path: string;
+  title: string;
+  dataType: number;
+  size: number;
+  tags: TreeTag[];
+  editable: boolean;
+  /** 大文件（超过 8MB）：以只读降级打开，需要编辑时手动解锁。 */
+  largeFile: boolean;
+  /** 大文件只读锁：true 时编辑器只读且不参与保存，解锁后才能编辑。 */
+  readOnlyLocked: boolean;
+  original: string; // 打开时的文本(脏判定基准)
+  text: string; // 当前编辑器内容
+  modified: boolean; // 后端 overlay 状态
+  annotations: EditorAnnotation[];
+  icon: ImageReference | null;
+  fieldImage: ImageReference | null;
+}
+
+export interface EditorPaneState {
+  id: EditorPaneId;
+  tabIndexes: number[];
+  activeKey: number | null;
+}
+
+export interface DraggedEditorTab {
+  paneId: EditorPaneId;
+  index: number;
+}
+
+/** 待确认的关闭动作:目标标签仍含未保存的本地草稿。 */
+export type PendingTabClose =
+  | { kind: "tab"; index: number; paneId: EditorPaneId }
+  | { kind: "others"; keepIndex: number }
+  | { kind: "all" };
+
+export interface EditorLayoutPane {
+  kind: "pane";
+  paneId: EditorPaneId;
+}
+
+export interface EditorLayoutSplit {
+  kind: "split";
+  id: string;
+  orientation: SplitOrientation;
+  ratio: number;
+  first: EditorLayoutNode;
+  second: EditorLayoutNode;
+}
+
+export type EditorLayoutNode = EditorLayoutPane | EditorLayoutSplit;
+
+interface LayoutReplacement {
+  node: EditorLayoutNode;
+  found: boolean;
+  destinationPaneId?: EditorPaneId;
+}
+
+/** 编辑器状态:全局文件内容 + 可递归分屏的多标签窗格 */
+export const useEditorStore = defineStore("editor", () => {
+  const initialPaneId = "pane-1";
+  const tabs = ref<EditorTab[]>([]);
+  const paneStates = reactive<Record<EditorPaneId, EditorPaneState>>({
+    [initialPaneId]: {
+      id: initialPaneId,
+      tabIndexes: [],
+      activeKey: null,
+    },
+  });
+  const layout = ref<EditorLayoutNode>({ kind: "pane", paneId: initialPaneId });
+  const activePaneId = ref<EditorPaneId>(initialPaneId);
+  const draggingTab = ref<DraggedEditorTab | null>(null);
+  const openingPaneId = ref<EditorPaneId | null>(null);
+  const saving = ref(false);
+  const script = useScriptStore();
+  let paneSequence = 1;
+  let splitSequence = 0;
+
+  const panes = computed(() => {
+    const ids: EditorPaneId[] = [];
+    collectPaneIds(layout.value, ids);
+    return ids.map((id) => paneStates[id]).filter((pane): pane is EditorPaneState => !!pane);
+  });
+  const isSplit = computed(() => panes.value.length > 1);
+  const activePane = computed<EditorPaneState>(
+    () => paneStates[activePaneId.value] ?? panes.value[0] ?? paneStates[initialPaneId]
+  );
+  const activeKey = computed<number | null>({
+    get: () => activePane.value.activeKey,
+    set: (value) => {
+      activePane.value.activeKey = value;
+    },
+  });
+  const activeTab = computed(
+    () => tabs.value.find((tab) => tab.index === activePane.value.activeKey) ?? null
+  );
+  const dirtyCount = computed(() => tabs.value.filter((tab) => tab.text !== tab.original).length);
+  const pendingClose = ref<PendingTabClose | null>(null);
+  /** 待定位的搜索命中:文件打开后由编辑器滚动到命中处并高亮。 */
+  const pendingReveal = ref<{ index: number; needles: string[]; seq: number; line?: number } | null>(null);
+  let revealSequence = 0;
+
+  function collectPaneIds(node: EditorLayoutNode, result: EditorPaneId[]): void {
+    if (node.kind === "pane") {
+      result.push(node.paneId);
+      return;
+    }
+    collectPaneIds(node.first, result);
+    collectPaneIds(node.second, result);
+  }
+
+  function resolvePaneId(requested?: EditorPaneId): EditorPaneId {
+    if (requested && paneStates[requested] && panes.value.some((pane) => pane.id === requested)) {
+      return requested;
+    }
+    if (paneStates[activePaneId.value] && panes.value.some((pane) => pane.id === activePaneId.value)) {
+      return activePaneId.value;
+    }
+    return initialPaneId;
+  }
+
+  function activatePane(paneId: EditorPaneId): void {
+    if (!paneStates[paneId] || !panes.value.some((pane) => pane.id === paneId)) return;
+    activePaneId.value = paneId;
+  }
+
+  function beginTabDrag(paneId: EditorPaneId, index: number): void {
+    draggingTab.value = { paneId, index };
+  }
+
+  function endTabDrag(): void {
+    draggingTab.value = null;
+  }
+
+  function activateTab(paneId: EditorPaneId, index: number): void {
+    const pane = paneStates[paneId];
+    if (!pane || !pane.tabIndexes.includes(index)) return;
+    pane.activeKey = index;
+    activatePane(paneId);
+  }
+
+  function addTabToPane(paneId: EditorPaneId, index: number): void {
+    const pane = paneStates[paneId];
+    if (!pane) return;
+    if (!pane.tabIndexes.includes(index)) pane.tabIndexes.push(index);
+    pane.activeKey = index;
+    activatePane(paneId);
+  }
+
+  /** 打开文件(已在当前窗格则激活,已在其他窗格则复用内容并建立视图引用) */
+  async function openFile(index: number, requestedPaneId: EditorPaneId = activePaneId.value) {
+    const targetPaneId = resolvePaneId(requestedPaneId);
+    const targetPane = paneStates[targetPaneId];
+    if (targetPane.tabIndexes.includes(index)) {
+      script.showArchiveEditor();
+      activateTab(targetPaneId, index);
+      return;
+    }
+
+    const existing = tabs.value.find((tab) => tab.index === index);
+    if (existing) {
+      script.showArchiveEditor();
+      addTabToPane(targetPaneId, index);
+      return;
+    }
+
+    openingPaneId.value = targetPaneId;
+    try {
+      const meta: FileMeta | null = await EditorService.GetFile(index);
+      if (!meta) return;
+      // 标签上限,防误开大量文件；同一文件在多个窗格中的引用不重复计数。
+      if (tabs.value.length >= 20) {
+        throw new Error("打开的标签过多,请先关闭一些(上限 20)");
+      }
+      script.showArchiveEditor();
+      tabs.value.push({
+        index,
+        path: meta.path,
+        title: meta.path.split("/").pop() ?? meta.path,
+        dataType: meta.dataType,
+        size: meta.size,
+        tags: cleanTreeTags(meta.tags),
+        editable: meta.editable,
+        // 大文件先只读打开（编辑器侧同时关闭折行/空白高亮），确认要改再解锁。
+        largeFile: meta.largeFile === true,
+        readOnlyLocked: meta.largeFile === true && meta.editable,
+        original: meta.text,
+        text: meta.text,
+        modified: meta.modified,
+        annotations: (meta.annotations ?? []).filter(
+          (annotation): annotation is EditorAnnotation => !!annotation
+        ),
+        icon: meta.icon ?? null,
+        fieldImage: meta.fieldImage ?? null,
+      });
+      addTabToPane(targetPaneId, index);
+    } finally {
+      if (openingPaneId.value === targetPaneId) openingPaneId.value = null;
+    }
+  }
+
+  /**
+   * 打开文件并请求定位到命中内容：needles 在编辑器里依次尝试，
+   * 全部落空时退化为"只打开文件"（例如命中的是字符串池条目而非脚本文本）。
+   */
+  async function revealInFile(index: number, needles: string[]): Promise<void> {
+    const candidates = needles.map((item) => item.trim()).filter((item) => item.length > 0);
+    await openFile(index);
+    revealSequence += 1;
+    pendingReveal.value = { index, needles: candidates, seq: revealSequence };
+  }
+
+  /** 打开文件并按行号定位（AI 引用跳转用；行号非法时退化为只打开文件）。 */
+  async function revealFileLine(index: number, line: number): Promise<void> {
+    await openFile(index);
+    revealSequence += 1;
+    pendingReveal.value = {
+      index,
+      needles: [],
+      seq: revealSequence,
+      line: Number.isFinite(line) && line > 0 ? Math.trunc(line) : undefined,
+    };
+  }
+
+  /** 按归档路径打开文件（可选定位到行号）。路径不存在时返回 false。 */
+  async function openFileByPath(path: string, line?: number): Promise<boolean> {
+    const nodes = (await ArchiveService.ResolveFiles([path])) ?? [];
+    const node = nodes.find((item) => item && !item.isDir);
+    if (!node) return false;
+    if (line && line > 0) {
+      await revealFileLine(node.fileIndex, line);
+    } else {
+      await openFile(node.fileIndex);
+    }
+    return true;
+  }
+
+  function clearReveal(): void {
+    pendingReveal.value = null;
+  }
+
+  function closeTab(index: number, requestedPaneId: EditorPaneId = activePaneId.value): void {
+    const paneId = resolvePaneId(requestedPaneId);
+    const pane = paneStates[paneId];
+    if (!pane) return;
+    const tab = tabs.value.find((item) => item.index === index);
+    const tabIndex = pane.tabIndexes.indexOf(index);
+    if (tabIndex < 0) return;
+
+    pane.tabIndexes.splice(tabIndex, 1);
+    if (pane.activeKey === index) {
+      pane.activeKey = pane.tabIndexes[Math.min(tabIndex, pane.tabIndexes.length - 1)] ?? null;
+    }
+
+    const stillUsed = Object.values(paneStates).some((item) => item.tabIndexes.includes(index));
+    if (!stillUsed) {
+      const globalTabIndex = tabs.value.findIndex((tab) => tab.index === index);
+      if (globalTabIndex >= 0) tabs.value.splice(globalTabIndex, 1);
+      clearExplorerSelection(tab?.path);
+    }
+
+    if (pane.tabIndexes.length === 0 && isSplit.value) {
+      closeSplit(paneId);
+    }
+  }
+
+  /** 关闭所有标签,并清理分屏中对这些标签的引用。 */
+  function closeAllTabs(): void {
+    closeTabsExcept(null);
+  }
+
+  /** 关闭除指定标签外的所有标签,保留该标签在已有窗格中的引用。 */
+  function closeOtherTabs(keepIndex: number): void {
+    closeTabsExcept(keepIndex);
+  }
+
+  function closeTabsExcept(keepIndex: number | null): void {
+    const removedIndexes = new Set(
+      tabs.value
+        .map((tab) => tab.index)
+        .filter((index) => keepIndex === null || index !== keepIndex)
+    );
+    if (removedIndexes.size === 0) return;
+    const removedPaths = tabs.value
+      .filter((tab) => removedIndexes.has(tab.index))
+      .map((tab) => tab.path);
+
+    for (const pane of Object.values(paneStates)) {
+      const oldActive = pane.activeKey;
+      pane.tabIndexes = pane.tabIndexes.filter((index) => !removedIndexes.has(index));
+      if (oldActive !== null && !removedIndexes.has(oldActive)) {
+        pane.activeKey = oldActive;
+      } else {
+        pane.activeKey = pane.tabIndexes[pane.tabIndexes.length - 1] ?? null;
+      }
+    }
+
+    tabs.value = tabs.value.filter((tab) => !removedIndexes.has(tab.index));
+    clearExplorerSelection(removedPaths);
+
+    while (isSplit.value) {
+      const emptyPane = panes.value.find((pane) => pane.tabIndexes.length === 0);
+      if (!emptyPane) break;
+      closeSplit(emptyPane.id);
+    }
+  }
+
+  /** 把标签引用移动到另一个窗格,源窗格变空时默认自动收起。 */
+  function moveTab(
+    index: number,
+    requestedSourcePaneId: EditorPaneId,
+    requestedTargetPaneId: EditorPaneId,
+    closeEmptySource = true
+  ): void {
+    const sourcePaneId = resolvePaneId(requestedSourcePaneId);
+    const targetPaneId = resolvePaneId(requestedTargetPaneId);
+    if (sourcePaneId === targetPaneId) {
+      activateTab(targetPaneId, index);
+      return;
+    }
+
+    const source = paneStates[sourcePaneId];
+    const target = paneStates[targetPaneId];
+    if (!source || !target) return;
+    const sourceIndex = source.tabIndexes.indexOf(index);
+    if (sourceIndex < 0) return;
+
+    source.tabIndexes.splice(sourceIndex, 1);
+    if (source.activeKey === index) {
+      source.activeKey = source.tabIndexes[Math.min(sourceIndex, source.tabIndexes.length - 1)] ?? null;
+    }
+    if (!target.tabIndexes.includes(index)) target.tabIndexes.push(index);
+    target.activeKey = index;
+    activePaneId.value = targetPaneId;
+
+    if (closeEmptySource && source.tabIndexes.length === 0 && isSplit.value) {
+      closeSplit(sourcePaneId);
+      if (paneStates[targetPaneId] && panes.value.some((pane) => pane.id === targetPaneId)) {
+        activePaneId.value = targetPaneId;
+      }
+    }
+  }
+
+  function nextPaneId(): EditorPaneId {
+    paneSequence += 1;
+    return `pane-${paneSequence}`;
+  }
+
+  function nextSplitId(): string {
+    splitSequence += 1;
+    return `split-${splitSequence}`;
+  }
+
+  function replacePane(
+    node: EditorLayoutNode,
+    targetPaneId: EditorPaneId,
+    replacement: EditorLayoutNode
+  ): LayoutReplacement {
+    if (node.kind === "pane") {
+      return node.paneId === targetPaneId
+        ? { node: replacement, found: true }
+        : { node, found: false };
+    }
+
+    const first = replacePane(node.first, targetPaneId, replacement);
+    if (first.found) return { node: { ...node, first: first.node }, found: true };
+    const second = replacePane(node.second, targetPaneId, replacement);
+    if (second.found) return { node: { ...node, second: second.node }, found: true };
+    return { node, found: false };
+  }
+
+  function createSplit(
+    targetPaneId: EditorPaneId,
+    orientation: SplitOrientation,
+    insertBefore: boolean,
+    cloneActiveTab: boolean
+  ): EditorPaneId | null {
+    const targetPane = paneStates[targetPaneId];
+    if (!targetPane) return null;
+
+    const newPaneId = nextPaneId();
+    const targetNode: EditorLayoutPane = { kind: "pane", paneId: targetPaneId };
+    const newNode: EditorLayoutPane = { kind: "pane", paneId: newPaneId };
+    const replacement: EditorLayoutSplit = {
+      kind: "split",
+      id: nextSplitId(),
+      orientation,
+      ratio: 0.5,
+      first: insertBefore ? newNode : targetNode,
+      second: insertBefore ? targetNode : newNode,
+    };
+    const result = replacePane(layout.value, targetPaneId, replacement);
+    if (!result.found) return null;
+
+    const clonedTab = cloneActiveTab ? targetPane.activeKey : null;
+    paneStates[newPaneId] = {
+      id: newPaneId,
+      tabIndexes: clonedTab === null ? [] : [clonedTab],
+      activeKey: clonedTab,
+    };
+    layout.value = result.node;
+    return newPaneId;
+  }
+
+  function split(orientation: SplitOrientation, requestedPaneId: EditorPaneId = activePaneId.value): void {
+    const targetPaneId = resolvePaneId(requestedPaneId);
+    const newPaneId = createSplit(targetPaneId, orientation, false, true);
+    if (!newPaneId) return;
+    activePaneId.value = newPaneId;
+  }
+
+  function splitAndMoveTab(
+    index: number,
+    requestedSourcePaneId: EditorPaneId,
+    requestedTargetPaneId: EditorPaneId,
+    orientation: SplitOrientation,
+    insertBefore: boolean
+  ): void {
+    const sourcePaneId = resolvePaneId(requestedSourcePaneId);
+    const targetPaneId = resolvePaneId(requestedTargetPaneId);
+    const source = paneStates[sourcePaneId];
+    if (!source || !source.tabIndexes.includes(index)) return;
+
+    const newPaneId = createSplit(targetPaneId, orientation, insertBefore, false);
+    if (!newPaneId) return;
+    moveTab(index, sourcePaneId, newPaneId, false);
+    activePaneId.value = newPaneId;
+  }
+
+  function removePane(node: EditorLayoutNode, targetPaneId: EditorPaneId): LayoutReplacement {
+    if (node.kind === "pane") return { node, found: false };
+    if (node.first.kind === "pane" && node.first.paneId === targetPaneId) {
+      return {
+        node: node.second,
+        found: true,
+        destinationPaneId: firstPaneId(node.second),
+      };
+    }
+    if (node.second.kind === "pane" && node.second.paneId === targetPaneId) {
+      return {
+        node: node.first,
+        found: true,
+        destinationPaneId: firstPaneId(node.first),
+      };
+    }
+
+    const first = removePane(node.first, targetPaneId);
+    if (first.found) {
+      return {
+        node: { ...node, first: first.node },
+        found: true,
+        destinationPaneId: first.destinationPaneId,
+      };
+    }
+    const second = removePane(node.second, targetPaneId);
+    if (second.found) {
+      return {
+        node: { ...node, second: second.node },
+        found: true,
+        destinationPaneId: second.destinationPaneId,
+      };
+    }
+    return { node, found: false };
+  }
+
+  function firstPaneId(node: EditorLayoutNode): EditorPaneId {
+    return node.kind === "pane" ? node.paneId : firstPaneId(node.first);
+  }
+
+  function mergePaneTabs(fromPaneId: EditorPaneId, toPaneId: EditorPaneId): void {
+    const from = paneStates[fromPaneId];
+    const to = paneStates[toPaneId];
+    if (!from || !to) return;
+    const fromActive = from.activeKey;
+    for (const index of from.tabIndexes) {
+      if (!to.tabIndexes.includes(index)) to.tabIndexes.push(index);
+    }
+    if (fromActive !== null && to.tabIndexes.includes(fromActive)) to.activeKey = fromActive;
+  }
+
+  /** 关闭指定窗格,将其标签并入剩余兄弟树的最近兄弟窗格。 */
+  function closeSplit(requestedPaneId: EditorPaneId = activePaneId.value): void {
+    const currentPaneId = resolvePaneId(requestedPaneId);
+    const currentPane = paneStates[currentPaneId];
+    const result = removePane(layout.value, currentPaneId);
+    if (!currentPane || !result.found) return;
+
+    const destinationPaneId = result.destinationPaneId ?? firstPaneId(result.node);
+    mergePaneTabs(currentPaneId, destinationPaneId);
+    layout.value = result.node;
+    delete paneStates[currentPaneId];
+    if (openingPaneId.value === currentPaneId) openingPaneId.value = null;
+    activePaneId.value = destinationPaneId;
+  }
+
+  function findSplit(node: EditorLayoutNode, splitId: string): EditorLayoutSplit | null {
+    if (node.kind === "pane") return null;
+    if (node.id === splitId) return node;
+    return findSplit(node.first, splitId) ?? findSplit(node.second, splitId);
+  }
+
+  function setSplitRatio(splitId: string, value: number): void {
+    const splitNode = findSplit(layout.value, splitId);
+    if (!splitNode || !Number.isFinite(value)) return;
+    splitNode.ratio = Math.min(0.8, Math.max(0.2, value));
+  }
+
+  /** 编辑器内容变化:只更新本地文本,写入 overlay 由保存动作显式触发。 */
+  function updateContent(index: number, text: string) {
+    const tab = tabs.value.find((item) => item.index === index);
+    if (!tab || !tab.editable || tab.readOnlyLocked) return;
+    tab.text = text;
+  }
+
+  /** 解除大文件的只读锁:由编辑器上的「允许编辑」按钮触发(已经过二次确认)。 */
+  function unlockLargeEditing(index: number): void {
+    const tab = tabs.value.find((item) => item.index === index);
+    if (!tab || !tab.readOnlyLocked) return;
+    tab.readOnlyLocked = false;
+  }
+
+  function isDirty(tab: EditorTab): boolean {
+    return tab.editable && tab.text !== tab.original;
+  }
+
+  /** 把单个标签的本地文本写入后端 overlay,成功后重置脏基线。 */
+  async function saveTab(index: number): Promise<boolean> {
+    const tab = tabs.value.find((item) => item.index === index);
+    if (!tab || !isDirty(tab)) return false;
+    const text = tab.text;
+    await EditorService.SetText(tab.index, text);
+    const annotations = (await EditorService.GetAnnotations(tab.index)) ?? [];
+    const current = tabs.value.find((item) => item.index === tab.index);
+    if (!current) return true;
+    // 等待期间用户继续输入时保留其草稿,下一次保存再写入。
+    if (current.text === text) {
+      current.original = text;
+      current.annotations = annotations.filter(
+        (annotation): annotation is EditorAnnotation => !!annotation
+      );
+    }
+    await useExplorerStore().refreshTreeTags();
+    return true;
+  }
+
+  /** 保存指定窗格的活动标签(默认当前窗格)。无修改时为空操作。 */
+  async function saveActiveTab(requestedPaneId?: EditorPaneId): Promise<boolean> {
+    const paneId = resolvePaneId(requestedPaneId);
+    const index = paneStates[paneId]?.activeKey ?? null;
+    if (index === null || saving.value) return false;
+    saving.value = true;
+    try {
+      const saved = await saveTab(index);
+      if (saved) await useArchiveStore().refreshInfo();
+      return saved;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  /** 把所有本地有修改的标签写入 overlay(PVF 写盘前调用)。 */
+  async function saveAllDirty(): Promise<number> {
+    const indexes = tabs.value.filter((tab) => isDirty(tab)).map((tab) => tab.index);
+    let saved = 0;
+    for (const index of indexes) {
+      if (await saveTab(index)) saved += 1;
+    }
+    if (saved > 0) await useArchiveStore().refreshInfo();
+    return saved;
+  }
+
+  /**
+   * 改写某个 `<表号::键名>` 占位符背后的显示文本。
+   * 只改字符串表(.str)的对应条目,脚本里的占位符保持不变。
+   */
+  async function setPlaceholderText(
+    index: number,
+    tableIndex: number,
+    key: string,
+    text: string
+  ): Promise<void> {
+    await EditorService.SetPlaceholderText(index, tableIndex, key, text);
+    const annotations = (await EditorService.GetAnnotations(index)) ?? [];
+    const current = tabs.value.find((item) => item.index === index);
+    if (current) {
+      current.annotations = annotations.filter(
+        (annotation): annotation is EditorAnnotation => !!annotation
+      );
+      current.modified = true;
+    }
+    await useExplorerStore().refreshTreeTags();
+    await useArchiveStore().refreshInfo();
+  }
+
+  /**
+   * 把落在客户端汉化禁动表里的显示文本改写到安全表：
+   * ① 写入安全表；② 把脚本里的 `<禁动表号::键名>` 改成 `<安全表号::键名>`。
+   *
+   * 脚本 token 数不变（只换字符串内容），因此不会破坏 token 结构；
+   * 与 `setPlaceholderText` 不同的是**脚本文本真的变了**，所以这里要替换标签内容。
+   */
+  async function rewritePlaceholderToSafeTable(
+    index: number,
+    sourceTableIndex: number,
+    key: string,
+    text: string,
+    targetTableIndex: number
+  ): Promise<SafeTableRewriteResult> {
+    const result = await callRewritePlaceholderToSafeTable(
+      index,
+      sourceTableIndex,
+      key,
+      text,
+      targetTableIndex
+    );
+    const current = tabs.value.find((item) => item.index === index);
+    if (current) {
+      if (result?.scriptText) {
+        // 保留 original（磁盘基线），这样标签仍呈现"有未保存改动"。
+        current.text = result.scriptText;
+      }
+      current.annotations = ((await EditorService.GetAnnotations(index)) ?? []).filter(
+        (annotation): annotation is EditorAnnotation => !!annotation
+      );
+      current.modified = true;
+    }
+    await useExplorerStore().refreshTreeTags();
+    await useArchiveStore().refreshInfo();
+    return result;
+  }
+
+  /** 保存到源文件 */
+  async function save() {
+    const archive = useArchiveStore();
+    saving.value = true;
+    try {
+      await saveAllDirty();
+      const info = await EditorService.Save();
+      archive.info = info;
+      // 保存成功后,文本与基准重置(overlay 已清空)
+      for (const tab of tabs.value) {
+        tab.original = tab.text;
+        tab.modified = false;
+      }
+      return info;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  /** 另存为新 PVF,返回保存路径(取消返回 null) */
+  async function saveAs() {
+    const archive = useArchiveStore();
+    saving.value = true;
+    try {
+      await saveAllDirty();
+      const path = await EditorService.SaveAsDialog();
+      if (path) {
+        for (const tab of tabs.value) {
+          tab.original = tab.text;
+          tab.modified = false;
+        }
+        await archive.refreshInfo();
+      }
+      return path || null;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  function clearExplorerSelection(paths: string | string[] | undefined): void {
+    if (!paths) return;
+    const explorer = useExplorerStore();
+    const selection = explorer.selectedKey;
+    if (!selection) return;
+    const closedPaths = new Set(Array.isArray(paths) ? paths : [paths]);
+    if (closedPaths.has(selection)) explorer.selectedKey = null;
+  }
+
+  /** 关闭标签:存在未保存本地编辑时先请求确认。 */
+  function requestCloseTab(index: number, requestedPaneId: EditorPaneId = activePaneId.value): void {
+    if (pendingClose.value) return;
+    const tab = tabs.value.find((item) => item.index === index);
+    if (!tab) return;
+    if (isDirty(tab)) {
+      pendingClose.value = { kind: "tab", index, paneId: resolvePaneId(requestedPaneId) };
+      return;
+    }
+    closeTab(index, requestedPaneId);
+  }
+
+  /** 关闭其它标签:有待确认的脏标签时先请求确认。 */
+  function requestCloseOthers(keepIndex: number): void {
+    if (pendingClose.value) return;
+    const hasDirty = tabs.value.some((tab) => tab.index !== keepIndex && isDirty(tab));
+    if (hasDirty) {
+      pendingClose.value = { kind: "others", keepIndex };
+      return;
+    }
+    closeOtherTabs(keepIndex);
+  }
+
+  /** 关闭所有标签:有待确认的脏标签时先请求确认。 */
+  function requestCloseAll(): void {
+    if (pendingClose.value) return;
+    if (tabs.value.some((tab) => isDirty(tab))) {
+      pendingClose.value = { kind: "all" };
+      return;
+    }
+    closeAllTabs();
+  }
+
+  /** 确认丢弃未保存编辑并执行挂起的关闭动作。 */
+  function confirmPendingClose(): void {
+    const action = pendingClose.value;
+    if (!action) return;
+    pendingClose.value = null;
+    if (action.kind === "tab") closeTab(action.index, action.paneId);
+    else if (action.kind === "others") closeOtherTabs(action.keepIndex);
+    else closeAllTabs();
+  }
+
+  function cancelPendingClose(): void {
+    pendingClose.value = null;
+  }
+
+  async function refreshAnnotations() {
+    await Promise.all(
+      tabs.value.map(async (tab) => {
+        const text = tab.text;
+        const annotations = (await EditorService.GetAnnotations(tab.index)) ?? [];
+        const current = tabs.value.find((item) => item.index === tab.index);
+        if (!current || current.text !== text) return;
+        current.annotations = annotations.filter(
+          (annotation): annotation is EditorAnnotation => !!annotation
+        );
+      })
+    );
+  }
+
+  /** 重新读取当前 renderer 生成的文本,但保留已修改标签的脏基线。 */
+  async function refreshRenderedText() {
+    await Promise.all(
+      tabs.value.map(async (tab) => {
+        const meta = await EditorService.GetFile(tab.index);
+        const current = tabs.value.find((item) => item.index === tab.index);
+        if (!current || !meta) return;
+        current.path = meta.path;
+        current.title = meta.path.split("/").pop() ?? meta.path;
+        current.dataType = meta.dataType;
+        current.size = meta.size;
+        current.editable = meta.editable;
+        current.tags = cleanTreeTags(meta.tags);
+        current.icon = meta.icon ?? null;
+        current.fieldImage = meta.fieldImage ?? null;
+        current.modified = meta.modified;
+        // 本地有未保存编辑时保留编辑器内容,避免重载规则覆盖用户草稿。
+        if (!isDirty(current)) {
+          current.text = meta.text;
+          if (!meta.modified) current.original = meta.text;
+        }
+        current.annotations = (meta.annotations ?? []).filter(
+          (annotation): annotation is EditorAnnotation => !!annotation
+        );
+      })
+    );
+  }
+
+  /** 批处理写入 overlay 后刷新已经打开的标签,但保留原始文本基准。 */
+  async function refreshBatchFiles(indexes: number[]) {
+    const uniqueIndexes = [...new Set(indexes)];
+    await Promise.all(
+      uniqueIndexes.map(async (index) => {
+        const current = tabs.value.find((tab) => tab.index === index);
+        if (!current) return;
+        const meta = await EditorService.GetFile(index);
+        if (!meta) return;
+        current.path = meta.path;
+        current.modified = meta.modified;
+        current.tags = cleanTreeTags(meta.tags);
+        current.annotations = (meta.annotations ?? []).filter(
+          (annotation): annotation is EditorAnnotation => !!annotation
+        );
+        current.icon = meta.icon ?? null;
+        current.fieldImage = meta.fieldImage ?? null;
+        // 本地有未保存编辑时保留编辑器内容,让保存动作以用户文本为准。
+        if (!isDirty(current)) current.text = meta.text;
+      })
+    );
+  }
+
+  /** 文件表变化后按路径重新绑定标签，并刷新被自动修改的 lst 标签。 */
+  async function refreshAfterArchiveChange(
+    refreshPaths: string[] = [],
+    resetOriginal = false
+  ): Promise<void> {
+    // 结构变更后旧索引已失效；标签中的本地文本保留,后续保存会按新索引写入。
+    if (tabs.value.length === 0) return;
+
+    const currentTabs = [...tabs.value];
+    const nodes = (await ArchiveService.ResolveFiles(currentTabs.map((tab) => tab.path))) ?? [];
+    const indexByPath = new Map(
+      nodes
+        .filter((node): node is NonNullable<typeof node> => !!node && !node.isDir)
+        .map((node) => [node.path, node])
+    );
+    const nextIndexByOld = new Map<number, number>();
+    const remainingTabs: EditorTab[] = [];
+    const pathsToRefresh = new Set(
+      refreshPaths.map((path) => path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, ""))
+    );
+
+    for (const tab of currentTabs) {
+      const node = indexByPath.get(tab.path);
+      if (!node) continue;
+      nextIndexByOld.set(tab.index, node.fileIndex);
+      tab.index = node.fileIndex;
+      tab.path = node.path;
+      tab.title = node.path.split("/").pop() ?? node.path;
+      tab.size = node.size;
+      tab.dataType = node.dataType;
+      tab.tags = cleanTreeTags(node.tags);
+      tab.icon = node.icon ?? null;
+      tab.fieldImage = node.fieldImage ?? null;
+      remainingTabs.push(tab);
+    }
+
+    for (const pane of Object.values(paneStates)) {
+      const oldActive = pane.activeKey;
+      const nextIndexes = pane.tabIndexes
+        .map((index) => nextIndexByOld.get(index))
+        .filter((index): index is number => index !== undefined);
+      pane.tabIndexes.splice(0, pane.tabIndexes.length, ...nextIndexes);
+      pane.activeKey =
+        (oldActive === null ? null : nextIndexByOld.get(oldActive)) ??
+        pane.tabIndexes[pane.tabIndexes.length - 1] ??
+        null;
+    }
+
+    tabs.value = remainingTabs;
+    await Promise.all(
+      remainingTabs
+        .filter((tab) => pathsToRefresh.has(tab.path))
+        .map(async (tab) => {
+          const meta = await EditorService.GetFile(tab.index);
+          if (!meta) return;
+          tab.path = meta.path;
+          tab.title = meta.path.split("/").pop() ?? meta.path;
+          tab.dataType = meta.dataType;
+          tab.size = meta.size;
+          tab.tags = cleanTreeTags(meta.tags);
+          tab.icon = meta.icon ?? null;
+          tab.fieldImage = meta.fieldImage ?? null;
+          if (resetOriginal) {
+            // 归档整体重载:索引已失效,直接采用新内容。
+            tab.text = meta.text;
+            tab.original = meta.text;
+            tab.modified = false;
+          } else {
+            tab.modified = meta.modified;
+            // 本地有未保存编辑时保留编辑器内容,不被后端结果覆盖。
+            if (!isDirty(tab)) tab.text = meta.text;
+          }
+          tab.annotations = (meta.annotations ?? []).filter(
+            (annotation): annotation is EditorAnnotation => !!annotation
+          );
+        })
+    );
+    while (isSplit.value) {
+      const emptyPane = panes.value.find((pane) => pane.tabIndexes.length === 0);
+      if (!emptyPane) break;
+      closeSplit(emptyPane.id);
+    }
+  }
+
+  async function refreshOpenTabTags(): Promise<void> {
+    const currentTabs = [...tabs.value];
+    await Promise.all(
+      currentTabs.map(async (tab) => {
+        const meta = await EditorService.GetFile(tab.index).catch(() => null);
+        const current = tabs.value.find((item) => item.index === tab.index);
+        if (!current || !meta) return;
+        current.tags = cleanTreeTags(meta.tags);
+        current.icon = meta.icon ?? null;
+        current.fieldImage = meta.fieldImage ?? null;
+        current.annotations = (meta.annotations ?? []).filter(
+          (annotation): annotation is EditorAnnotation => !!annotation
+        );
+      })
+    );
+  }
+
+  Events.On("archive:reloaded", () => {
+    void refreshAfterArchiveChange(tabs.value.map((tab) => tab.path), true);
+  });
+  // 脚本或批处理在别的窗口应用了变更时，本窗口的标签不会自己更新。事件是
+  // 广播的，所以这里同时覆盖同窗口（发起方已自行刷新，重复刷新是幂等的）
+  // 和独立脚本窗口发起的情况。
+  Events.On("archive:batch-applied", (event: any) => {
+    const data = event?.data ?? event;
+    // 结构变更会让后续条目重新编号，必须按路径重新解析树与标签。
+    if (data?.structural) {
+      void refreshAfterArchiveChange([], false);
+      return;
+    }
+    const indexes = (data?.fileIndexes ?? []).filter(
+      (value: unknown): value is number => typeof value === "number",
+    );
+    if (indexes.length > 0) void refreshBatchFiles(indexes);
+  });
+  Events.On("archive:registrations-changed", (event: any) => {
+    const data = event?.data ?? event;
+    const indexes = (data?.fileIndexes ?? []).filter(
+      (value: unknown): value is number => typeof value === "number",
+    );
+    if (indexes.length > 0) void refreshBatchFiles(indexes);
+  });
+  Events.On("archive:index-ready", () => {
+    void refreshOpenTabTags();
+  });
+  Events.On("archive:index-updated", () => {
+    void refreshOpenTabTags();
+  });
+
+  return {
+    tabs,
+    panes,
+    layout,
+    activeKey,
+    activeTab,
+    dirtyCount,
+    activePaneId,
+    draggingTab,
+    isSplit,
+    opening: computed(() => openingPaneId.value !== null),
+    openingPaneId,
+    saving,
+    pendingClose,
+    openFile,
+    openFileByPath,
+    pendingReveal,
+    revealInFile,
+    revealFileLine,
+    clearReveal,
+    activatePane,
+    beginTabDrag,
+    endTabDrag,
+    activateTab,
+    closeTab,
+    closeAllTabs,
+    closeOtherTabs,
+    requestCloseTab,
+    requestCloseOthers,
+    requestCloseAll,
+    confirmPendingClose,
+    cancelPendingClose,
+    moveTab,
+    split,
+    splitAndMoveTab,
+    closeSplit,
+    setSplitRatio,
+    updateContent,
+    unlockLargeEditing,
+    setPlaceholderText,
+    rewritePlaceholderToSafeTable,
+    saveTab,
+    saveActiveTab,
+    saveAllDirty,
+    save,
+    saveAs,
+    refreshAnnotations,
+    refreshRenderedText,
+    refreshBatchFiles,
+    refreshAfterArchiveChange,
+  };
+});
+
+function cleanTreeTags(tags: (TreeTag | null)[] | null | undefined): TreeTag[] {
+  return (tags ?? []).filter((tag): tag is TreeTag => !!tag);
+}

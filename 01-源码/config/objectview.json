@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "description": "对象视图规则：对象类型 → 关联文件（脚本 / 登记表 / 索引哈希）与显示文本的解析方式。本文件是纯数据，Go 侧不硬编码任何对象类型、lst 路径或字符串表号。",
+  "source": {
+    "calibratedAt": "2026-09-24",
+    "listPaths": "取自编辑器自带 config/lists.json（内置清单与关系索引，权威）：装备/道具/apd/职业/宠物/地下城/商店/map/怪物/任务/npc/被动对象/区域/城镇/副本接口 + 技能（按职业分表）。",
+    "extensions": "取自 config/annotations.json 的 rules/fields 中实际出现的扩展名集合（.equ/.stk/.apd/.chr/.cre/.dgn/.shp/.map/.mob/.npc/.obj/.qst/.rgn/.twn/.wdm/.skl 均在其中）。",
+    "stringTables": "取自 pvf-dev-project/modules/editor-dev/data/string-tables/string-tables-map.json（实测读取归档内 list/n_string.lst，0 基索引，共 37 张表）。",
+    "entryLayout": "依据 pvfine-main/docs/FORMAT.md §9.2：90US 条目为列表目录相对（character/a.equ），110US 集中在 list/ 下且条目为归档根相对（equipment/character/a.equ）；Archive.FindList 两种布局都会尝试。",
+    "spotCheck": "2026-09-24 实测（pvf-cli-plus.exe lst Script.pvf list/equipment.lst）：10018 → equipment/character/common/jacket/cloth/vest_owool.equ；该文件 [name] = {8=`<3::name_10018>`}，即表 3、键 name_10018。",
+    "caveat": "表 0 Character / 3 equipment / 13 Stackable 属客户端汉化禁动名单（上级规则 §6.12）：对象视图对它们是只读展示，写入必须改走安全表 1/5/8/27。"
+  },
+  "objectTypes": [
+    {
+      "id": "equipment",
+      "label": "装备",
+      "listPath": "equipment/equipment.lst",
+      "extensions": [".equ"],
+      "stringTable": 3,
+      "keyPatterns": ["name_{id}"],
+      "notes": "显示文本机制已实测：脚本 [name] 为 <3::name_10018> 占位符。"
+    },
+    {
+      "id": "stackable",
+      "label": "道具",
+      "listPath": "stackable/stackable.lst",
+      "extensions": [".stk"],
+      "stringTable": 13,
+      "keyPatterns": ["name_{id}"],
+      "notes": "键名模式与权威 CLI 的 batch 示例一致（table 13 / key name_<id>）。"
+    },
+    {
+      "id": "appendage",
+      "label": "附魔宝珠",
+      "listPath": "appendage/appendage.lst",
+      "extensions": [".apd"],
+      "notes": "无专属字符串表，显示文本靠脚本内占位符扫描。"
+    },
+    {
+      "id": "character",
+      "label": "职业",
+      "listPath": "character/character.lst",
+      "extensions": [".chr"],
+      "stringTable": 0
+    },
+    {
+      "id": "creature",
+      "label": "宠物",
+      "listPath": "creature/creature.lst",
+      "extensions": [".cre"],
+      "stringTable": 16
+    },
+    {
+      "id": "dungeon",
+      "label": "地下城",
+      "listPath": "dungeon/dungeon.lst",
+      "extensions": [".dgn"],
+      "stringTable": 2
+    },
+    {
+      "id": "itemshop",
+      "label": "商店",
+      "listPath": "itemshop/itemshop.lst",
+      "extensions": [".shp"],
+      "stringTable": 5
+    },
+    {
+      "id": "map",
+      "label": "地图",
+      "listPath": "map/map.lst",
+      "extensions": [".map"],
+      "stringTable": 6
+    },
+    {
+      "id": "monster",
+      "label": "怪物",
+      "listPath": "monster/monster.lst",
+      "extensions": [".mob"],
+      "stringTable": 7
+    },
+    {
+      "id": "npc",
+      "label": "NPC",
+      "listPath": "npc/npc.lst",
+      "extensions": [".npc"],
+      "stringTable": 8
+    },
+    {
+      "id": "passiveobject",
+      "label": "被动对象",
+      "listPath": "passiveobject/passiveobject.lst",
+      "extensions": [".obj"],
+      "stringTable": 9
+    },
+    {
+      "id": "quest",
+      "label": "任务",
+      "listPath": "n_quest/quest.lst",
+      "extensions": [".qst"],
+      "stringTable": 11
+    },
+    {
+      "id": "region",
+      "label": "区域",
+      "listPath": "region/region.lst",
+      "extensions": [".rgn"],
+      "stringTable": 19
+    },
+    {
+      "id": "town",
+      "label": "城镇",
+      "listPath": "town/town.lst",
+      "extensions": [".twn"],
+      "stringTable": 14
+    },
+    {
+      "id": "worldmap",
+      "label": "副本接口",
+      "listPath": "worldmap/worldmap.lst",
+      "extensions": [".wdm"],
+      "stringTable": 15
+    },
+    {
+      "id": "skill",
+      "label": "技能",
+      "listPaths": [
+        "skill/swordmanskill.lst",
+        "skill/atswordmanskill.lst",
+        "skill/fighterskill.lst",
+        "skill/atfighterskill.lst",
+        "skill/gunnerskill.lst",
+        "skill/atgunnerskill.lst",
+        "skill/mageskill.lst",
+        "skill/atmageskill.lst",
+        "skill/priestskill.lst",
+        "skill/atpriestskill.lst",
+        "skill/thiefskill.lst",
+        "skill/creatormageskill.lst",
+        "skill/knight.lst",
+        "skill/dsswordmanskill.lst",
+        "skill/demoniclancerskill.lst"
+      ],
+      "extensions": [".skl"],
+      "stringTable": 12,
+      "notes": "技能按职业分表（config/lists.json 的 contextual 关系）；同一 ID 若命中多张表，只取首个命中的表并在告警里说明。"
+    }
+  ]
+}

@@ -1,0 +1,738 @@
+<script setup lang="ts">
+import { computed, h, ref, watch } from "vue";
+import { useMessage } from "naive-ui";
+import {
+  NDropdown,
+  NTooltip,
+  NProgress,
+  NText,
+  useDialog,
+  type DropdownOption,
+} from "naive-ui";
+import { useArchiveStore } from "../stores/archive";
+import { useEditorStore } from "../stores/editor";
+import { useAdvancedSearchStore } from "../stores/advancedSearch";
+import { useSettingsStore } from "../stores/settings";
+import { useImportStore } from "../stores/import";
+import { useVersionStore } from "../stores/version";
+import { useScriptStore } from "../stores/script";
+import { useSidebarStore } from "../stores/sidebar";
+import { useBookmarkStore, type BookmarkGroup } from "../stores/bookmarks";
+import IndexHashRegistrationModal from "./IndexHashRegistrationModal.vue";
+import BookmarkPopup from "./BookmarkPopup.vue";
+import DevPanel from "./DevPanel.vue";
+import { useDevStore } from "../stores/dev";
+import { DEV_TOOLS } from "../buildInfo";
+
+const archive = useArchiveStore();
+const editor = useEditorStore();
+const advancedSearch = useAdvancedSearchStore();
+const settings = useSettingsStore();
+const importer = useImportStore();
+const version = useVersionStore();
+const script = useScriptStore();
+const sidebar = useSidebarStore();
+const bookmarks = useBookmarkStore();
+const dev = useDevStore();
+const message = useMessage();
+const dialog = useDialog();
+const hashRegistrationVisible = ref(false);
+const bookmarkPopupVisible = ref(false);
+const bookmarkBtnRef = ref<HTMLElement | null>(null);
+
+const canSave = computed(() => archive.open && !editor.saving);
+const canSaveToSource = computed(() => archive.open && !!archive.info?.path && !editor.saving);
+const versionChangeCount = computed(() => {
+  if (!archive.open) return 0;
+  if (version.enabled) {
+    return version.status.changedFiles;
+  }
+  return archive.modifiedCount;
+});
+const versionTooltip = computed(() => {
+  if (!archive.open) return "管理工作区版本、提交和历史";
+  if (version.enabled) {
+    if (version.status.changedFiles > 0) {
+      return `版本控制 (${version.status.branch})：${version.status.changedFiles} 个变更待提交`;
+    }
+    return `版本控制 (${version.status.branch})：工作区无变更`;
+  }
+  if (archive.modifiedCount > 0) {
+    return `版本控制未启用（当前有 ${archive.modifiedCount} 个未保存修改）`;
+  }
+  return "管理工作区版本、提交和历史";
+});
+
+/** 书签总数（所有书签簿 + 全部分组内的条目），用于工具栏「书签」角标。 */
+const bookmarkCount = computed(() => {
+  let total = 0;
+  const walkGroups = (groups: BookmarkGroup[]) => {
+    for (const group of groups) {
+      total += group.entries.length;
+      walkGroups(group.groups);
+    }
+  };
+  for (const book of bookmarks.books) {
+    total += book.entries.length;
+    walkGroups(book.groups);
+  }
+  return total;
+});
+
+/** 下拉菜单里的 emoji 图标（与预览图一致）。 */
+function renderEmoji(emoji: string) {
+  return () => h("span", { style: "font-size:14px;line-height:1" }, emoji);
+}
+
+/** 「打开」下拉：打开文件 / 保存 / 另存为。 */
+const openMenuOptions = computed<DropdownOption[]>(() => [
+  {
+    label: "打开文件…",
+    key: "open",
+    icon: renderEmoji("📂"),
+    disabled: archive.loading,
+  },
+  { type: "divider", key: "open-divider" },
+  {
+    label: "保存",
+    key: "save",
+    icon: renderEmoji("💾"),
+    disabled: !canSaveToSource.value,
+  },
+  {
+    label: "另存为…",
+    key: "save-as",
+    icon: renderEmoji("📤"),
+    disabled: !canSave.value,
+  },
+]);
+
+/** 「更多」下拉：收纳次级入口。 */
+const moreMenuOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    {
+      label: archive.unpacking ? "取消解包" : "解包归档…",
+      key: archive.unpacking ? "cancel-unpack" : "unpack",
+      icon: renderEmoji(archive.unpacking ? "⏹️" : "📦"),
+      disabled: !archive.open,
+    },
+    {
+      label: "对象视图",
+      key: "objectview",
+      icon: renderEmoji("🧱"),
+      disabled: !archive.open,
+    },
+  ];
+  if (archive.info?.paged110) {
+    options.push({
+      label: "注册 indexhash",
+      key: "register-hash",
+      icon: renderEmoji("🔑"),
+      disabled: !archive.open,
+    });
+  }
+  options.push({ type: "divider", key: "more-divider" });
+  return options;
+});
+
+watch(
+  () => archive.unpackMessage,
+  (msg) => {
+    if (msg) message.info(msg);
+  }
+);
+
+async function onOpen() {
+  try {
+    await archive.openDialog();
+    if (archive.open) message.success(`已打开 ${archive.info?.fileCount.toLocaleString()} 个文件`);
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`打开失败: ${e?.message ?? e}`);
+  }
+}
+
+function onImport(): void {
+  importer.open("");
+}
+
+async function saveToSource() {
+  try {
+    await editor.save();
+    message.success("已保存到源文件");
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`保存失败: ${e?.message ?? e}`);
+  }
+}
+
+function onSave() {
+  if (!archive.info?.path) {
+    void onSaveAs();
+    return;
+  }
+  const backupHint = settings.backupSourceOnSave
+    ? "保存前会将当前源文件备份为同目录下的 .bak 文件。"
+    : "当前未启用源文件备份。";
+  const dialogRef = dialog.warning({
+    title: "确认保存到源文件",
+    content: `保存会覆盖源文件中的当前内容。${backupHint}确定继续吗？`,
+    positiveText: "确认保存",
+    negativeText: "取消",
+    // naive-ui 会等待 onPositiveClick 返回的 Promise 结束再关闭弹窗,
+    // 期间通过 dialogRef 回写加载态,否则保存过程没有任何反馈。
+    onPositiveClick: async () => {
+      dialogRef.loading = true;
+      dialogRef.negativeButtonProps = { disabled: true };
+      try {
+        await saveToSource();
+      } finally {
+        dialogRef.loading = false;
+        dialogRef.negativeButtonProps = { disabled: false };
+      }
+    },
+  });
+}
+
+async function onSaveAs() {
+  try {
+    const path = await editor.saveAs();
+    if (path) message.success(`已另存为 ${path}`);
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`另存为失败: ${e?.message ?? e}`);
+  }
+}
+
+function onOpenMenuSelect(key: string | number): void {
+  if (key === "open") void onOpen();
+  else if (key === "save") onSave();
+  else if (key === "save-as") void onSaveAs();
+}
+
+function onMoreMenuSelect(key: string | number): void {
+  switch (key) {
+    case "unpack":
+      onUnpack();
+      break;
+    case "cancel-unpack":
+      onCancelUnpack();
+      break;
+    case "objectview":
+      sidebar.show("objectview");
+      break;
+    case "register-hash":
+      hashRegistrationVisible.value = true;
+      break;
+  }
+}
+
+function onUnpack() {
+  dialog.warning({
+    title: "解包归档",
+    content: `将 ${archive.info?.fileCount.toLocaleString()} 个文件解包到所选目录(约 ${(archive.info! ? (archive.info!.bodySize * 10.79) / 1e6 : 0).toFixed(0)}MB)。继续?`,
+    positiveText: "选择目录…",
+    negativeText: "取消",
+    onPositiveClick: async () => {
+      try {
+        const started = await archive.unpackDialog();
+        if (!started) return;
+        message.info("解包已开始");
+      } catch (e: any) {
+        if (!isCancel(e)) message.error(`解包失败: ${e?.message ?? e}`);
+      }
+    },
+  });
+}
+
+function onCancelUnpack() {
+  archive.cancelUnpack();
+}
+
+function toggleBookmarkPopup(): void {
+  bookmarkPopupVisible.value = !bookmarkPopupVisible.value;
+}
+
+function isCancel(e: any): boolean {
+  return String(e?.message ?? e).includes("cancel");
+}
+</script>
+
+<template>
+  <div class="toolbar" role="toolbar" aria-label="主工具栏">
+    <!-- ① 文件：打开（含下拉）+ 封包 -->
+    <div class="tb-group" role="group" aria-label="文件">
+      <div class="open-split">
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <button
+              type="button"
+              class="tb-btn tb-btn-primary open-main"
+              :disabled="archive.loading"
+              @click="onOpen"
+            >
+              <span class="ic">📂</span>
+              <span>打开</span>
+            </button>
+          </template>
+          打开 PVF 归档 (Cmd+O)
+        </NTooltip>
+        <NDropdown
+          trigger="click"
+          placement="bottom-start"
+          :options="openMenuOptions"
+          @select="onOpenMenuSelect"
+        >
+          <button type="button" class="open-caret" aria-label="打开菜单">
+            <span class="caret">▾</span>
+          </button>
+        </NDropdown>
+      </div>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-primary"
+            :disabled="!canSaveToSource"
+            @click="onSave"
+          >
+            <span class="ic">📦</span>
+            <span>封包</span>
+          </button>
+        </template>
+        封包 = 保存到源文件（写回 PVF，需确认）
+      </NTooltip>
+    </div>
+
+    <div class="tb-sep" />
+
+    <!-- ② 归档视图：书签 → 导入 → 工作区切换 → 高级搜索 -->
+    <div class="tb-group" role="group" aria-label="归档视图">
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            ref="bookmarkBtnRef"
+            type="button"
+            class="tb-btn tb-btn-book"
+            :class="{ 'tb-btn-active': bookmarkPopupVisible }"
+            @click="toggleBookmarkPopup"
+          >
+            <span class="ic">🔖</span>
+            <span>书签</span>
+            <span v-if="bookmarkCount > 0" class="tb-cnt">{{ bookmarkCount }}</span>
+          </button>
+        </template>
+        打开 / 关闭书签面板
+      </NTooltip>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-plain"
+            :disabled="!archive.open || importer.running"
+            @click="onImport"
+          >
+            <span class="ic">📥</span>
+            <span>导入</span>
+          </button>
+        </template>
+        批量导入文件到归档根目录
+      </NTooltip>
+
+      <div class="seg" role="tablist" aria-label="工作区模式">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="!script.workspaceVisible"
+          class="seg-i"
+          :class="{ on: !script.workspaceVisible }"
+          title="切回归档编辑"
+          @click="script.hideWorkspace"
+        >
+          <span class="ic">📄</span>
+          <span>归档编辑</span>
+        </button>
+        <NTooltip trigger="hover" :disabled="archive.open">
+          <template #trigger>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="script.workspaceVisible"
+              :disabled="!archive.open"
+              class="seg-i"
+              :class="{ on: script.workspaceVisible }"
+              :title="script.workspaceDetached ? '聚焦独立脚本窗口' : archive.open ? '切换到脚本工作区' : ''"
+              @click="archive.open && script.showWorkspace()"
+            >
+              <span class="ic">⌨️</span>
+              <span>脚本工作区</span>
+              <span v-if="script.workspaceDetached" class="seg-dot seg-dot--running" title="已在独立窗口中打开" />
+              <span v-else-if="script.running" class="seg-dot seg-dot--running" title="脚本运行中" />
+              <span v-else-if="script.hasPreview" class="seg-dot seg-dot--success" title="有待应用的预览" />
+              <span v-else-if="script.dirty" class="seg-dot seg-dot--warning" title="脚本未保存" />
+            </button>
+          </template>
+          {{ script.workspaceDetached ? "脚本工作区已在独立窗口中打开，点击聚焦该窗口" : "需先打开 PVF 归档" }}
+        </NTooltip>
+      </div>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-plain"
+            :disabled="!archive.open"
+            @click="advancedSearch.open"
+          >
+            <span class="ic">🔍</span>
+            <span>高级搜索</span>
+          </button>
+        </template>
+        在归档中搜索路径、名称或 ID（双击命中直接打开）
+      </NTooltip>
+    </div>
+
+    <div class="tb-spacer" />
+
+    <div v-if="archive.unpacking" class="unpack-progress">
+      <NText depth="3">
+        解包中 {{ archive.unpackProgress.done.toLocaleString() }} /
+        {{ archive.unpackProgress.total.toLocaleString() }}
+      </NText>
+      <NProgress
+        type="line"
+        :show-indicator="false"
+        :percentage="
+          archive.unpackProgress.total
+            ? Math.round((archive.unpackProgress.done / archive.unpackProgress.total) * 100)
+            : 0
+        "
+        style="width: 140px"
+      />
+    </div>
+
+    <!-- ③ 快捷入口：设置 / 版本管理 / AI 助手 / 更多 -->
+    <div class="tb-group" role="group" aria-label="快捷入口">
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button type="button" class="tb-btn tb-btn-plain" @click="settings.open()">
+            <span class="ic">⚙️</span>
+            <span>设置</span>
+          </button>
+        </template>
+        打开设置
+      </NTooltip>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-plain"
+            :disabled="!archive.open"
+            @click="version.open"
+          >
+            <span class="ic">🗂</span>
+            <span>版本管理</span>
+            <span v-if="versionChangeCount > 0" class="tb-cnt-w">{{ versionChangeCount }}</span>
+          </button>
+        </template>
+        {{ versionTooltip }}
+      </NTooltip>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button type="button" class="tb-btn tb-btn-ai" @click="sidebar.show('ai')">
+            <span class="ic">✨</span>
+            <span>AI 助手</span>
+          </button>
+        </template>
+        在右侧栏打开 AI 助手面板
+      </NTooltip>
+
+      <!-- 开发者面板入口：只在「开发人员专用」构建里出现 -->
+      <NTooltip v-if="DEV_TOOLS" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-dev"
+            :class="{ 'tb-btn-dev--on': dev.visible }"
+            @click="dev.toggle()"
+          >
+            <span class="ic">🛠</span>
+            <span>开发者</span>
+          </button>
+        </template>
+        开发者面板（Ctrl+Shift+D）：运行环境、打开耗时、索引、日志、体检与内部开关
+      </NTooltip>
+
+      <NDropdown
+        trigger="click"
+        placement="bottom-end"
+        :options="moreMenuOptions"
+        @select="onMoreMenuSelect"
+      >
+        <button type="button" class="tb-btn tb-btn-more">
+          <span class="ic">⋯</span>
+          <span>更多</span>
+          <span class="caret">▾</span>
+        </button>
+      </NDropdown>
+    </div>
+
+    <IndexHashRegistrationModal
+      :show="hashRegistrationVisible"
+      @update:show="hashRegistrationVisible = $event"
+    />
+    <BookmarkPopup v-model:show="bookmarkPopupVisible" :anchor-el="bookmarkBtnRef" />
+  </div>
+
+  <DevPanel v-if="DEV_TOOLS" />
+</template>
+
+<style scoped>
+/* 工具栏：深色卡片（与设计稿一致） */
+.toolbar {
+  height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  margin: 8px 10px;
+  background: var(--pvf-surface-card);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tb-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--pvf-border-strong);
+  flex: none;
+}
+.tb-spacer {
+  flex: 1;
+}
+
+/* 按钮（与设计稿 .btn 系列逐项一致） */
+.tb-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 15px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: filter 120ms ease, background 120ms ease, color 120ms ease;
+}
+.tb-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.tb-btn .ic {
+  font-size: 15px;
+  line-height: 1;
+}
+.tb-btn-primary {
+  background: var(--pvf-primary);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(79, 140, 255, 0.4);
+}
+.tb-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.tb-btn-plain {
+  background: transparent;
+  color: var(--pvf-text-secondary);
+  font-weight: 500;
+  padding: 0 11px;
+}
+.tb-btn-plain:hover:not(:disabled) {
+  background: rgba(79, 140, 255, 0.09);
+  color: var(--pvf-text-primary);
+}
+.tb-btn-book {
+  background: var(--pvf-primary-soft);
+  color: #bcd4ff;
+  border-color: rgba(79, 140, 255, 0.3);
+}
+.tb-btn-book:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.tb-btn-ai {
+  background: linear-gradient(135deg, #4f8cff, #7d5cff);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(110, 110, 255, 0.42);
+}
+.tb-btn-ai:hover {
+  filter: brightness(1.08);
+}
+.tb-btn-more {
+  background: transparent;
+  color: var(--pvf-text-secondary);
+  border-color: var(--pvf-border-subtle);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.tb-btn-more:hover {
+  background: rgba(79, 140, 255, 0.09);
+}
+/* 开发者面板入口：橙金色，和普通功能按钮区分开 */
+.tb-btn-dev {
+  background: rgba(240, 160, 32, 0.16);
+  color: #f2c97d;
+  border-color: rgba(240, 160, 32, 0.4);
+}
+.tb-btn-dev:hover {
+  filter: brightness(1.12);
+}
+.tb-btn-dev--on {
+  background: rgba(240, 160, 32, 0.3);
+  color: #ffd89b;
+}
+.caret {
+  font-size: 10px;
+  opacity: 0.85;
+  margin-left: 1px;
+}
+
+/* 角标（内联胶囊，与设计稿 .cnt / .cnt-w 一致） */
+.tb-cnt {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(79, 140, 255, 0.22);
+  color: #cfe0ff;
+}
+.tb-cnt-w {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(242, 201, 125, 0.22);
+  color: var(--pvf-warning);
+}
+
+/* 「打开」+ 下拉箭头：视觉连体 */
+.open-split {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.open-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.open-caret {
+  height: 34px;
+  width: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: var(--pvf-primary);
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  box-shadow: 0 2px 12px rgba(79, 140, 255, 0.4);
+}
+.open-caret:hover {
+  filter: brightness(1.08);
+}
+
+/* 分段控件（与设计稿 .seg / .seg-i 一致） */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--pvf-border-strong);
+  border-radius: 9px;
+  background: rgba(128, 128, 128, 0.07);
+  padding: 2px;
+  gap: 2px;
+  user-select: none;
+}
+.seg-i {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--pvf-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 120ms ease;
+  line-height: 1;
+}
+.seg-i .ic {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.95;
+}
+.seg-i.on {
+  background: rgba(79, 140, 255, 0.15);
+  color: #8fb8ff;
+  border-color: rgba(79, 140, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.18);
+}
+.seg-i:hover:not(.on):not(:disabled) {
+  color: var(--pvf-text-primary);
+  background: rgba(79, 140, 255, 0.06);
+}
+.seg-i:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.seg-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.seg-dot--running {
+  background: var(--pvf-primary);
+  animation: pulse-badge 1.2s infinite ease-in-out;
+}
+.seg-dot--success {
+  background: var(--pvf-success, #18a058);
+}
+.seg-dot--warning {
+  background: var(--pvf-warning, #f0a020);
+}
+@keyframes pulse-badge {
+  0%, 100% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+}
+
+.unpack-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 10px;
+}
+</style>

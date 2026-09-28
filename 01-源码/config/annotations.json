@@ -1,0 +1,2039 @@
+{
+  "version": 1,
+  "description": "pvfine 基础内置注解（预览规格 + 规则骨架）：注释内容见外置目录 注释数据\\",
+  "fields": [
+    {
+      "id": "equ.name",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "name",
+        "index": 0
+      },
+      "annotation": {
+        "title": "名称",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "name",
+        "group": "header",
+        "order": 10,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.name2",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "name2",
+        "index": 0
+      },
+      "annotation": {
+        "title": "副名称",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "name2",
+        "group": "header",
+        "order": 11,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.icon",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "icon",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "图标",
+        "type": "image"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "icon",
+        "group": "header",
+        "order": 1,
+        "format": "image"
+      }
+    },
+    {
+      "id": "equ.rarity",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "rarity",
+        "index": 0
+      },
+      "annotation": {
+        "title": "稀有度",
+        "type": "enum",
+        "values": {
+          "0": "普通",
+          "1": "魔法",
+          "2": "稀有",
+          "3": "神器",
+          "4": "史诗",
+          "5": "勇者",
+          "6": "传说"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "rarity",
+        "group": "summary",
+        "order": 10,
+        "format": "enum"
+      }
+    },
+    {
+      "id": "equ.equipment-type",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "equipment type",
+        "index": 0
+      },
+      "annotation": {
+        "title": "装备类型",
+        "type": "enum",
+        "values": {
+          "[amulet]": "首饰",
+          "[armor]": "防具",
+          "[title]": "称号",
+          "[weapon]": "武器"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "equipment-type",
+        "group": "summary",
+        "order": 20,
+        "format": "enum"
+      }
+    },
+    {
+      "id": "equ.item-group-name",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "item group name",
+        "index": 0
+      },
+      "annotation": {
+        "title": "装备小类",
+        "type": "enum",
+        "values": {
+          "armour": "防具",
+          "blade": "短剑",
+          "bracelet": "手镯",
+          "clubs": "钝器",
+          "katana": "太刀",
+          "necklace": "项链",
+          "ring": "戒指",
+          "sword": "巨剑"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "item-group-name",
+        "group": "summary",
+        "order": 21,
+        "format": "enum"
+      }
+    },
+    {
+      "id": "equ.attach-type",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "attach type",
+        "index": 0
+      },
+      "annotation": {
+        "title": "交易类型",
+        "type": "enum",
+        "values": {
+          "[account]": "帐号绑定",
+          "[free]": "不限制",
+          "[sealing trade]": "封装且不可交易",
+          "[sealing]": "封装",
+          "[trade delete]": "无法交易、删除",
+          "[trade]": "不可交易"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "attach-type",
+        "group": "summary",
+        "order": 22,
+        "format": "enum"
+      }
+    },
+    {
+      "id": "equ.minimum-level",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "minimum level",
+        "index": 0
+      },
+      "annotation": {
+        "title": "使用等级",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "minimum-level",
+        "group": "summary",
+        "order": 30,
+        "format": "level"
+      }
+    },
+    {
+      "id": "equ.usable-job",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "usable job"
+      },
+      "annotation": {
+        "title": "适用职业",
+        "type": "text",
+        "values": {
+          "[at fighter]": "格斗家·男",
+          "[at gunner]": "神枪手·女",
+          "[at mage]": "魔法师·男",
+          "[at priest]": "圣职者·女",
+          "[at swordman]": "鬼剑士·女",
+          "[creator mage]": "缔造者",
+          "[demonic lancer]": "魔枪士",
+          "[demonic swordman]": "黑暗武士",
+          "[fighter]": "格斗家",
+          "[gunner]": "神枪手",
+          "[knight]": "守护者",
+          "[mage]": "魔法师",
+          "[priest]": "圣职者",
+          "[swordman]": "鬼剑士",
+          "[thief]": "暗夜使者"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "usable-jobs",
+        "group": "summary",
+        "order": 31,
+        "format": "enum-list"
+      }
+    },
+    {
+      "id": "equ.equipment-physical-attack",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "equipment physical attack"
+      },
+      "annotation": {
+        "title": "物理攻击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-attribute",
+        "group": "base",
+        "order": 10,
+        "format": "range",
+        "label": "物理攻击"
+      }
+    },
+    {
+      "id": "equ.equipment-magical-attack",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "equipment magical attack"
+      },
+      "annotation": {
+        "title": "魔法攻击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-attribute",
+        "group": "base",
+        "order": 11,
+        "format": "range",
+        "label": "魔法攻击"
+      }
+    },
+    {
+      "id": "equ.separate-attack",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "separate attack"
+      },
+      "annotation": {
+        "title": "独立攻击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-attribute",
+        "group": "base",
+        "order": 12,
+        "format": "range",
+        "label": "独立攻击"
+      }
+    },
+    {
+      "id": "equ.equipment-physical-defense",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "equipment physical defense"
+      },
+      "annotation": {
+        "title": "物理防御",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-attribute",
+        "group": "base",
+        "order": 13,
+        "format": "range",
+        "label": "物理防御"
+      }
+    },
+    {
+      "id": "equ.equipment-magical-defense",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "equipment magical defense"
+      },
+      "annotation": {
+        "title": "魔法防御",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-attribute",
+        "group": "base",
+        "order": 14,
+        "format": "range",
+        "label": "魔法防御"
+      }
+    },
+    {
+      "id": "equ.physical-attack",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "physical attack",
+        "index": 0
+      },
+      "annotation": {
+        "title": "力量",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "four-dimension",
+        "group": "four",
+        "order": 10,
+        "format": "signed-number",
+        "label": "力量"
+      }
+    },
+    {
+      "id": "equ.magical-attack",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "magical attack",
+        "index": 0
+      },
+      "annotation": {
+        "title": "智力",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "four-dimension",
+        "group": "four",
+        "order": 11,
+        "format": "signed-number",
+        "label": "智力"
+      }
+    },
+    {
+      "id": "equ.physical-defense",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "physical defense",
+        "index": 0
+      },
+      "annotation": {
+        "title": "体力",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "four-dimension",
+        "group": "four",
+        "order": 12,
+        "format": "signed-number",
+        "label": "体力"
+      }
+    },
+    {
+      "id": "equ.magical-defense",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "magical defense",
+        "index": 0
+      },
+      "annotation": {
+        "title": "精力",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "four-dimension",
+        "group": "four",
+        "order": 13,
+        "format": "signed-number",
+        "label": "精力"
+      }
+    },
+    {
+      "id": "equ.anti-evil",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "anti evil",
+        "index": 0
+      },
+      "annotation": {
+        "title": "抗魔",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 10,
+        "format": "signed-number",
+        "label": "抗魔"
+      }
+    },
+    {
+      "id": "equ.attack-speed",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "attack speed",
+        "index": 0
+      },
+      "annotation": {
+        "title": "攻击速度",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 20,
+        "format": "percent",
+        "label": "攻击速度"
+      }
+    },
+    {
+      "id": "equ.cast-speed",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "cast speed",
+        "index": 0
+      },
+      "annotation": {
+        "title": "施放速度",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 21,
+        "format": "percent",
+        "label": "施放速度"
+      }
+    },
+    {
+      "id": "equ.physical-critical-hit",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "physical critical hit",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物理暴击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 30,
+        "format": "percent",
+        "label": "物理暴击"
+      }
+    },
+    {
+      "id": "equ.magical-critical-hit",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "magical critical hit",
+        "index": 0
+      },
+      "annotation": {
+        "title": "魔法暴击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 31,
+        "format": "percent",
+        "label": "魔法暴击"
+      }
+    },
+    {
+      "id": "equ.add-physical-critical-hit",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "add physical critical hit",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物理暴击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 32,
+        "format": "percent",
+        "label": "物理暴击"
+      }
+    },
+    {
+      "id": "equ.add-magical-critical-hit",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "add magical critical hit",
+        "index": 0
+      },
+      "annotation": {
+        "title": "魔法暴击",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 33,
+        "format": "percent",
+        "label": "魔法暴击"
+      }
+    },
+    {
+      "id": "equ.stuck",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "stuck",
+        "index": 0
+      },
+      "annotation": {
+        "title": "命中率",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "other-attribute",
+        "group": "other",
+        "order": 40,
+        "format": "percent",
+        "label": "命中率"
+      }
+    },
+    {
+      "id": "equ.skill-levelup",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill levelup",
+        "index": 1,
+        "recordTokens": 3,
+        "contextIndex": 0
+      },
+      "annotation": {
+        "title": "技能",
+        "type": "reference",
+        "values": {
+          "[at fighter]": "格斗家·男",
+          "[at gunner]": "神枪手·女",
+          "[at mage]": "魔法师·男",
+          "[at priest]": "圣职者·女",
+          "[at swordman]": "鬼剑士·女",
+          "[creator mage]": "缔造者",
+          "[demonic lancer]": "魔枪士",
+          "[demonic swordman]": "黑暗武士",
+          "[fighter]": "格斗家",
+          "[gunner]": "神枪手",
+          "[knight]": "守护者",
+          "[mage]": "魔法师",
+          "[priest]": "圣职者",
+          "[swordman]": "鬼剑士",
+          "[thief]": "暗夜使者"
+        },
+        "relation": "技能"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "skill-levelup",
+        "group": "skills",
+        "order": 10,
+        "format": "skill-levelup"
+      }
+    },
+    {
+      "id": "equ.explain",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "explain"
+      },
+      "annotation": {
+        "title": "装备说明",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-explain",
+        "group": "explain",
+        "order": 5,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.basic-explain",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "basic explain"
+      },
+      "annotation": {
+        "title": "效果说明",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-explain",
+        "group": "explain",
+        "order": 10,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.base-explain",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "base explain"
+      },
+      "annotation": {
+        "title": "其它效果",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-explain",
+        "group": "explain",
+        "order": 11,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.detail-explain",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "detail explain"
+      },
+      "annotation": {
+        "title": "详细说明",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "detail-explain",
+        "group": "explain",
+        "order": 20,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.flavor-text",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "flavor text"
+      },
+      "annotation": {
+        "title": "装备介绍",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "flavor-text",
+        "group": "flavor",
+        "order": 10,
+        "format": "text"
+      }
+    },
+    {
+      "id": "equ.durability",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "durability",
+        "index": 0
+      },
+      "annotation": {
+        "title": "耐久度",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "durability",
+        "group": "footer",
+        "order": 10,
+        "format": "durability"
+      }
+    },
+    {
+      "id": "equ.weight",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "weight",
+        "index": 0
+      },
+      "annotation": {
+        "title": "重量",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "weight",
+        "group": "footer",
+        "order": 20,
+        "format": "weight"
+      }
+    },
+    {
+      "id": "equ.value",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "value",
+        "index": 0
+      },
+      "annotation": {
+        "title": "售价",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "price",
+        "group": "footer",
+        "order": 30,
+        "format": "price"
+      }
+    },
+    {
+      "id": "*.rarity",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "rarity",
+        "index": 0
+      },
+      "annotation": {
+        "title": "稀有度",
+        "type": "enum",
+        "values": {
+          "0": "普通",
+          "1": "魔法",
+          "2": "稀有",
+          "3": "神器",
+          "4": "史诗",
+          "5": "勇者",
+          "6": "传说"
+        }
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "rarity",
+        "group": "summary",
+        "order": 10,
+        "format": "enum"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "booster装备关联",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "etc",
+        "index": 1
+      },
+      "annotation": {
+        "title": "非法 ID",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "booster道具关联",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "stackable",
+        "index": 1
+      },
+      "annotation": {
+        "title": "非法 ID",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "booster·道具权重",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "stackable",
+        "index": 2
+      },
+      "annotation": {
+        "title": "权重",
+        "type": "text"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "booster·道具数量",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "stackable",
+        "index": 3
+      },
+      "annotation": {
+        "title": "数量",
+        "type": "text"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "booster·装备权重",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "etc",
+        "index": 2
+      },
+      "annotation": {
+        "title": "权重",
+        "type": "text"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "booster·装备数量",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "etc",
+        "index": 3
+      },
+      "annotation": {
+        "title": "数量",
+        "type": "text"
+      },
+      "group": "booster"
+    },
+    {
+      "id": "global.cool_time",
+      "match": {},
+      "target": {
+        "kind": "section",
+        "section": "cool time"
+      },
+      "annotation": {
+        "title": "冷却时间 ms",
+        "type": "text"
+      },
+      "group": "global"
+    },
+    {
+      "id": "skill.levelup",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "skill levelup",
+        "index": 1,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "skill"
+    },
+    {
+      "id": "skill.dataup",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 7
+      },
+      "annotation": {
+        "title": "技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "skill"
+    },
+    {
+      "id": "skill.enchant.skill",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "skill",
+        "index": 1,
+        "offset": 1,
+        "recordTokens": 7
+      },
+      "annotation": {
+        "title": "技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "skill"
+    },
+    {
+      "id": "global.input",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "input",
+        "index": 0
+      },
+      "annotation": {
+        "title": "未知ID",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "global"
+    },
+    {
+      "id": "global.output",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "output",
+        "index": 0
+      },
+      "annotation": {
+        "title": "未知ID",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "global"
+    },
+    {
+      "id": "global.icon",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "icon",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "图标",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "global"
+    },
+    {
+      "id": "global.field image",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "field image",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "图标",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "global"
+    },
+    {
+      "id": "global.icon mark",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "icon mark",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "图标",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "global"
+    },
+    {
+      "id": "ani.image",
+      "match": {
+        "extensions": [
+          ".ani"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "IMAGE",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "新标注",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "ani"
+    },
+    {
+      "id": "npc.small face",
+      "match": {
+        "extensions": [
+          ".npc"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "small face",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "头像",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "npc"
+    },
+    {
+      "id": "npc.big face",
+      "match": {
+        "extensions": [
+          ".npc"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "big face",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "头像",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "npc"
+    },
+    {
+      "id": "npc.popup face",
+      "match": {
+        "extensions": [
+          ".npc"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "popup face",
+        "index": 1,
+        "recordTokens": 2,
+        "imagePathToken": 0
+      },
+      "annotation": {
+        "title": "头像",
+        "type": "image",
+        "inlineImage": true
+      },
+      "group": "npc"
+    },
+    {
+      "id": "global.need material.id",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "need material",
+        "index": 0
+      },
+      "annotation": {
+        "title": " 未知ID",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "global"
+    },
+    {
+      "id": "global.need material",
+      "match": {},
+      "target": {
+        "kind": "section",
+        "section": "need material"
+      },
+      "annotation": {
+        "title": "商店兑换需要的道具",
+        "type": "text",
+        "relation": "物品"
+      },
+      "group": "global"
+    },
+    {
+      "id": "shp.item list",
+      "match": {},
+      "target": {
+        "kind": "section",
+        "section": "item list"
+      },
+      "annotation": {
+        "title": "售卖的物品",
+        "type": "text"
+      },
+      "group": "shp"
+    },
+    {
+      "id": "shp.item list.item id",
+      "match": {},
+      "target": {
+        "kind": "token",
+        "section": "item list",
+        "index": 0,
+        "recordTokens": 1
+      },
+      "annotation": {
+        "title": "ID",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "shp"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_swordman",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/swordman",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "鬼剑士技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_fighter",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/fighter",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "格斗家(女)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_gunner",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/gunner",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "神枪手(男)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_mage",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/mage",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "魔法师(女)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_priest",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/priest",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "圣职者技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_atgunner",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/atgunner",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "神枪手(女)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_atfighter",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/atfighter",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "格斗家(男)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_atmage",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/atmage",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "魔法师(男)技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.equ.skill data up.1.skill_thief",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: skill/thief",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "skill data up",
+        "index": 1,
+        "recordTokens": 2
+      },
+      "annotation": {
+        "title": "暗夜使者技能",
+        "type": "reference",
+        "relation": "技能"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.dgn.required item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".dgn"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "required item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "进图门票",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.dgn.item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".dgn"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "通关掉落物品",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.map.npc.0.npc",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: npc",
+      "match": {
+        "extensions": [
+          ".map"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "npc",
+        "index": 0
+      },
+      "annotation": {
+        "title": "NPC",
+        "type": "reference",
+        "relation": "npc"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.map.monster.0.monster",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: monster",
+      "match": {
+        "extensions": [
+          ".map"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "monster",
+        "index": 0
+      },
+      "annotation": {
+        "title": "怪物",
+        "type": "reference",
+        "relation": "怪物"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.map.passive object.0.passiveobject",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: passiveobject",
+      "match": {
+        "extensions": [
+          ".map"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "passive object",
+        "index": 0
+      },
+      "annotation": {
+        "title": "对象",
+        "type": "reference",
+        "relation": "被动对象"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.depend give item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "depend give item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.dungeon info.0.dungeon",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: dungeon",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "dungeon info",
+        "index": 0
+      },
+      "annotation": {
+        "title": "副本",
+        "type": "reference",
+        "relation": "地下城"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.reward int data.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "reward int data",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.reward selection int data.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "reward selection int data",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.mail enclose.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "mail enclose",
+        "index": 0
+      },
+      "annotation": {
+        "title": "邮件附件物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.int data.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "int data",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.qst.int data.0.dungeon",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: dungeon",
+      "match": {
+        "extensions": [
+          ".qst"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "int data",
+        "index": 0
+      },
+      "annotation": {
+        "title": "副本",
+        "type": "reference",
+        "relation": "地下城"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.skl.consume item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".skl"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "consume item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "消耗物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.etc.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "etc",
+        "index": 0
+      },
+      "annotation": {
+        "title": "物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.equipment.0.equipment",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: equipment",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "equipment",
+        "index": 0
+      },
+      "annotation": {
+        "title": "装备",
+        "type": "reference",
+        "relation": "装备"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.stackable.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "stackable",
+        "index": 0
+      },
+      "annotation": {
+        "title": "道具",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.avatar.0.equipment",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: equipment",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "avatar",
+        "index": 0
+      },
+      "annotation": {
+        "title": "时装",
+        "type": "reference",
+        "relation": "装备"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.A condition item.0,2,4,6,8,10,12,14,16,18.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "A condition item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "条件物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.B condition item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "B condition item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "条件物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.result item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "result item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "结果物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.package data.0,2,4,6,8,10,12,14,16,18.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "package data",
+        "index": 0
+      },
+      "annotation": {
+        "title": "包含物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.need material.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "need material",
+        "index": 0
+      },
+      "annotation": {
+        "title": "购买所需物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.stk.sealing removal item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".stk"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "sealing removal item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "开启所需物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.wdm.item condition.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".wdm"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "item condition",
+        "index": 0
+      },
+      "annotation": {
+        "title": "进入所需物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    },
+    {
+      "id": "b.wdm.hell freepass item.0.stackable",
+      "description": "来自 pvfUtility ItemCodeHoverConfig: stackable",
+      "match": {
+        "extensions": [
+          ".wdm"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "hell freepass item",
+        "index": 0
+      },
+      "annotation": {
+        "title": "深渊门票物品/装备",
+        "type": "reference",
+        "relation": "道具"
+      },
+      "group": "pvfUtility"
+    }
+  ]
+}

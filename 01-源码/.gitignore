@@ -1,0 +1,23 @@
+.task
+bin
+.idea
+.zcode
+frontend/dist
+frontend/node_modules
+*.pvf
+*.pvf.bak
+*.pvf.pvfine
+internal/annotations/default.json.bak
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+# Mobile generated (per-machine; overlays hold absolute paths)
+build/ios/xcode/overlay.json
+build/ios/xcode/gen/
+build/android/overlay.json
+build/android/gen/
+
+ImagePacks2
+
+# Local PVF export fixtures and unpacked game data
+/export/
+/testdata/

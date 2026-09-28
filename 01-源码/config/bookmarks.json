@@ -1,0 +1,3263 @@
+{
+  "version": 1,
+  "name": "我的书签",
+  "groups": [
+    {
+      "id": "",
+      "name": "旧版本",
+      "groups": [
+        {
+          "id": "",
+          "name": "所有书签均 AI 整理",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/newcashshop.etc",
+              "name": "商城"
+            },
+            {
+              "path": "itemshop/equipmentshop7.shp",
+              "name": "赛利亚商店"
+            },
+            {
+              "path": "etc/pcroom4.vm",
+              "name": "抽奖机"
+            },
+            {
+              "path": "event/heromissionevent.evt",
+              "name": "勇者活动奖励"
+            },
+            {
+              "path": "event/attendance.evt",
+              "name": "签到活动奖励"
+            },
+            {
+              "path": "itemshop/sao_suguha.shp",
+              "name": "商店-直叶"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/unlimitchallenge.etc",
+              "name": "简易升级邮件"
+            },
+            {
+              "path": "etc/chn_schedule.etc",
+              "name": "限时副本任务"
+            },
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/titlebook.etc",
+              "name": "称号簿"
+            },
+            {
+              "path": "etc/questshop.etc",
+              "name": "QP商店"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "分解机"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "clientonly/skilltree/swordman_sp.co",
+              "name": "SP技能树"
+            },
+            {
+              "path": "character/swordman/swordman.chr",
+              "name": "角色初始属性"
+            },
+            {
+              "path": "monster/monsterapcdifficultybonus.tbl",
+              "name": "全局怪物属性"
+            },
+            {
+              "path": "etc/ultimatedungeonlist.etc",
+              "name": "添加地狱难度"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "自动售货机"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/serverparameter.etc",
+              "name": "强化增幅保护"
+            },
+            {
+              "path": "etc/growthpowerrewardbuff.etc",
+              "name": "林纳斯升级给的奖励"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "左上角活动说明文件"
+            },
+            {
+              "path": "etc/chn_server_limititemusageinfo.etc",
+              "name": "每日恢复门票"
+            },
+            {
+              "path": "etc/premiumlist_new.etc",
+              "name": "各种契约的信息"
+            },
+            {
+              "path": "etc/premiumserviceeffect.etc",
+              "name": "各种契约附加效果的指向"
+            },
+            {
+              "path": "etc/sptable.etc",
+              "name": "角色升级SP点"
+            },
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团额外加成"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "lst列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "n_quest/quest.lst",
+              "name": "任务列表"
+            },
+            {
+              "path": "stackable/stackable.lst",
+              "name": "道具列表"
+            },
+            {
+              "path": "equipment/equipment.lst",
+              "name": "装备列表"
+            },
+            {
+              "path": "dungeon/dungeon.lst",
+              "name": "副本列表"
+            },
+            {
+              "path": "map/map.lst",
+              "name": "地图列表"
+            },
+            {
+              "path": "monster/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "passiveobject/passiveobject.lst",
+              "name": "OBJ列表"
+            },
+            {
+              "path": "npc/npc.lst",
+              "name": "NPC列表"
+            },
+            {
+              "path": "itemshop/itemshop.lst",
+              "name": "商店列表"
+            },
+            {
+              "path": "aicharacter/aicharacter.lst",
+              "name": "AIC列表"
+            },
+            {
+              "path": "creature/creature.lst",
+              "name": "宠物列表"
+            },
+            {
+              "path": "appendage/appendage.lst",
+              "name": "APD列表"
+            },
+            {
+              "path": "town/town.lst",
+              "name": "城镇列表"
+            },
+            {
+              "path": "worldmap/worldmap.lst",
+              "name": "副本接口列表"
+            },
+            {
+              "path": "aicharacter/aicharacter.lst",
+              "name": "APC列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "掉率爆率",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/worlddrop.etc",
+              "name": "世界掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monster_hell.etc",
+              "name": "深渊掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monseter.etc",
+              "name": "怪物掉落+EX"
+            },
+            {
+              "path": "etc/itemdropinfo_clearreward.etc",
+              "name": "翻牌掉落"
+            },
+            {
+              "path": "etc/independent_drop.etc",
+              "name": "独立掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_common.etc",
+              "name": "金币掉落"
+            },
+            {
+              "path": "etc/worlddrop.etc",
+              "name": "全局掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monseter.etc",
+              "name": "怪物掉落"
+            },
+            {
+              "path": "etc/independentdrop.lst",
+              "name": "外部独立掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_common.etc",
+              "name": "可破坏建筑物物品掉落"
+            },
+            {
+              "path": "etc/ultimatedungeonlist.etc",
+              "name": "地狱难度"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "常用etc",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/newcashshop.etc",
+              "name": "商城"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/craneminigameitem.etc",
+              "name": "娃娃机"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "黑钻机"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/chn_server_limititemusageinfo.etc",
+              "name": "每日恢复门票"
+            },
+            {
+              "path": "etc/serverparameter.etc",
+              "name": "保护券-周末疲劳加倍"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "常用列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "equipment/equipment.lst",
+              "name": "装备.equ"
+            },
+            {
+              "path": "stackable/stackable.lst",
+              "name": "道具.stk"
+            },
+            {
+              "path": "etc/newcashshop.etc",
+              "name": "商城"
+            },
+            {
+              "path": "dungeon/dungeon.lst",
+              "name": "副本.dgn"
+            },
+            {
+              "path": "map/map.lst",
+              "name": "地图.map"
+            },
+            {
+              "path": "monster/monster.lst",
+              "name": "怪物.mob"
+            },
+            {
+              "path": "passiveobject/passiveobject.lst",
+              "name": "特效.obj"
+            },
+            {
+              "path": "npc/npc.lst",
+              "name": "NPC.npc"
+            },
+            {
+              "path": "n_quest/quest.lst",
+              "name": "任务.qst"
+            },
+            {
+              "path": "itemshop/itemshop.lst",
+              "name": "商店.shp"
+            },
+            {
+              "path": "creature/creature.lst",
+              "name": "宠物.cre"
+            },
+            {
+              "path": "appendage/appendage.lst",
+              "name": "APD.apd"
+            },
+            {
+              "path": "town/town.lst",
+              "name": "城镇.twn"
+            },
+            {
+              "path": "region/region.lst",
+              "name": "区域.rgn"
+            },
+            {
+              "path": "worldmap/worldmap.lst",
+              "name": "副本接口.wdm"
+            },
+            {
+              "path": "aicharacter/aicharacter.lst",
+              "name": "人偶.aic"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "etc分解"
+            },
+            {
+              "path": "clientonly/cancelskilllist.co",
+              "name": "技能树"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "nut的定义",
+          "groups": [],
+          "entries": [
+            {
+              "path": "sqr/common.nut",
+              "name": "常见类型的nut"
+            },
+            {
+              "path": "sqr/dnf_enum_header.nut",
+              "name": "DNF例举的NUT"
+            },
+            {
+              "path": "sqr/init_character.nut",
+              "name": "初始角色的nut"
+            },
+            {
+              "path": "sqr/loadstate.nut",
+              "name": "负载状态的nut"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "UI接口分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "worldmap/ui/timegate.ui",
+              "name": "时空之门UI接口"
+            },
+            {
+              "path": "worldmap/animation/time_00.ani",
+              "name": "时空之门UI的动画"
+            },
+            {
+              "path": "worldmap/timegate.wdm",
+              "name": "时空之门地图接口文件"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "各文件列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "n_quest/quest.lst",
+              "name": "任务列表"
+            },
+            {
+              "path": "stackable/stackable.lst",
+              "name": "道具列表"
+            },
+            {
+              "path": "equipment/equipment.lst",
+              "name": "装备列表"
+            },
+            {
+              "path": "dungeon/dungeon.lst",
+              "name": "副本列表"
+            },
+            {
+              "path": "map/map.lst",
+              "name": "地图列表"
+            },
+            {
+              "path": "monster/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "passiveobject/passiveobject.lst",
+              "name": "OBJ列表"
+            },
+            {
+              "path": "npc/npc.lst",
+              "name": "NPC列表"
+            },
+            {
+              "path": "itemshop/itemshop.lst",
+              "name": "商店列表"
+            },
+            {
+              "path": "aicharacter/aicharacter.lst",
+              "name": "AIC列表"
+            },
+            {
+              "path": "creature/creature.lst",
+              "name": "宠物列表"
+            },
+            {
+              "path": "appendage/appendage.lst",
+              "name": "APD列表"
+            },
+            {
+              "path": "town/town.lst",
+              "name": "城镇列表"
+            },
+            {
+              "path": "aicharacter/operatingvalue.lst",
+              "name": "绝望之塔房间APC列表"
+            },
+            {
+              "path": "cashshop/cashshop.lst",
+              "name": "废弃商城的列表"
+            },
+            {
+              "path": "aura/aura.lst",
+              "name": "光环列表"
+            },
+            {
+              "path": "character/character.jpn.lst",
+              "name": "初始角色邮件列表"
+            },
+            {
+              "path": "character/expertjob.lst",
+              "name": "副职业列表"
+            },
+            {
+              "path": "chatemoticon/chatemoticon.lst",
+              "name": "聊天表情列表"
+            },
+            {
+              "path": "dungeon/dungeon.jpn.lst",
+              "name": "副本邮件列表"
+            },
+            {
+              "path": "etc/globaltutorialinfo/characterlist.lst",
+              "name": "新手教程列表"
+            },
+            {
+              "path": "etc/independentdrop/1_magneus_normal.etc",
+              "name": "独立掉落外部列表"
+            },
+            {
+              "path": "etc/itemdictionary/(r)independentdropinfo.etc",
+              "name": "显示独立掉落的装备"
+            },
+            {
+              "path": "etc/linksystem/strikercombo.lst",
+              "name": "支援兵参数详细列表"
+            },
+            {
+              "path": "etc/randomoption/randomoption.lst",
+              "name": "魔法封印封印属性的列表"
+            },
+            {
+              "path": "etc/randomoption/randomoptionskill.lst",
+              "name": "魔法封印可增加技能的列表"
+            },
+            {
+              "path": "event/eventcharacter/eventcharacter.lst",
+              "name": "活动提升技能等级列表"
+            },
+            {
+              "path": "event/ingameeventlist.evt",
+              "name": "活动列表（详细）"
+            },
+            {
+              "path": "map/map.jpn.lst",
+              "name": "地图邮政列表"
+            },
+            {
+              "path": "skill/skilllist.lst",
+              "name": "全职业技能列表"
+            },
+            {
+              "path": "stagemap/stagemap.lst",
+              "name": "阶段图列表"
+            },
+            {
+              "path": "passiveobject/old passiveobject.lst",
+              "name": "古老的特效列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "aic文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "aicharacter/aicharacter.kor.str",
+              "name": "所有aic默认名字喊话"
+            },
+            {
+              "path": "aicharacter/aicharacter.lst",
+              "name": "所有APC的列表"
+            },
+            {
+              "path": "aicharacter/operatingvalue.lst",
+              "name": "每十层绝望之塔APC列表"
+            },
+            {
+              "path": "aicharacter/ai_tool_info.txt",
+              "name": "AI文件描述"
+            },
+            {
+              "path": "aicharacter/fighter/28/28_doll.aic",
+              "name": "28号人偶"
+            },
+            {
+              "path": "aicharacter/fighter/28/ai/action.ai",
+              "name": "人偶的AI文件"
+            },
+            {
+              "path": "aicharacter/fighter/28/ai/movemethod.ai",
+              "name": "人偶移动AI的判定"
+            },
+            {
+              "path": "aicharacter/_jojochan/atfighter/agarum_atfighter_grap/agarum_fighter_grap.aic",
+              "name": "复制体aic(心魔)"
+            },
+            {
+              "path": "aicharacter/_jojochan/atfighter/agarum_atfighter_grap/key/air.key",
+              "name": "KEY文件"
+            },
+            {
+              "path": "etc/linksystem/striker.etc",
+              "name": "支援兵系统（可改技能）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "杂项参数分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "chatemoticon/chatemoticon.lst",
+              "name": "聊天时的表情列表"
+            },
+            {
+              "path": "chatemoticon/chatemoticon.kor.str",
+              "name": "表情的描述文件"
+            },
+            {
+              "path": "clientonly/clientonly.kor.str",
+              "name": "菜单的描述文件"
+            },
+            {
+              "path": "clientonly/skillshoptextguide.co",
+              "name": "技能商店指示UI"
+            },
+            {
+              "path": "etc/avatar_roulette/avatarfixedhiddenoptionlist.etc",
+              "name": "时装转盘"
+            },
+            {
+              "path": "etc/emblemrenewal/avatar_convert_jpn.etc",
+              "name": "徽章文件"
+            },
+            {
+              "path": "etc/guide/guidelist.glist",
+              "name": "进入副本出现的随机指南"
+            },
+            {
+              "path": "etc/itemdictionary/(r)baseitemdictionarytable.etc",
+              "name": "装备词典基准表"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团经验金币"
+            },
+            {
+              "path": "etc/linksystem/charactermanage.etc",
+              "name": "冒险团详细参数"
+            },
+            {
+              "path": "etc/pvppracticecombo/atfighter.etc",
+              "name": "PKC的练习"
+            },
+            {
+              "path": "etc/pvprevisiontable/combodamagerevisiontable.etc",
+              "name": "PKC扣血保护机制"
+            },
+            {
+              "path": "etc/pvpskilltree/atgunner.etc",
+              "name": "PKC技能平衡"
+            },
+            {
+              "path": "etc/randomoption/auctionrandomcategory.etc",
+              "name": "魔法封印的基础目录"
+            },
+            {
+              "path": "etc/randomoption/optiongrouping.etc",
+              "name": "魔法封印（不同种类之一）的权重"
+            },
+            {
+              "path": "etc/randomoption/regenerationrandomoption.etc",
+              "name": "等级提高魔法封印出现3属性概率增加"
+            },
+            {
+              "path": "etc/ultimateskillani/thief_necro.ani",
+              "name": "觉醒技能的插图"
+            },
+            {
+              "path": "etc/amplifyitem.etc",
+              "name": "红字装备随机率"
+            },
+            {
+              "path": "etc/auction_recommend_item.etc",
+              "name": "拍卖推荐装备的等级"
+            },
+            {
+              "path": "etc/avatarcolorvariation.etc",
+              "name": "时装染色"
+            },
+            {
+              "path": "etc/billingtestdata.etc",
+              "name": "广告测试的数据"
+            },
+            {
+              "path": "etc/chn_server_limititemusageinfo.etc",
+              "name": "每天重置的门票"
+            },
+            {
+              "path": "etc/emotionexpressiondata.etc",
+              "name": "心情卡片特效"
+            },
+            {
+              "path": "etc/fairpvpstat.etc",
+              "name": "公平PKC属性"
+            },
+            {
+              "path": "etc/pvpchannellist.etc",
+              "name": "PKC列表与描述"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "游戏公告"
+            },
+            {
+              "path": "npc/siran.npc",
+              "name": "npc西岚"
+            },
+            {
+              "path": "stackable/monstercard/mcard_dominions.stk",
+              "name": "怪物卡片（阿加门龙大天使）"
+            },
+            {
+              "path": "ui/hud/mainmenuwindow.ui",
+              "name": "血量或左侧正中间的广告UI"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "地图类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/cerashop_first.etc",
+              "name": "废弃的商城"
+            },
+            {
+              "path": "map/advancealtar/advancealtar_stage_02_1easy.map",
+              "name": "守护者祭坛地图（活动类）"
+            },
+            {
+              "path": "map/deadtower/001f.map",
+              "name": "死亡之塔类型"
+            },
+            {
+              "path": "map/kingsruins/n4804.map",
+              "name": "远古地下城类型（王的遗迹）"
+            },
+            {
+              "path": "map/realskycastle/realskycastle06.map",
+              "name": "异界地下城类型（蠕动之城）"
+            },
+            {
+              "path": "map/r_kingsruins/b4801.map",
+              "name": "魂 . 远古地图类型 （魂 . 遗迹）"
+            },
+            {
+              "path": "town/town.kor.str",
+              "name": "城镇描述文件"
+            },
+            {
+              "path": "worldmap/worldmap.kor.str",
+              "name": "城镇地区的描述"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "副本类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "aicharacter/towerofdespair_apc.etc",
+              "name": "绝望之塔APC附属文件"
+            },
+            {
+              "path": "data/extern.sd",
+              "name": "PKC数据"
+            },
+            {
+              "path": "dungeon/act1/grakkarak.dgn",
+              "name": "普通副本（格拉卡这种）"
+            },
+            {
+              "path": "dungeon/advancealtar/advancealtar_stage_01.dgn",
+              "name": "守护者祭坛（台服活动本）"
+            },
+            {
+              "path": "dungeon/ancient/noirpera.dgn",
+              "name": "远古地下城（不含遗迹）"
+            },
+            {
+              "path": "dungeon/impossible/goblinkingdom.dgn",
+              "name": "异界地下城"
+            },
+            {
+              "path": "dungeon/quest/deadmoon.dgn",
+              "name": "任务副本地下城"
+            },
+            {
+              "path": "dungeon/riskdungeon/r_kingsruins.dgn",
+              "name": "魂 . 远古   副本"
+            },
+            {
+              "path": "dungeon/shonantournament/bluedragon.dgn",
+              "name": "龙斗会地下城"
+            },
+            {
+              "path": "dungeon/dungeon.jpn.lst",
+              "name": "副本邮件列表"
+            },
+            {
+              "path": "dungeon/dungeon.kor.str",
+              "name": "副本外的描述"
+            },
+            {
+              "path": "etc/advancealtar/advancealtarmode.etc",
+              "name": "守护者祭坛活动设置（详细）"
+            },
+            {
+              "path": "etc/chn_schedule.etc",
+              "name": "限时开放的副本"
+            },
+            {
+              "path": "etc/guild.etc",
+              "name": "公会系统"
+            },
+            {
+              "path": "map/lorien/s1.map",
+              "name": "普通副本的地图（洛兰）"
+            },
+            {
+              "path": "n_quest/epicquest.lst",
+              "name": "主线任务清单（GM清楚任务的数量？）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "怪物类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "monster/lotus/lotus.mob",
+              "name": "普通AI怪物"
+            },
+            {
+              "path": "monster/lotus/lotus_global_bosstower.mob",
+              "name": "英雄级AI怪物（高AI 独特技能）"
+            },
+            {
+              "path": "monster/soldier/attackinfo/axeexpellerattack.atk",
+              "name": "一体怪物atk文件（未采取act写法）"
+            },
+            {
+              "path": "monster/spikeking/spikeking_quest.mob",
+              "name": "玩家技能召唤的怪物（采用百分比攻防）"
+            },
+            {
+              "path": "monster/newmonsters/dragon/scasa/action/alive.act",
+              "name": "新版怪物的act文件（冰龙斯卡萨）"
+            },
+            {
+              "path": "monster/monster.kor.str",
+              "name": "怪物名称与描述（基本无用）"
+            },
+            {
+              "path": "monster/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "monster/monsterapcdifficultybonus.tbl",
+              "name": "全局怪物难度（详情参考大狗王怪物笔记）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "深渊类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对组合（详情参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/itemdropinfo_monster_hell.etc",
+              "name": "深渊掉落的详细参数"
+            },
+            {
+              "path": "n_quest/hell/achievement_47_hell_wild_1.qst",
+              "name": "深渊任务（可自己改写前置和更早的深渊任务）"
+            },
+            {
+              "path": "map/aganzo/hell_aganzo.map",
+              "name": "深渊房间（hell 类型的 map ）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "特效种类分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/body.obj",
+              "name": "光炎剑的火球特效类型（需要ptl文件才可以运作）"
+            },
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/attackinfo/attack.atk",
+              "name": "光炎剑火球的伤害增幅"
+            },
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/animation/body.ani",
+              "name": "光炎剑火球的运动动画"
+            },
+            {
+              "path": "passiveobject/common/shootingstaritem.obj",
+              "name": "流光星陨刀的陨石类型（不需要ptl文件）"
+            },
+            {
+              "path": "passiveobject/passiveobject.kor.str",
+              "name": "特效描述文件"
+            },
+            {
+              "path": "passiveobject/passiveobject.lst",
+              "name": "特效列表"
+            },
+            {
+              "path": "passiveobject/old passiveobject.lst",
+              "name": "古老的特效列表"
+            },
+            {
+              "path": "passiveobject/mapobject/trap/particle/dragonheadenergyball.ptl",
+              "name": "光炎剑的ptl文件（西岚剑舞剑气移动可以参考这个）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "技能关联分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "clientonly/cancelskilllist.co",
+              "name": "强制技能"
+            },
+            {
+              "path": "clientonly/hotkeysystem.co",
+              "name": "技能热键"
+            },
+            {
+              "path": "clientonly/hotkeysystem.co",
+              "name": "热键指令"
+            },
+            {
+              "path": "clientonly/skillshoptreespindex.co",
+              "name": "技能树目录"
+            },
+            {
+              "path": "clientonly/skillshoptextguide.co",
+              "name": "技能商店指示"
+            },
+            {
+              "path": "clientonly/skillshoptreetpindex.co",
+              "name": "ex技能目录（没有外传职业）"
+            },
+            {
+              "path": "skill/skilllist.lst",
+              "name": "全职业技能列表"
+            },
+            {
+              "path": "skill/skill.kor.str",
+              "name": "全职业技能描述"
+            },
+            {
+              "path": "ui/skill/guildskillbuywindow.ui",
+              "name": "公会技能的UI"
+            },
+            {
+              "path": "etc/ultimateskillcutscene.etc",
+              "name": "全职业觉醒插图"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "活动参数分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/etc.kor.str",
+              "name": "活动的描述"
+            },
+            {
+              "path": "etc/eventupgradejar.etc",
+              "name": "强化活动的活动表"
+            },
+            {
+              "path": "etc/exchangeitemnpc.etc",
+              "name": "NPC送礼与反礼"
+            },
+            {
+              "path": "etc/goldlimitbylevel.etc",
+              "name": "金币上限（最高可改20e）"
+            },
+            {
+              "path": "etc/ingameadvertisementparameter.etc",
+              "name": "游戏内的广告参数（可删）"
+            },
+            {
+              "path": "etc/loadingadvermessage.etc",
+              "name": "进入副本时读条的描述"
+            },
+            {
+              "path": "etc/newcashshop_restrict.etc",
+              "name": "限制账号或角色购买某物品"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "抽奖机"
+            },
+            {
+              "path": "event/eventreward/reward_at_gunner.evt",
+              "name": "活动装备奖励"
+            },
+            {
+              "path": "event/eventcharacter/40_event_character.evt",
+              "name": "幸运角色提升技能等级"
+            },
+            {
+              "path": "event/attendance.evt",
+              "name": "出席活动1"
+            },
+            {
+              "path": "event/avatardisjointrandomreward.evt",
+              "name": "出席活动2"
+            },
+            {
+              "path": "event/bingoevent.evt",
+              "name": "冰果活动"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "屏幕上方滚动公告"
+            },
+            {
+              "path": "event/exchangerandomitemreward.evt",
+              "name": "出席活动3"
+            },
+            {
+              "path": "event/heromissionevent.evt",
+              "name": "夏日活动"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级的邮件（可从1级开始写）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "冒险团的分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团额外经验金币"
+            },
+            {
+              "path": "etc/linksystem/charactermanage.etc",
+              "name": "冒险团详细参数（具体参数参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/linksystem/striker.etc",
+              "name": "冒险团支援兵参数（详细请参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/linksystem/strikercombo.lst",
+              "name": "冒险团支援兵技能参数列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "套装详细分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "equipment/character/partset/2choroset1.equ",
+              "name": "套装文件 1"
+            },
+            {
+              "path": "equipment/character/partset/eventavatarset02.equ",
+              "name": "普通时装套装属性"
+            },
+            {
+              "path": "equipment/character/partset/rareset.equ",
+              "name": "天空套套装属性"
+            },
+            {
+              "path": "equipment/character/partset2/chn_part_set_30084.equ",
+              "name": "套装文件 2 （可自定义）"
+            },
+            {
+              "path": "etc/equipmenteffectset.etc",
+              "name": "时装版套装写法2 可加描述"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性登记处"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "宠物文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "creature/2013kids/enryu/enryu.cre",
+              "name": "宠物文件"
+            },
+            {
+              "path": "creature/2013kids/enryu/skill/overskill.skl",
+              "name": "宠物终结技"
+            },
+            {
+              "path": "creature/2013kids/enryu/particle/overskill.ptl",
+              "name": "宠物技能运行文件"
+            },
+            {
+              "path": "creature/2013kids/enryu/attackinfo/skill.atk",
+              "name": "宠物atk（伤害控制）"
+            },
+            {
+              "path": "creature/2013kids/enryu/animation/skill.ani",
+              "name": "宠物技能动画"
+            },
+            {
+              "path": "creature/2013kids/enryu/animation/move.ani",
+              "name": "宠物移动动画（ani）"
+            },
+            {
+              "path": "creature/2016summer/skill/skill.skl",
+              "name": "解除异常状态（宠物技能）"
+            },
+            {
+              "path": "creature/2017newyear/skill/mage_normal.skl",
+              "name": "宠物的普通技能"
+            },
+            {
+              "path": "creature/script/charp.wrd",
+              "name": "宠物喊话（名称对应宠物）"
+            },
+            {
+              "path": "creature/creature.kor.str",
+              "name": "宠物技能描述（可无视）"
+            },
+            {
+              "path": "creature/exptable.tbl",
+              "name": "宠物升级经验"
+            },
+            {
+              "path": "equipment/creature/cannonfairy_blue.equ",
+              "name": "宠物（以装备的形式）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "城镇文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "aura/test.ora",
+              "name": "光环移动（CD需要装备改）"
+            },
+            {
+              "path": "town/title/alfhlyra.ani",
+              "name": "城镇地图的动画（阿法利亚地区）"
+            },
+            {
+              "path": "town/town.kor.str",
+              "name": "城镇描述文件"
+            },
+            {
+              "path": "map/elvengard/(f)gate.map",
+              "name": "城镇型地图（此类地图不存在地图列表中）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "异界气息分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "stackable/consumption_1257.stk",
+              "name": "异次元之黄色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1255.stk",
+              "name": "异次元之红色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1256.stk",
+              "name": "异次元之蓝色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1254.stk",
+              "name": "异次元之黑色气息（可以自己写 - 强无敌）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "角色职业分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "character/character.jpn.lst",
+              "name": "初始角色邮件列表"
+            },
+            {
+              "path": "character/character.jpn.str",
+              "name": "未知的描述文件"
+            },
+            {
+              "path": "character/character.kor.str",
+              "name": "角色职业名字（角色文件也要改）"
+            },
+            {
+              "path": "character/exptable.tbl",
+              "name": "角色每次升级所需经验"
+            },
+            {
+              "path": "clientonly/gmcmdmap.co",
+              "name": "GM特殊指令"
+            },
+            {
+              "path": "clientonly/joypadmapping.co",
+              "name": "手柄DNF映射文件"
+            },
+            {
+              "path": "equipment/character/atfighter.lay",
+              "name": "格斗家装备模型动画"
+            },
+            {
+              "path": "etc/accountcargo.etc",
+              "name": "账号金库"
+            },
+            {
+              "path": "etc/actionpointsystem.etc",
+              "name": "活跃度"
+            },
+            {
+              "path": "etc/chatsystem.etc",
+              "name": "聊天表情（详细）"
+            },
+            {
+              "path": "etc/chn_equipmentsockettypelist.etc",
+              "name": "装备可穿戴插槽"
+            },
+            {
+              "path": "etc/jobexplanation.etc",
+              "name": "创建角色时的游戏介绍"
+            },
+            {
+              "path": "etc/newbierecommendselectoption.etc",
+              "name": "时装按角色选定技能"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "副职业类分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "character/expertjob.etc",
+              "name": "分解机文件（与角色等级相关）"
+            },
+            {
+              "path": "character/expertjob.lst",
+              "name": "副职业列表"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "分解机详细参数"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "国服专属独特",
+          "groups": [],
+          "entries": [
+            {
+              "path": "town/chn_relic_secret_building.twn",
+              "name": "司天鉴地区"
+            },
+            {
+              "path": "dungeon/kcontents3/hell/hell_retry.dgn",
+              "name": "智慧的引导"
+            },
+            {
+              "path": "dungeon/kcontents3/hell/hell_retry.dgn",
+              "name": "智慧的引导（冒险级）"
+            },
+            {
+              "path": "equipment/character/common/talisman/100400307.equ",
+              "name": "荧光护石 - 拔刀斩"
+            },
+            {
+              "path": "equipment/character/common/flag/100380051.equ",
+              "name": "完美的野兽勋章"
+            },
+            {
+              "path": "dungeon/kcontents2/theevildomwar/5428_evildomwar_dumy.dgn",
+              "name": "魔界大战"
+            },
+            {
+              "path": "event/researchlifepowereventscript.evt",
+              "name": "国服签到活动"
+            },
+            {
+              "path": "worldmap/loschest.wdm",
+              "name": "德洛斯矿山 - 副本接口"
+            },
+            {
+              "path": "worldmap/stadium.wdm",
+              "name": "竞技场副本接口"
+            },
+            {
+              "path": "town/collosseumofempire.twn",
+              "name": "帝国竞技场 - 城镇地区"
+            },
+            {
+              "path": "stackable/10163001/10163859.stk",
+              "name": "白金徽章 - 神罚之锤"
+            },
+            {
+              "path": "stackable/10163001/10163994.stk",
+              "name": "斗气转换装置"
+            },
+            {
+              "path": "npc/rothon.npc",
+              "name": "诺顿大师（装备改造、继承与铭刻）"
+            },
+            {
+              "path": "aicharacter/kcontents3/cataclysm/rearad/darktemple/grandis_gracia/grandis_gracia.aic",
+              "name": "歌兰蒂斯 . 格拉西亚 （APC 超强 ）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "强化增幅锻造分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅文件"
+            },
+            {
+              "path": "etc/serverparameter.etc",
+              "name": "保护券"
+            },
+            {
+              "path": "etc/amplifyitem.etc",
+              "name": "洗红字更偏向的属性"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造文件（详细参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化文件（详细参考大狗王的笔记）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "chr",
+          "groups": [],
+          "entries": [
+            {
+              "path": "character/swordman/swordman.chr",
+              "name": "男鬼剑士"
+            },
+            {
+              "path": "character/fighter/fighter.chr",
+              "name": "女格斗家"
+            },
+            {
+              "path": "character/gunner/gunner.chr",
+              "name": "男神枪手"
+            },
+            {
+              "path": "character/mage/mage.chr",
+              "name": "女魔法师"
+            },
+            {
+              "path": "character/priest/priest.chr",
+              "name": "男圣职者"
+            },
+            {
+              "path": "character/gunner/atgunner.chr",
+              "name": "女神枪手"
+            },
+            {
+              "path": "character/thief/thief.chr",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "character/fighter/atfighter.chr",
+              "name": "男格斗家"
+            },
+            {
+              "path": "character/mage/atmage.chr",
+              "name": "男魔法师"
+            },
+            {
+              "path": "character/swordman/demonicswordman.chr",
+              "name": "黑暗武士"
+            },
+            {
+              "path": "character/mage/creatormage.chr",
+              "name": "缔造者"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "职业技能列表.lst",
+          "groups": [],
+          "entries": [
+            {
+              "path": "skill/swordmanskill.lst",
+              "name": "男鬼剑士"
+            },
+            {
+              "path": "skill/atswordmanskill.lst",
+              "name": "女鬼剑士"
+            },
+            {
+              "path": "skill/atfighterskill.lst",
+              "name": "男格斗家"
+            },
+            {
+              "path": "skill/fighterskill.lst",
+              "name": "女格斗家"
+            },
+            {
+              "path": "skill/gunnerskill.lst",
+              "name": "男神枪手"
+            },
+            {
+              "path": "skill/atgunnerskill.lst",
+              "name": "女神枪手"
+            },
+            {
+              "path": "skill/atmageskill.lst",
+              "name": "男魔法师"
+            },
+            {
+              "path": "skill/mageskill.lst",
+              "name": "女魔法师"
+            },
+            {
+              "path": "skill/thiefskill.lst",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "skill/priestskill.lst",
+              "name": "男圣职者"
+            },
+            {
+              "path": "skill/demonicswordman.lst",
+              "name": "黑暗武士"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "技能树",
+          "groups": [],
+          "entries": [
+            {
+              "path": "clientonly/skilltree/swordman_sp.co",
+              "name": "鬼剑"
+            },
+            {
+              "path": "clientonly/skilltree/fighter_sp.co",
+              "name": "女格斗家"
+            },
+            {
+              "path": "clientonly/skilltree/gunner_sp.co",
+              "name": "男神枪手"
+            },
+            {
+              "path": "clientonly/skilltree/mage_sp.co",
+              "name": "女魔法师"
+            },
+            {
+              "path": "clientonly/skilltree/priest_sp.co",
+              "name": "男圣职者"
+            },
+            {
+              "path": "clientonly/skilltree/atgunner_sp.co",
+              "name": "女神枪手"
+            },
+            {
+              "path": "clientonly/skilltree/thief_sp.co",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "clientonly/skilltree/atfighter_sp.co",
+              "name": "男格斗家"
+            },
+            {
+              "path": "clientonly/skilltree/atmage_sp.co",
+              "name": "男魔法师"
+            },
+            {
+              "path": "clientonly/skilltree/demonicswordman_sp.co",
+              "name": "黑暗武士"
+            },
+            {
+              "path": "clientonly/skilltree/creator_sp.co",
+              "name": "缔造者"
+            },
+            {
+              "path": "clientonly/skilltree/atswordman_sp.co",
+              "name": "女鬼剑士"
+            },
+            {
+              "path": "clientonly/skilltree/swordman_sp.co",
+              "name": "男鬼剑士"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "特殊",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/newcashshop.etc",
+              "name": "商   城"
+            },
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对"
+            },
+            {
+              "path": "etc/dialogwindowimageindex.etc",
+              "name": "对话立绘"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/hiddennpc.etc",
+              "name": "隐藏NPC"
+            },
+            {
+              "path": "etc/titlebook.etc",
+              "name": "称号簿"
+            },
+            {
+              "path": "etc/questshop.etc",
+              "name": "QP商店"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/secretshop.etc",
+              "name": "加百利商店"
+            },
+            {
+              "path": "etc/skillpreload.etc",
+              "name": "技能调用ani"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "etc/craneminigameitem.etc",
+              "name": "娃娃机"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "自动售货机"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "左上角"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/loadingadvermessage.etc",
+              "name": "读条Tip"
+            },
+            {
+              "path": "etc/serverparameter.etc",
+              "name": "基佬的信任"
+            },
+            {
+              "path": "etc/chn_server_limititemusageinfo.etc",
+              "name": "每日恢复门票"
+            },
+            {
+              "path": "etc/compoundavatar_swordman.etc",
+              "name": "天空套合成控制"
+            },
+            {
+              "path": "etc/quickparty.etc",
+              "name": "组队活动"
+            }
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "path": "stackable/addition_chn/10158964.stk",
+          "name": "添加道具"
+        },
+        {
+          "path": "equipment/fangju/100050697.equ",
+          "name": "添加装备"
+        },
+        {
+          "path": "n_quest/daily_add/10103.qst",
+          "name": "添加任务"
+        },
+        {
+          "path": "stackable/monstercard/kapianbaozhu/3300003.stk",
+          "name": "添加卡片"
+        },
+        {
+          "path": "monster/mengtaixiao/heiqishi/sandorexpeller_mtx.mob",
+          "name": "黑骑士"
+        },
+        {
+          "path": "n_quest/daily_add/10179.qst",
+          "name": "教学任务"
+        },
+        {
+          "path": "equipment/character/partset2/set_item_12533.equ",
+          "name": "套装文件2"
+        }
+      ]
+    },
+    {
+      "id": "",
+      "name": "110+",
+      "groups": [
+        {
+          "id": "",
+          "name": "所有书签均 AI 整理",
+          "groups": [],
+          "entries": [
+            {
+              "path": "itemshop/(r)equipmentshop7.shp",
+              "name": "赛利亚商店"
+            },
+            {
+              "path": "etc/pcroom4.vm",
+              "name": "抽奖机"
+            },
+            {
+              "path": "event/attendance.evt",
+              "name": "签到活动奖励"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/unlimitchallenge.etc",
+              "name": "简易升级邮件"
+            },
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/titlebook.etc",
+              "name": "称号簿"
+            },
+            {
+              "path": "etc/questshop.etc",
+              "name": "QP商店"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "分解机"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "clientonly/skilltree/swordman_sp.co",
+              "name": "SP技能树"
+            },
+            {
+              "path": "character/swordman/swordman.chr",
+              "name": "角色初始属性"
+            },
+            {
+              "path": "monster/monsterapcdifficultybonus.tbl",
+              "name": "全局怪物属性"
+            },
+            {
+              "path": "etc/ultimatedungeonlist.etc",
+              "name": "添加地狱难度"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "自动售货机"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/(r)serverparameter.etc",
+              "name": "强化增幅保护"
+            },
+            {
+              "path": "etc/growthpowerrewardbuff.etc",
+              "name": "林纳斯升级给的奖励"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "左上角活动说明文件"
+            },
+            {
+              "path": "etc/premiumlist_new.etc",
+              "name": "各种契约的信息"
+            },
+            {
+              "path": "etc/premiumserviceeffect.etc",
+              "name": "各种契约附加效果的指向"
+            },
+            {
+              "path": "etc/sptable.etc",
+              "name": "角色升级SP点"
+            },
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团额外加成"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "lst列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "list/quest.lst",
+              "name": "任务列表"
+            },
+            {
+              "path": "list/stackable.lst",
+              "name": "道具列表"
+            },
+            {
+              "path": "list/equipment.lst",
+              "name": "装备列表"
+            },
+            {
+              "path": "list/dungeon.lst",
+              "name": "副本列表"
+            },
+            {
+              "path": "list/map.lst",
+              "name": "地图列表"
+            },
+            {
+              "path": "list/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "list/passiveobject.lst",
+              "name": "OBJ列表"
+            },
+            {
+              "path": "list/npc.lst",
+              "name": "NPC列表"
+            },
+            {
+              "path": "list/itemshop.lst",
+              "name": "商店列表"
+            },
+            {
+              "path": "list/aicharacter.lst",
+              "name": "AIC列表"
+            },
+            {
+              "path": "list/creature.lst",
+              "name": "宠物列表"
+            },
+            {
+              "path": "list/appendage.lst",
+              "name": "APD列表"
+            },
+            {
+              "path": "list/town.lst",
+              "name": "城镇列表"
+            },
+            {
+              "path": "list/worldmap.lst",
+              "name": "副本接口列表"
+            },
+            {
+              "path": "list/aicharacter.lst",
+              "name": "APC列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "掉率爆率",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/worlddrop.etc",
+              "name": "世界掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monster_hell.etc",
+              "name": "深渊掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monseter.etc",
+              "name": "怪物掉落+EX"
+            },
+            {
+              "path": "etc/itemdropinfo_clearreward.etc",
+              "name": "翻牌掉落"
+            },
+            {
+              "path": "etc/independent_drop.etc",
+              "name": "独立掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_common.etc",
+              "name": "金币掉落"
+            },
+            {
+              "path": "etc/worlddrop.etc",
+              "name": "全局掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_monseter.etc",
+              "name": "怪物掉落"
+            },
+            {
+              "path": "etc/independentdrop.lst",
+              "name": "外部独立掉落"
+            },
+            {
+              "path": "etc/itemdropinfo_common.etc",
+              "name": "可破坏建筑物物品掉落"
+            },
+            {
+              "path": "etc/ultimatedungeonlist.etc",
+              "name": "地狱难度"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "常用etc",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/craneminigameitem.etc",
+              "name": "娃娃机"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "黑钻机"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/(r)serverparameter.etc",
+              "name": "保护券-周末疲劳加倍"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "常用列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "list/equipment.lst",
+              "name": "装备.equ"
+            },
+            {
+              "path": "list/stackable.lst",
+              "name": "道具.stk"
+            },
+            {
+              "path": "list/dungeon.lst",
+              "name": "副本.dgn"
+            },
+            {
+              "path": "list/map.lst",
+              "name": "地图.map"
+            },
+            {
+              "path": "list/monster.lst",
+              "name": "怪物.mob"
+            },
+            {
+              "path": "list/passiveobject.lst",
+              "name": "特效.obj"
+            },
+            {
+              "path": "list/npc.lst",
+              "name": "NPC.npc"
+            },
+            {
+              "path": "list/quest.lst",
+              "name": "任务.qst"
+            },
+            {
+              "path": "list/itemshop.lst",
+              "name": "商店.shp"
+            },
+            {
+              "path": "list/creature.lst",
+              "name": "宠物.cre"
+            },
+            {
+              "path": "list/appendage.lst",
+              "name": "APD.apd"
+            },
+            {
+              "path": "list/town.lst",
+              "name": "城镇.twn"
+            },
+            {
+              "path": "list/region.lst",
+              "name": "区域.rgn"
+            },
+            {
+              "path": "list/worldmap.lst",
+              "name": "副本接口.wdm"
+            },
+            {
+              "path": "list/aicharacter.lst",
+              "name": "人偶.aic"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "etc分解"
+            },
+            {
+              "path": "clientonly/cancelskilllist.co",
+              "name": "技能树"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "UI接口分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "worldmap/ui/timegate.xui",
+              "name": "时空之门UI接口"
+            },
+            {
+              "path": "worldmap/timegate.wdm",
+              "name": "时空之门地图接口文件"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "各文件列表",
+          "groups": [],
+          "entries": [
+            {
+              "path": "list/quest.lst",
+              "name": "任务列表"
+            },
+            {
+              "path": "list/stackable.lst",
+              "name": "道具列表"
+            },
+            {
+              "path": "list/equipment.lst",
+              "name": "装备列表"
+            },
+            {
+              "path": "list/dungeon.lst",
+              "name": "副本列表"
+            },
+            {
+              "path": "list/map.lst",
+              "name": "地图列表"
+            },
+            {
+              "path": "list/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "list/passiveobject.lst",
+              "name": "OBJ列表"
+            },
+            {
+              "path": "list/npc.lst",
+              "name": "NPC列表"
+            },
+            {
+              "path": "list/itemshop.lst",
+              "name": "商店列表"
+            },
+            {
+              "path": "list/aicharacter.lst",
+              "name": "AIC列表"
+            },
+            {
+              "path": "list/creature.lst",
+              "name": "宠物列表"
+            },
+            {
+              "path": "list/appendage.lst",
+              "name": "APD列表"
+            },
+            {
+              "path": "list/town.lst",
+              "name": "城镇列表"
+            },
+            {
+              "path": "list/operatingvalue.lst",
+              "name": "绝望之塔房间APC列表"
+            },
+            {
+              "path": "list/aura.lst",
+              "name": "光环列表"
+            },
+            {
+              "path": "list/character.lst",
+              "name": "初始角色邮件列表"
+            },
+            {
+              "path": "list/expertjob.lst",
+              "name": "副职业列表"
+            },
+            {
+              "path": "list/chatemoticon.lst",
+              "name": "聊天表情列表"
+            },
+            {
+              "path": "list/dungeon.lst",
+              "name": "副本邮件列表"
+            },
+            {
+              "path": "etc/independentdrop/1_magneus_normal.etc",
+              "name": "独立掉落外部列表"
+            },
+            {
+              "path": "etc/itemdictionary/(r)independentdropinfo.etc",
+              "name": "显示独立掉落的装备"
+            },
+            {
+              "path": "etc/linksystem/strikercombo.lst",
+              "name": "支援兵参数详细列表"
+            },
+            {
+              "path": "etc/randomoption/randomoption.lst",
+              "name": "魔法封印封印属性的列表"
+            },
+            {
+              "path": "etc/randomoption/randomoptionskill.lst",
+              "name": "魔法封印可增加技能的列表"
+            },
+            {
+              "path": "list/eventcharacter.lst",
+              "name": "活动提升技能等级列表"
+            },
+            {
+              "path": "event/ingameeventlist.evt",
+              "name": "活动列表（详细）"
+            },
+            {
+              "path": "list/map.lst",
+              "name": "地图邮政列表"
+            },
+            {
+              "path": "skill/skilllist.lst",
+              "name": "全职业技能列表"
+            },
+            {
+              "path": "stagemap/stagemap.lst",
+              "name": "阶段图列表"
+            },
+            {
+              "path": "passiveobject/old passiveobject.lst",
+              "name": "古老的特效列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "aic文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "string/aicharacter.uv.str",
+              "name": "所有aic默认名字喊话"
+            },
+            {
+              "path": "list/aicharacter.lst",
+              "name": "所有APC的列表"
+            },
+            {
+              "path": "list/operatingvalue.lst",
+              "name": "每十层绝望之塔APC列表"
+            },
+            {
+              "path": "aicharacter/fighter/28/28_doll.aic",
+              "name": "28号人偶"
+            },
+            {
+              "path": "aicharacter/fighter/28/ai/action.ai",
+              "name": "人偶的AI文件"
+            },
+            {
+              "path": "aicharacter/fighter/28/ai/movemethod.ai",
+              "name": "人偶移动AI的判定"
+            },
+            {
+              "path": "aicharacter/_jojochan/atfighter/agarum_atfighter_grap/agarum_fighter_grap.aic",
+              "name": "复制体aic(心魔)"
+            },
+            {
+              "path": "aicharacter/_jojochan/atfighter/agarum_atfighter_grap/key/air.key",
+              "name": "KEY文件"
+            },
+            {
+              "path": "etc/linksystem/striker.etc",
+              "name": "支援兵系统（可改技能）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "杂项参数分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "list/chatemoticon.lst",
+              "name": "聊天时的表情列表"
+            },
+            {
+              "path": "string/chatemoticon.uv.str",
+              "name": "表情的描述文件"
+            },
+            {
+              "path": "string/clientonly.uv.str",
+              "name": "菜单的描述文件"
+            },
+            {
+              "path": "clientonly/skillshoptextguide.co",
+              "name": "技能商店指示UI"
+            },
+            {
+              "path": "etc/guide/guidelist.glist",
+              "name": "进入副本出现的随机指南"
+            },
+            {
+              "path": "etc/itemdictionary/(r)baseitemdictionarytable.etc",
+              "name": "装备词典基准表"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团经验金币"
+            },
+            {
+              "path": "etc/linksystem/charactermanage.etc",
+              "name": "冒险团详细参数"
+            },
+            {
+              "path": "etc/pvppracticecombo/atfighter.etc",
+              "name": "PKC的练习"
+            },
+            {
+              "path": "etc/pvprevisiontable/combodamagerevisiontable.etc",
+              "name": "PKC扣血保护机制"
+            },
+            {
+              "path": "etc/pvpskilltree/atgunner.etc",
+              "name": "PKC技能平衡"
+            },
+            {
+              "path": "etc/randomoption/auctionrandomcategory.etc",
+              "name": "魔法封印的基础目录"
+            },
+            {
+              "path": "etc/randomoption/optiongrouping.etc",
+              "name": "魔法封印（不同种类之一）的权重"
+            },
+            {
+              "path": "etc/randomoption/regenerationrandomoption.etc",
+              "name": "等级提高魔法封印出现3属性概率增加"
+            },
+            {
+              "path": "etc/ultimateskillani/thief_necro.ani",
+              "name": "觉醒技能的插图"
+            },
+            {
+              "path": "etc/amplifyitem.etc",
+              "name": "红字装备随机率"
+            },
+            {
+              "path": "etc/auction_recommend_item.etc",
+              "name": "拍卖推荐装备的等级"
+            },
+            {
+              "path": "etc/avatarcolorvariation.etc",
+              "name": "时装染色"
+            },
+            {
+              "path": "etc/billingtestdata.etc",
+              "name": "广告测试的数据"
+            },
+            {
+              "path": "etc/emotionexpressiondata.etc",
+              "name": "心情卡片特效"
+            },
+            {
+              "path": "etc/fairpvpstat.etc",
+              "name": "公平PKC属性"
+            },
+            {
+              "path": "etc/pvpchannellist.etc",
+              "name": "PKC列表与描述"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "游戏公告"
+            },
+            {
+              "path": "npc/siran.npc",
+              "name": "npc西岚"
+            },
+            {
+              "path": "stackable/monstercard/mcard_dominions.stk",
+              "name": "怪物卡片（阿加门龙大天使）"
+            },
+            {
+              "path": "ui/hud/mainmenuwindow.xui",
+              "name": "血量或左侧正中间的广告UI"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "地图类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/(r)cerashop_first.etc",
+              "name": "废弃的商城"
+            },
+            {
+              "path": "map/deadtower/001f.map",
+              "name": "死亡之塔类型"
+            },
+            {
+              "path": "map/kingsruins/n4804.map",
+              "name": "远古地下城类型（王的遗迹）"
+            },
+            {
+              "path": "map/realskycastle/realskycastle06.map",
+              "name": "异界地下城类型（蠕动之城）"
+            },
+            {
+              "path": "map/r_kingsruins/b4801.map",
+              "name": "魂 . 远古地图类型 （魂 . 遗迹）"
+            },
+            {
+              "path": "string/town.uv.str",
+              "name": "城镇描述文件"
+            },
+            {
+              "path": "string/worldmap.uv.str",
+              "name": "城镇地区的描述"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "副本类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "aicharacter/towerofdespair_apc.etc",
+              "name": "绝望之塔APC附属文件"
+            },
+            {
+              "path": "data/extern.sd",
+              "name": "PKC数据"
+            },
+            {
+              "path": "dungeon/act1/grakkarak.dgn",
+              "name": "普通副本（格拉卡这种）"
+            },
+            {
+              "path": "dungeon/advancealtar/advancealtar_stage_01.dgn",
+              "name": "守护者祭坛（台服活动本）"
+            },
+            {
+              "path": "dungeon/ancient/noirpera.dgn",
+              "name": "远古地下城（不含遗迹）"
+            },
+            {
+              "path": "dungeon/impossible/goblinkingdom.dgn",
+              "name": "异界地下城"
+            },
+            {
+              "path": "dungeon/quest/deadmoon.dgn",
+              "name": "任务副本地下城"
+            },
+            {
+              "path": "dungeon/riskdungeon/r_kingsruins.dgn",
+              "name": "魂 . 远古   副本"
+            },
+            {
+              "path": "dungeon/shonantournament/bluedragon.dgn",
+              "name": "龙斗会地下城"
+            },
+            {
+              "path": "list/dungeon.lst",
+              "name": "副本邮件列表"
+            },
+            {
+              "path": "string/dungeon.uv.str",
+              "name": "副本外的描述"
+            },
+            {
+              "path": "etc/advancealtar/advancealtarmode.etc",
+              "name": "守护者祭坛活动设置（详细）"
+            },
+            {
+              "path": "etc/guild.etc",
+              "name": "公会系统"
+            },
+            {
+              "path": "map/lorien/s1.map",
+              "name": "普通副本的地图（洛兰）"
+            },
+            {
+              "path": "n_quest/epicquest.lst",
+              "name": "主线任务清单（GM清楚任务的数量？）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "怪物类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "monster/lotus/lotus.mob",
+              "name": "普通AI怪物"
+            },
+            {
+              "path": "monster/spikeking/spikeking_quest.mob",
+              "name": "玩家技能召唤的怪物（采用百分比攻防）"
+            },
+            {
+              "path": "monster/newmonsters/dragon/scasa/action/alive.act",
+              "name": "新版怪物的act文件（冰龙斯卡萨）"
+            },
+            {
+              "path": "string/monster.uv.str",
+              "name": "怪物名称与描述（基本无用）"
+            },
+            {
+              "path": "list/monster.lst",
+              "name": "怪物列表"
+            },
+            {
+              "path": "monster/monsterapcdifficultybonus.tbl",
+              "name": "全局怪物难度（详情参考大狗王怪物笔记）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "深渊类型分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对组合（详情参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/itemdropinfo_monster_hell.etc",
+              "name": "深渊掉落的详细参数"
+            },
+            {
+              "path": "n_quest/hell/achievement_47_hell_wild_1.qst",
+              "name": "深渊任务（可自己改写前置和更早的深渊任务）"
+            },
+            {
+              "path": "map/aganzo/hell_aganzo.map",
+              "name": "深渊房间（hell 类型的 map ）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "特效种类分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/body.obj",
+              "name": "光炎剑的火球特效类型（需要ptl文件才可以运作）"
+            },
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/attackinfo/attack.atk",
+              "name": "光炎剑火球的伤害增幅"
+            },
+            {
+              "path": "passiveobject/actionobject/spc/_burnfire/animation/body.ani",
+              "name": "光炎剑火球的运动动画"
+            },
+            {
+              "path": "passiveobject/common/shootingstaritem.obj",
+              "name": "流光星陨刀的陨石类型（不需要ptl文件）"
+            },
+            {
+              "path": "string/passiveobject.uv.str",
+              "name": "特效描述文件"
+            },
+            {
+              "path": "list/passiveobject.lst",
+              "name": "特效列表"
+            },
+            {
+              "path": "passiveobject/old passiveobject.lst",
+              "name": "古老的特效列表"
+            },
+            {
+              "path": "passiveobject/mapobject/trap/particle/dragonheadenergyball.ptl",
+              "name": "光炎剑的ptl文件（西岚剑舞剑气移动可以参考这个）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "技能关联分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "clientonly/cancelskilllist.co",
+              "name": "强制技能"
+            },
+            {
+              "path": "clientonly/hotkeysystem.co",
+              "name": "技能热键"
+            },
+            {
+              "path": "clientonly/hotkeysystem.co",
+              "name": "热键指令"
+            },
+            {
+              "path": "clientonly/skillshoptreespindex.co",
+              "name": "技能树目录"
+            },
+            {
+              "path": "clientonly/skillshoptextguide.co",
+              "name": "技能商店指示"
+            },
+            {
+              "path": "clientonly/skillshoptreetpindex.co",
+              "name": "ex技能目录（没有外传职业）"
+            },
+            {
+              "path": "skill/skilllist.lst",
+              "name": "全职业技能列表"
+            },
+            {
+              "path": "string/skill.uv.str",
+              "name": "全职业技能描述"
+            },
+            {
+              "path": "ui/skill/guildskillbuywindow.xui",
+              "name": "公会技能的UI"
+            },
+            {
+              "path": "etc/ultimateskillcutscene.etc",
+              "name": "全职业觉醒插图"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "活动参数分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "string/etc.uv.str",
+              "name": "活动的描述"
+            },
+            {
+              "path": "etc/eventupgradejar.etc",
+              "name": "强化活动的活动表"
+            },
+            {
+              "path": "etc/goldlimitbylevel.etc",
+              "name": "金币上限（最高可改20e）"
+            },
+            {
+              "path": "etc/ingameadvertisementparameter.etc",
+              "name": "游戏内的广告参数（可删）"
+            },
+            {
+              "path": "etc/loadingadvermessage.etc",
+              "name": "进入副本时读条的描述"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "抽奖机"
+            },
+            {
+              "path": "event/eventreward/reward_at_gunner.evt",
+              "name": "活动装备奖励"
+            },
+            {
+              "path": "event/eventcharacter/40_event_character.evt",
+              "name": "幸运角色提升技能等级"
+            },
+            {
+              "path": "event/attendance.evt",
+              "name": "出席活动1"
+            },
+            {
+              "path": "event/avatardisjointrandomreward.evt",
+              "name": "出席活动2"
+            },
+            {
+              "path": "event/bingoevent.evt",
+              "name": "冰果活动"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "屏幕上方滚动公告"
+            },
+            {
+              "path": "event/exchangerandomitemreward.evt",
+              "name": "出席活动3"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级的邮件（可从1级开始写）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "冒险团的分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/linksystem/characlinksystem.etc",
+              "name": "冒险团额外经验金币"
+            },
+            {
+              "path": "etc/linksystem/charactermanage.etc",
+              "name": "冒险团详细参数（具体参数参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/linksystem/striker.etc",
+              "name": "冒险团支援兵参数（详细请参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/linksystem/strikercombo.lst",
+              "name": "冒险团支援兵技能参数列表"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "套装详细分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "equipment/character/partset/2choroset1.equ",
+              "name": "套装文件 1"
+            },
+            {
+              "path": "equipment/character/partset/eventavatarset02.equ",
+              "name": "普通时装套装属性"
+            },
+            {
+              "path": "equipment/character/partset/rareset.equ",
+              "name": "天空套套装属性"
+            },
+            {
+              "path": "etc/equipmenteffectset.etc",
+              "name": "时装版套装写法2 可加描述"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性登记处"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "宠物文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "creature/2013kids/enryu/enryu.cre",
+              "name": "宠物文件"
+            },
+            {
+              "path": "creature/2013kids/enryu/skill/overskill.skl",
+              "name": "宠物终结技"
+            },
+            {
+              "path": "creature/2013kids/enryu/particle/overskill.ptl",
+              "name": "宠物技能运行文件"
+            },
+            {
+              "path": "creature/2013kids/enryu/attackinfo/skill.atk",
+              "name": "宠物atk（伤害控制）"
+            },
+            {
+              "path": "creature/2013kids/enryu/animation/skill.ani",
+              "name": "宠物技能动画"
+            },
+            {
+              "path": "creature/2013kids/enryu/animation/move.ani",
+              "name": "宠物移动动画（ani）"
+            },
+            {
+              "path": "creature/2017newyear/skill/mage_normal.skl",
+              "name": "宠物的普通技能"
+            },
+            {
+              "path": "creature/script/charp.wrd",
+              "name": "宠物喊话（名称对应宠物）"
+            },
+            {
+              "path": "string/creature.uv.str",
+              "name": "宠物技能描述（可无视）"
+            },
+            {
+              "path": "creature/exptable.tbl",
+              "name": "宠物升级经验"
+            },
+            {
+              "path": "equipment/creature/cannonfairy_blue.equ",
+              "name": "宠物（以装备的形式）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "城镇文件分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "aura/test.ora",
+              "name": "光环移动（CD需要装备改）"
+            },
+            {
+              "path": "town/title/alfhlyra.ani",
+              "name": "城镇地图的动画（阿法利亚地区）"
+            },
+            {
+              "path": "string/town.uv.str",
+              "name": "城镇描述文件"
+            },
+            {
+              "path": "map/elvengard/gate.map",
+              "name": "城镇型地图（此类地图不存在地图列表中）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "异界气息分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "stackable/consumption_1257.stk",
+              "name": "异次元之黄色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1255.stk",
+              "name": "异次元之红色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1256.stk",
+              "name": "异次元之蓝色气息（可以自己写 - 强无敌）"
+            },
+            {
+              "path": "stackable/consumption_1254.stk",
+              "name": "异次元之黑色气息（可以自己写 - 强无敌）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "角色职业分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "list/character.lst",
+              "name": "初始角色邮件列表"
+            },
+            {
+              "path": "string/character.uv.str",
+              "name": "角色职业名字（角色文件也要改）"
+            },
+            {
+              "path": "character/exptable.tbl",
+              "name": "角色每次升级所需经验"
+            },
+            {
+              "path": "clientonly/gmcmdmap.co",
+              "name": "GM特殊指令"
+            },
+            {
+              "path": "etc/accountcargo.etc",
+              "name": "账号金库"
+            },
+            {
+              "path": "etc/chatsystem.etc",
+              "name": "聊天表情（详细）"
+            },
+            {
+              "path": "etc/jobexplanation.etc",
+              "name": "创建角色时的游戏介绍"
+            },
+            {
+              "path": "etc/newbierecommendselectoption.etc",
+              "name": "时装按角色选定技能"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "副职业类分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "character/expertjob.etc",
+              "name": "分解机文件（与角色等级相关）"
+            },
+            {
+              "path": "list/expertjob.lst",
+              "name": "副职业列表"
+            },
+            {
+              "path": "etc/disjoint.etc",
+              "name": "分解机详细参数"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "国服专属独特",
+          "groups": [],
+          "entries": [
+            {
+              "path": "dungeon/kcontents3/hell/hell.dgn",
+              "name": "智慧的引导"
+            },
+            {
+              "path": "dungeon/kcontents3/hell/hell.dgn",
+              "name": "智慧的引导（冒险级）"
+            },
+            {
+              "path": "equipment/character/common/talisman/100400307.equ",
+              "name": "荧光护石 - 拔刀斩"
+            },
+            {
+              "path": "equipment/character/common/flag/100380051.equ",
+              "name": "完美的野兽勋章"
+            },
+            {
+              "path": "dungeon/kcontents2/theevildomwar/5428_evildomwar_dumy.dgn",
+              "name": "魔界大战"
+            },
+            {
+              "path": "event/researchlifepowereventscript.evt",
+              "name": "国服签到活动"
+            },
+            {
+              "path": "worldmap/loschest.wdm",
+              "name": "德洛斯矿山 - 副本接口"
+            },
+            {
+              "path": "worldmap/stadium.wdm",
+              "name": "竞技场副本接口"
+            },
+            {
+              "path": "town/collosseumofempire.twn",
+              "name": "帝国竞技场 - 城镇地区"
+            },
+            {
+              "path": "stackable/10163001/10163859.stk",
+              "name": "白金徽章 - 神罚之锤"
+            },
+            {
+              "path": "stackable/10163001/10163994.stk",
+              "name": "斗气转换装置"
+            },
+            {
+              "path": "npc/rothon.npc",
+              "name": "诺顿大师（装备改造、继承与铭刻）"
+            },
+            {
+              "path": "aicharacter/kcontents3/cataclysm/rearad/darktemple/grandis_gracia/grandis_gracia.aic",
+              "name": "歌兰蒂斯 . 格拉西亚 （APC 超强 ）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "强化增幅锻造分析",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅文件"
+            },
+            {
+              "path": "etc/(r)serverparameter.etc",
+              "name": "保护券"
+            },
+            {
+              "path": "etc/amplifyitem.etc",
+              "name": "洗红字更偏向的属性"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造文件（详细参考大狗王的笔记）"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化文件（详细参考大狗王的笔记）"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "chr",
+          "groups": [],
+          "entries": [
+            {
+              "path": "character/swordman/swordman.chr",
+              "name": "男鬼剑士"
+            },
+            {
+              "path": "character/fighter/fighter.chr",
+              "name": "女格斗家"
+            },
+            {
+              "path": "character/gunner/gunner.chr",
+              "name": "男神枪手"
+            },
+            {
+              "path": "character/mage/mage.chr",
+              "name": "女魔法师"
+            },
+            {
+              "path": "character/priest/priest.chr",
+              "name": "男圣职者"
+            },
+            {
+              "path": "character/gunner/atgunner.chr",
+              "name": "女神枪手"
+            },
+            {
+              "path": "character/thief/thief.chr",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "character/fighter/atfighter.chr",
+              "name": "男格斗家"
+            },
+            {
+              "path": "character/mage/atmage.chr",
+              "name": "男魔法师"
+            },
+            {
+              "path": "character/mage/creatormage.chr",
+              "name": "缔造者"
+            },
+            {
+              "path": "character/swordman/atswordman.chr",
+              "name": "女鬼剑士"
+            },
+            {
+              "path": "character/priest/atpriest.chr",
+              "name": "女圣职者"
+            },
+            {
+              "path": "character/demoniclancer/demoniclancer.chr",
+              "name": "魔枪士"
+            },
+            {
+              "path": "character/gunblader/gunblader.chr",
+              "name": "枪剑士"
+            },
+            {
+              "path": "character/archer/archer.chr",
+              "name": "弓箭手"
+            },
+            {
+              "path": "character/swordman/dsswordman.chr",
+              "name": "黑暗武士"
+            },
+            {
+              "path": "character/knight/knight.chr",
+              "name": "守护者"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "职业技能列表.lst",
+          "groups": [],
+          "entries": [
+            {
+              "path": "skill/swordmanskill.lst",
+              "name": "男鬼剑士"
+            },
+            {
+              "path": "skill/atswordmanskill.lst",
+              "name": "女鬼剑士"
+            },
+            {
+              "path": "skill/atfighterskill.lst",
+              "name": "男格斗家"
+            },
+            {
+              "path": "skill/fighterskill.lst",
+              "name": "女格斗家"
+            },
+            {
+              "path": "skill/gunnerskill.lst",
+              "name": "男神枪手"
+            },
+            {
+              "path": "skill/atgunnerskill.lst",
+              "name": "女神枪手"
+            },
+            {
+              "path": "skill/atmageskill.lst",
+              "name": "男魔法师"
+            },
+            {
+              "path": "skill/mageskill.lst",
+              "name": "女魔法师"
+            },
+            {
+              "path": "skill/thiefskill.lst",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "skill/priestskill.lst",
+              "name": "男圣职者"
+            },
+            {
+              "path": "skill/atpriestskill.lst",
+              "name": "女圣职者"
+            },
+            {
+              "path": "skill/demoniclancerskill.lst",
+              "name": "魔枪士"
+            },
+            {
+              "path": "skill/gunbladerskill.lst",
+              "name": "枪剑士"
+            },
+            {
+              "path": "skill/archerskill.lst",
+              "name": "弓箭手"
+            },
+            {
+              "path": "skill/dsswordmanskill.lst",
+              "name": "黑暗武士"
+            },
+            {
+              "path": "skill/creatormageskill.lst",
+              "name": "缔造者"
+            },
+            {
+              "path": "skill/knight.lst",
+              "name": "守护者"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "技能树",
+          "groups": [],
+          "entries": [
+            {
+              "path": "clientonly/skilltree/fighter_sp.co",
+              "name": "女格斗家"
+            },
+            {
+              "path": "clientonly/skilltree/gunner_sp.co",
+              "name": "男神枪手"
+            },
+            {
+              "path": "clientonly/skilltree/mage_sp.co",
+              "name": "女魔法师"
+            },
+            {
+              "path": "clientonly/skilltree/priest_sp.co",
+              "name": "男圣职者"
+            },
+            {
+              "path": "clientonly/skilltree/atgunner_sp.co",
+              "name": "女神枪手"
+            },
+            {
+              "path": "clientonly/skilltree/thief_sp.co",
+              "name": "暗夜使者"
+            },
+            {
+              "path": "clientonly/skilltree/atfighter_sp.co",
+              "name": "男格斗家"
+            },
+            {
+              "path": "clientonly/skilltree/atmage_sp.co",
+              "name": "男魔法师"
+            },
+            {
+              "path": "clientonly/skilltree/demonicswordman_sp.co",
+              "name": "黑暗武士"
+            },
+            {
+              "path": "clientonly/skilltree/creator_sp.co",
+              "name": "缔造者"
+            },
+            {
+              "path": "clientonly/skilltree/atswordman_sp.co",
+              "name": "女鬼剑士"
+            },
+            {
+              "path": "clientonly/skilltree/swordman_sp.co",
+              "name": "男鬼剑士"
+            },
+            {
+              "path": "clientonly/skilltree/atpriest_sp.co",
+              "name": "女圣职者"
+            },
+            {
+              "path": "clientonly/skilltree/demoniclancer_sp.co",
+              "name": "魔枪士"
+            },
+            {
+              "path": "clientonly/skilltree/gunblader_sp.co",
+              "name": "枪剑士"
+            },
+            {
+              "path": "clientonly/skilltree/archer_sp.co",
+              "name": "弓箭手"
+            },
+            {
+              "path": "clientonly/skilltree/knight_sp.co",
+              "name": "守护者"
+            }
+          ]
+        },
+        {
+          "id": "",
+          "name": "特殊",
+          "groups": [],
+          "entries": [
+            {
+              "path": "etc/hellparty.etc",
+              "name": "深渊派对"
+            },
+            {
+              "path": "etc/dialogwindowimageindex.etc",
+              "name": "对话立绘"
+            },
+            {
+              "path": "etc/equipmentpartset.etc",
+              "name": "套装属性"
+            },
+            {
+              "path": "etc/hiddennpc.etc",
+              "name": "隐藏NPC"
+            },
+            {
+              "path": "etc/titlebook.etc",
+              "name": "称号簿"
+            },
+            {
+              "path": "etc/questshop.etc",
+              "name": "QP商店"
+            },
+            {
+              "path": "etc/amplifyupgrade.etc",
+              "name": "增幅"
+            },
+            {
+              "path": "etc/upgrade.etc",
+              "name": "强化"
+            },
+            {
+              "path": "etc/upgrade_separate.etc",
+              "name": "锻造"
+            },
+            {
+              "path": "etc/secretshop.etc",
+              "name": "加百利商店"
+            },
+            {
+              "path": "etc/skillpreload.etc",
+              "name": "技能调用ani"
+            },
+            {
+              "path": "etc/itemdictionary/(r)itemdictionary.etc",
+              "name": "装备词典"
+            },
+            {
+              "path": "etc/craneminigameitem.etc",
+              "name": "娃娃机"
+            },
+            {
+              "path": "event/levelupreward.evt",
+              "name": "升级邮件"
+            },
+            {
+              "path": "etc/pcroom.vm",
+              "name": "自动售货机"
+            },
+            {
+              "path": "event/eventlistwindow.evt",
+              "name": "左上角"
+            },
+            {
+              "path": "event/eventnotice.evt",
+              "name": "滚动公告"
+            },
+            {
+              "path": "etc/loadingadvermessage.etc",
+              "name": "读条Tip"
+            },
+            {
+              "path": "etc/(r)serverparameter.etc",
+              "name": "基佬的信任"
+            },
+            {
+              "path": "etc/compoundavatar_swordman.etc",
+              "name": "天空套合成控制"
+            },
+            {
+              "path": "etc/quickparty.etc",
+              "name": "组队活动"
+            }
+          ]
+        }
+      ],
+      "entries": []
+    }
+  ],
+  "entries": []
+}

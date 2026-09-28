@@ -1,0 +1,375 @@
+package services
+
+import (
+	"strings"
+	"testing"
+
+	"pvfine/internal/pvf"
+)
+
+func TestPreviewServiceParseEQUSampleShape(t *testing.T) {
+	text := `[name]
+	` + "`名刀 - 观世正宗`" + `
+
+[basic explain]
+	` + "`暴击伤害 +32%%`" + `
+
+[detail explain]
+	` + "`暴击伤害 +32%% (暴击伤害加成效果取最高值， 且无法叠加)`" + `
+
+[flavor text]
+	` + "`    据说是某个岛国的十大名刀之一……嗯， 回头让小铁柱照着打一把更好的……  --西岚`" + `
+
+[rarity]
+	4
+
+[usable job]
+	` + "`[swordman]` `[demonic swordman]` `[at swordman]` `[knight]`" + `
+[/usable job]
+
+[attach type]
+	` + "`[trade]`" + `
+
+[minimum level]
+	85 (some text)
+
+[physical attack]
+	65
+[magical attack]
+	97
+[attack speed]
+	80
+[cast speed]
+	40
+[stuck]
+	1
+[anti evil]
+	794
+[value]
+	131040
+[equipment physical attack]
+	912 783
+[equipment magical attack]
+	1008 865
+[separate attack]
+	589 382
+[skill levelup]
+	` + "`[swordman]` 38 2" + `
+	` + "`[at swordman]` 14 2" + `
+[/skill levelup]
+
+[icon]
+	` + "`item/new_equipment/01_weapon/swordman/katana/katana.img` 118" + `
+
+[equipment type]
+	` + "`[weapon]` 23" + `
+
+[durability]
+	45
+[weight]
+	2800
+[item group name]
+	` + "`katana`" + `
+`
+	result, err := NewPreviewService().ParseEQU(-1, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "名刀 - 观世正宗" || result.Rarity != 4 || result.RarityLabel != "史诗" {
+		t.Fatalf("header = %#v", result)
+	}
+	if result.Icon == nil || result.Icon.Index != 118 || result.EquipmentType != "武器" || result.ItemGroupName != "太刀" || result.AttachType != "不可交易" {
+		t.Fatalf("references = %#v", result)
+	}
+	if result.MinimumLevelText != "Lv85以上可以使用" || result.WeightText != "2.8kg" || result.PriceText != "26208" || result.DurabilityText != "45/45" {
+		t.Fatalf("converted fields = %#v", result)
+	}
+	if strings.Contains(result.BaseExplain, "%%") || !strings.Contains(result.DetailExplain, "%") || !strings.Contains(result.FlavorText, "……嗯， 回头") || len(result.UsableJobs) != 4 {
+		t.Fatalf("text fields = %#v", result)
+	}
+	if len(result.BaseAttributes) != 3 || result.BaseAttributes[0].Value != "+783-912" {
+		t.Fatalf("base attributes = %#v", result.BaseAttributes)
+	}
+	if len(result.FourDimensions) != 2 || result.FourDimensions[0].Value != "+65" || result.FourDimensions[1].Value != "+97" {
+		t.Fatalf("four dimensions = %#v", result.FourDimensions)
+	}
+	if len(result.OtherAttributes) != 4 || result.OtherAttributes[0].Value != "+794" || result.OtherAttributes[1].Value != "+80%" {
+		t.Fatalf("other attributes = %#v", result.OtherAttributes)
+	}
+	if len(result.SkillLevelups) != 2 || result.SkillLevelups[0].Job != "鬼剑士" || result.SkillLevelups[0].Skill != "38" || result.SkillLevelups[0].Level != 2 {
+		t.Fatalf("skill levelups = %#v", result.SkillLevelups)
+	}
+}
+
+func TestPreviewServiceParseEQUAllowsEmptyIconAndUnknownEnum(t *testing.T) {
+	result, err := NewPreviewService().ParseEQU(-1, "[name]\n`测试`\n[rarity]\n99\n[icon]\n`` 0\n[item group name]\n`unknown-group`\n[value]\n10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Icon != nil {
+		t.Fatalf("empty icon = %#v", result.Icon)
+	}
+	if result.RarityLabel != "99" || result.ItemGroupName != "unknown-group" {
+		t.Fatalf("unknown enum fallback = %#v", result)
+	}
+	foundWarning := false
+	for _, issue := range result.Issues {
+		if issue.Severity == "warning" && strings.Contains(issue.Message, "未知枚举值") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("issues = %#v", result.Issues)
+	}
+}
+
+func TestPreviewServiceParseEQUNegativeAttribute(t *testing.T) {
+	result, err := NewPreviewService().ParseEQU(-1, "[name]\n`负收益`\n[hit rate]\n-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.OtherAttributes) != 0 {
+		t.Fatalf("unconfigured fields should be omitted: %#v", result.OtherAttributes)
+	}
+	result, err = NewPreviewService().ParseEQU(-1, "[name]\n`负收益`\n[stuck]\n-5")
+	if err != nil || len(result.OtherAttributes) != 1 || !result.OtherAttributes[0].Negative || result.OtherAttributes[0].Value != "-5%" {
+		t.Fatalf("negative attribute = %#v, err=%v", result.OtherAttributes, err)
+	}
+}
+
+func TestPreviewServiceParseEQUOmitsAllUsableJob(t *testing.T) {
+	result, err := NewPreviewService().ParseEQU(-1, "[name]\n`通用装备`\n[usable job]\n`[all]`\n[/usable job]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.UsableJobs) != 0 {
+		t.Fatalf("usable jobs = %#v", result.UsableJobs)
+	}
+}
+
+func TestPreviewServiceParseEQUPreservesDisplayLineBreaks(t *testing.T) {
+	result, err := NewPreviewService().ParseEQU(-1, "[basic explain]\n`第一行\\n第二行`\n[flavor text]\n`第一段\\n  第二段`")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.BaseExplain, "第一行\n第二行") || !strings.Contains(result.FlavorText, "第一段\n  第二段") {
+		t.Fatalf("line breaks = base %q, flavor %q", result.BaseExplain, result.FlavorText)
+	}
+}
+
+func TestPreviewServiceParseEQUResolvesNamePlaceholder(t *testing.T) {
+	a := pvf.New()
+	strTable := make([]byte, 0, 64)
+	for _, r := range "equip_name_1>白色兽语腰带 [A款]\r\n" {
+		strTable = append(strTable, byte(r), byte(r>>8))
+	}
+	if _, err := a.AddFileText("list/n_string.lst", "1 `String/Test.uv.str`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	a.AddFile("String/Test.uv.str", strTable, pvf.TypeScript)
+	equIndex, err := a.AddFileText("equipment/test.equ",
+		"[name]\n{8=`<1::equip_name_1>`}\n[name2]\n{8=`<1::equip_name_1>`}\n[rarity]\n4", pvf.TypeScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+
+	result, err := NewPreviewService(c).ParseEQU(equIndex,
+		"[name]\n{8=`<1::equip_name_1>`}\n[name2]\n{8=`<1::equip_name_1>`}\n[rarity]\n4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "白色兽语腰带 [A款]" {
+		t.Fatalf("name = %q", result.Name)
+	}
+	if result.Name2 != "白色兽语腰带 [A款]" {
+		t.Fatalf("name2 = %q", result.Name2)
+	}
+}
+
+// TestPreviewServiceParseEQURealPaged110Name runs the whole display path on the
+// retail Paged110 archive: the .equ stores a placeholder, the preview shows the
+// string-table text, and a name the localization left empty is answered by the
+// Korean overlay and flagged.
+func TestPreviewServiceParseEQURealPaged110Name(t *testing.T) {
+	a, _ := openRealPaged110(t)
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+
+	for _, tc := range []struct{ path, want string }{
+		{"character/demoniclancer/avatar/belt/514530375.equ", "白色兽语腰带 [A款]"},
+		{"equipment/character/archer/avatar/belt/117530002.equ", "稀有克隆装扮腰部"},
+		{"equipment/character/archer/avatar/belt/117530006.equ", "포니 비즈 뱅글[A타입]（未翻译）"},
+	} {
+		index, ok := a.Find(tc.path)
+		if !ok {
+			t.Errorf("%s not found", tc.path)
+			continue
+		}
+		text, err := a.Text(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "::") {
+			t.Errorf("%s carries no placeholder: %q", tc.path, text)
+			continue
+		}
+		result, err := NewPreviewService(c).ParseEQU(index, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Name != tc.want {
+			t.Errorf("%s -> name %q, want %q", tc.path, result.Name, tc.want)
+		}
+	}
+}
+
+// TestPreviewServiceParseEQUMarksOverlayFallback covers the untranslated case:
+// the base localization lists the key with an empty value, so the name comes
+// from the Korean overlay and is flagged for the reader.
+func TestPreviewServiceParseEQUMarksOverlayFallback(t *testing.T) {
+	a := pvf.New()
+	encode := func(s string) []byte {
+		out := make([]byte, 0, len(s)*2)
+		for _, r := range s {
+			out = append(out, byte(r), byte(r>>8))
+		}
+		return out
+	}
+	if _, err := a.AddFileText("list/n_string.lst", "3 `String/Equipment.uv.str`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AddFileText("list/n_string_kor.lst", "3 `String/Equipment.kor.str`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	a.AddFile("String/Equipment.uv.str", encode("name_1=\r\n"), pvf.TypeScript)
+	a.AddFile("String/Equipment.kor.str", encode("name_1>포니 비즈 뱅글[A타입]\r\n"), pvf.TypeScript)
+	equIndex, err := a.AddFileText("equipment/test.equ", "[name]\n{8=`<3::name_1>`}", pvf.TypeScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+
+	result, err := NewPreviewService(c).ParseEQU(equIndex, "[name]\n{8=`<3::name_1>`}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "포니 비즈 뱅글[A타입]（未翻译）" {
+		t.Fatalf("name = %q", result.Name)
+	}
+}
+
+func TestPreviewServiceParseEQUKeepsUnknownPlaceholder(t *testing.T) {
+	a := pvf.New()
+	equIndex, err := a.AddFileText("equipment/test.equ", "[name]\n{8=`<9::missing>`}", pvf.TypeScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+	result, err := NewPreviewService(c).ParseEQU(equIndex, "[name]\n{8=`<9::missing>`}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "<9::missing>" {
+		t.Fatalf("name = %q", result.Name)
+	}
+}
+
+// TestPreviewServiceParseEQUResolvesExplainPlaceholders 覆盖 2026-09-24 用户报的问题：
+// 预览图里名称显示正常，但「介绍 / 详细介绍 / 风味文本」仍是 `<3::basic_explain_1>`
+// 这种占位符。说明类字段必须和名称走同一条解析路径，且解析后仍要做显示规范化
+// （表里译文自带 `%%` 与字面 `\n`）。
+func TestPreviewServiceParseEQUResolvesExplainPlaceholders(t *testing.T) {
+	a := pvf.New()
+	encode := func(s string) []byte {
+		out := make([]byte, 0, len(s)*2)
+		for _, r := range s {
+			out = append(out, byte(r), byte(r>>8))
+		}
+		return out
+	}
+	if _, err := a.AddFileText("list/n_string.lst", "3 `String/Equipment.uv.str`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	a.AddFile("String/Equipment.uv.str", encode(
+		"name_1>荒冥之脊项链 - 剑魂\r\n"+
+			"basic_explain_1>技能伤害 +6%% 冷却时间 -5s\r\n"+
+			"detail_explain_1>详细介绍正文\r\n"+
+			"flavor_1>风味文本\r\n"), pvf.TypeScript)
+	// 与真实 Paged110 文件的写法逐字对齐（制表符缩进、空行分隔、`{8=` 块标记）：
+	// 例：equipment/character/common/amulet/100300013.equ
+	script := "[name]\n\t{8=`<3::name_1>`}\n\n" +
+		"[basic explain]\n\t{8=`<3::basic_explain_1>`}\n\n" +
+		"[detail explain]\n\t{8=`<3::detail_explain_1>`}\n\n" +
+		"[flavor text]\n\t{8=`<3::flavor_1>`}\n"
+	equIndex, err := a.AddFileText("equipment/test.equ", script, pvf.TypeScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+
+	result, err := NewPreviewService(c).ParseEQU(equIndex, script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "荒冥之脊项链 - 剑魂" {
+		t.Fatalf("name = %q", result.Name)
+	}
+	if strings.Contains(result.BaseExplain, "::") || strings.Contains(result.BaseExplain, "%%") {
+		t.Fatalf("base explain 未正确解析/规范化 = %q", result.BaseExplain)
+	}
+	if result.BaseExplain != "技能伤害 +6% 冷却时间 -5s" {
+		t.Fatalf("base explain = %q", result.BaseExplain)
+	}
+	if strings.Contains(result.DetailExplain, "::") || result.DetailExplain != "详细介绍正文" {
+		t.Fatalf("detail explain = %q", result.DetailExplain)
+	}
+	if strings.Contains(result.FlavorText, "::") || result.FlavorText != "风味文本" {
+		t.Fatalf("flavor text = %q", result.FlavorText)
+	}
+}
+
+func TestPreviewServiceParseEQUResolvesContextualSkillName(t *testing.T) {
+	a := pvf.New()
+	if _, err := a.AddFileText("skill/swordmanskill.lst", "38 `swordman/38.skl`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AddFileText("skill/swordman/38.skl", "[name]\n`升龙剑`", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	equIndex, err := a.AddFileText("equipment/test.equ", "[name]\n`测试装备`\n[skill levelup]\n`[swordman]` 38 2\n[/skill levelup]", pvf.TypeScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+	result, err := NewPreviewService(c).ParseEQU(equIndex, "[name]\n`测试装备`\n[skill levelup]\n`[swordman]` 38 2\n[/skill levelup]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SkillLevelups) != 1 || result.SkillLevelups[0].Skill != "升龙剑" {
+		t.Fatalf("skill levelups = %#v, issues=%#v", result.SkillLevelups, result.Issues)
+	}
+}

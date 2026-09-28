@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>软件更新</title>
+<style>
+:root {
+  /* 深色主题 — 与主程序一致 */
+  --bg:        #0f1420;
+  --bg-2:      #141d33;
+  --surface:   #1b2436;
+  --surface-2: #232f47;
+  --fg:        #e8ecf4;
+  --fg-dim:    #8b97ad;
+  --fg-faint:  #6b7690;
+  --border:    #2a3550;
+  --accent:    #4fd1ff;
+  --accent-2:  #5b8cff;
+  --accent-fg: #0b1120;
+  --success:   #49d17c;
+  --error:     #ff5d6c;
+  --gold:      #ffd54f;
+
+  --radius:    12px;
+  --radius-sm: 8px;
+  --pad:       20px;
+  --gap:       14px;
+
+  --font: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.5 var(--font);
+  background: radial-gradient(500px 260px at 85% -10%, #1d2c4d 0%, var(--bg) 55%) fixed, var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* === 布局 === */
+.u { display: flex; flex-direction: column; height: 100%; padding: var(--pad); gap: var(--gap); }
+.u__hero { display: flex; align-items: flex-start; gap: 14px; }
+.u__icon {
+  flex: 0 0 auto; width: 46px; height: 46px; border-radius: 13px;
+  background: linear-gradient(135deg, rgba(79,209,255,.18), rgba(91,140,255,.12));
+  border: 1px solid rgba(79,209,255,.25);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1; user-select: none;
+}
+.u--ready      .u__icon { background: linear-gradient(135deg, rgba(73,209,124,.2), rgba(73,209,124,.08)); border-color: rgba(73,209,124,.3); color: var(--success); }
+.u--up-to-date .u__icon { background: linear-gradient(135deg, rgba(73,209,124,.2), rgba(73,209,124,.08)); border-color: rgba(73,209,124,.3); color: var(--success); }
+.u--error      .u__icon { background: linear-gradient(135deg, rgba(255,93,108,.18), rgba(255,93,108,.06)); border-color: rgba(255,93,108,.3); color: var(--error); }
+
+.u__head { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.u__title { margin: 0; font-size: 16.5px; font-weight: 700; letter-spacing: .3px; }
+.u__subtitle { font-size: 12px; color: var(--fg-dim); display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.u__ver-from { text-decoration: line-through; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.u__ver-arrow { color: var(--fg-faint); }
+.u__ver-to { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.u__size { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+/* === 更新说明 === */
+.u__notes {
+  flex: 1 1 auto; min-height: 60px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; overflow-y: auto; color: var(--fg); line-height: 1.6; font-size: 12.5px;
+  user-select: text;
+}
+.u__notes:empty::before { content: "暂无更新说明。"; color: var(--fg-faint); font-style: italic; }
+.u__notes::-webkit-scrollbar { width: 8px; }
+.u__notes::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.u__notes::-webkit-scrollbar-track { background: transparent; }
+.u__notes p { margin: 0 0 8px 0; }
+.u__notes p:last-child { margin-bottom: 0; }
+.u__notes strong { font-weight: 700; color: var(--gold); }
+.u__notes em { font-style: italic; }
+.u__notes code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px;
+  padding: 1px 5px; background: var(--surface-2); border-radius: 4px;
+}
+.u__notes pre {
+  background: var(--surface-2); padding: 8px 10px; border-radius: 8px; overflow-x: auto; margin: 6px 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; white-space: pre;
+}
+.u__notes pre code { background: none; padding: 0; font-size: inherit; }
+.u__notes ul, .u__notes ol { margin: 4px 0 8px 0; padding-left: 20px; }
+.u__notes li { margin: 2px 0; }
+.u__notes h1, .u__notes h2, .u__notes h3 { margin: 10px 0 6px 0; font-weight: 700; font-size: 13px; }
+.u__notes h1 { font-size: 14px; color: var(--gold); }
+.u__notes table { border-collapse: collapse; margin: 6px 0; font-size: 11.5px; border: 1px solid var(--border); }
+.u__notes th, .u__notes td { padding: 3px 8px; border: 1px solid var(--border); text-align: left; }
+.u__notes th { background: var(--surface-2); font-weight: 700; }
+.u__notes a { color: var(--accent); text-decoration: none; }
+.u__notes a:hover { text-decoration: underline; }
+
+/* === 下载进度 === */
+.u__progress-box {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 13px 15px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); flex: 0 0 auto;
+}
+.u__progress-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--fg-dim); }
+.u__progress-state { font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+.u__progress-rate { color: var(--accent); font-variant-numeric: tabular-nums; }
+.u__bar-wrap { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.u__bar-fill {
+  height: 100%; width: 0%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  box-shadow: 0 0 10px rgba(79,209,255,.5);
+  transition: width 120ms linear;
+  position: relative;
+}
+.u__bar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.25) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: u-shine 1.6s linear infinite;
+}
+@keyframes u-shine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.u__bar-fill--indet { width: 40% !important; animation: u-slide 1.2s ease-in-out infinite; }
+@keyframes u-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+/* === 加载中 === */
+.u__spinner {
+  flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; min-height: 80px; color: var(--fg-dim);
+}
+.u__spinner::before {
+  content: ""; width: 30px; height: 30px; border-radius: 50%;
+  border: 3px solid var(--surface-2); border-top-color: var(--accent);
+  animation: u-spin .9s linear infinite;
+}
+@keyframes u-spin { to { transform: rotate(360deg); } }
+
+/* === 错误横幅 === */
+.u__error {
+  background: rgba(255,93,108,.1); border: 1px solid rgba(255,93,108,.5); color: var(--error);
+  padding: 11px 14px; border-radius: var(--radius); font-size: 12.5px; flex: 0 0 auto;
+  line-height: 1.55; user-select: text;
+}
+
+/* === 按钮 === */
+.u__footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex: 0 0 auto; }
+.u__secondary-actions { display: flex; gap: 4px; }
+.u__primary-actions { display: flex; gap: 8px; margin-left: auto; }
+.u__btn {
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+  padding: 8px 18px; border-radius: var(--radius-sm); cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+  user-select: none; white-space: nowrap;
+}
+.u__btn:hover:not(:disabled) { background: var(--surface-2); border-color: #3d5cb0; }
+.u__btn:active:not(:disabled) { transform: scale(.97); }
+.u__btn:disabled { opacity: .4; cursor: default; }
+.u__btn--ghost { border-color: transparent; background: transparent; color: var(--fg-dim); padding: 8px 10px; }
+.u__btn--ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--fg); }
+.u__btn--primary {
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  color: var(--accent-fg); border-color: transparent;
+  box-shadow: 0 4px 14px rgba(79,209,255,.28);
+}
+.u__btn--primary:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 6px 18px rgba(79,209,255,.4); }
+.u__btn--primary:active:not(:disabled) { filter: brightness(.95); }
+
+/* === 状态驱动显示 === */
+.u [data-show] { display: none; }
+.u[data-state="checking"]     [data-show~="checking"]     { display: flex; }
+.u[data-state="available"]    [data-show~="available"]    { display: flex; }
+.u[data-state="downloading"]  [data-show~="downloading"]  { display: flex; }
+.u[data-state="verifying"]    [data-show~="verifying"]    { display: flex; }
+.u[data-state="installing"]   [data-show~="installing"]   { display: flex; }
+.u[data-state="ready"]        [data-show~="ready"]        { display: flex; }
+.u[data-state="up-to-date"]   [data-show~="up-to-date"]   { display: flex; }
+.u[data-state="error"]        [data-show~="error"]        { display: flex; }
+
+.u[data-state="available"] .u__notes[data-show~="available"],
+.u[data-state="ready"]     .u__notes[data-show~="ready"] { display: block; }
+
+.u[data-state] .u__btn[data-show] { display: none; }
+.u[data-state="available"]   .u__btn[data-show~="available"]   { display: inline-flex; }
+.u[data-state="downloading"] .u__btn[data-show~="downloading"] { display: inline-flex; }
+.u[data-state="ready"]       .u__btn[data-show~="ready"]       { display: inline-flex; }
+.u[data-state="up-to-date"]  .u__btn[data-show~="up-to-date"]  { display: inline-flex; }
+.u[data-state="error"]       .u__btn[data-show~="error"]       { display: inline-flex; }
+
+.u__subtitle:empty { display: none; }
+</style>
+</head>
+<body>
+<main class="u wails-updater" id="root" data-state="checking" data-wails-updater-window="1">
+  <header class="u__hero">
+    <div class="u__icon" id="state-icon" aria-hidden="true">↓</div>
+    <div class="u__head">
+      <h1 class="u__title" id="title">正在检查更新…</h1>
+      <div class="u__subtitle" id="subtitle"></div>
+    </div>
+  </header>
+
+  <!-- 检查 / 校验 / 安装共用加载动画 -->
+  <div class="u__spinner" data-show="checking verifying installing" id="spinner-text">正在连接更新服务器…</div>
+
+  <!-- 更新说明 -->
+  <div class="u__notes" data-show="available ready" id="notes"></div>
+
+  <!-- 下载进度 -->
+  <div class="u__progress-box" data-show="downloading">
+    <div class="u__progress-row">
+      <span class="u__progress-state" id="progress-state">正在准备下载…</span>
+      <span class="u__progress-rate" id="progress-rate"></span>
+    </div>
+    <div class="u__bar-wrap"><div class="u__bar-fill" id="bar"></div></div>
+  </div>
+
+  <!-- 错误横幅 -->
+  <div class="u__error" data-show="error" id="error-text">发生未知错误。</div>
+
+  <footer class="u__footer">
+    <div class="u__secondary-actions">
+      <button class="u__btn u__btn--ghost" data-show="available" id="btn-skip" type="button">跳过此版本</button>
+      <button class="u__btn u__btn--ghost" data-show="available" id="btn-remind" type="button">稍后提醒</button>
+    </div>
+    <div class="u__primary-actions">
+      <button class="u__btn" data-show="available downloading ready error up-to-date" id="btn-cancel" type="button">关闭</button>
+      <button class="u__btn u__btn--primary" data-show="available" id="btn-install" type="button">立即更新</button>
+      <button class="u__btn u__btn--primary" data-show="ready" id="btn-restart" type="button">重启并应用</button>
+      <button class="u__btn u__btn--primary" data-show="error" id="btn-retry" type="button">重试</button>
+    </div>
+  </footer>
+</main>
+
+<script>
+(function () {
+  var Events = window.wails.Events;
+
+  var els = {
+    root:        document.getElementById("root"),
+    icon:        document.getElementById("state-icon"),
+    title:       document.getElementById("title"),
+    subtitle:    document.getElementById("subtitle"),
+    notes:       document.getElementById("notes"),
+    spinnerText: document.getElementById("spinner-text"),
+    bar:         document.getElementById("bar"),
+    progressRate:document.getElementById("progress-rate"),
+    progressState: document.getElementById("progress-state"),
+    error:       document.getElementById("error-text"),
+    btnInstall:  document.getElementById("btn-install"),
+    btnSkip:     document.getElementById("btn-skip"),
+    btnRemind:   document.getElementById("btn-remind"),
+    btnCancel:   document.getElementById("btn-cancel"),
+    btnRestart:  document.getElementById("btn-restart"),
+    btnRetry:    document.getElementById("btn-retry"),
+  };
+
+  var ICONS = {
+    "checking":    "↻",
+    "available":   "⬇",
+    "downloading": "⬇",
+    "verifying":   "✓",
+    "installing":  "⚙",
+    "ready":       "✓",
+    "up-to-date":  "✓",
+    "error":       "!",
+  };
+
+  /* 事件总线可能乱序到达，按阶段排名单调推进，防止旧事件把界面拉回去 */
+  var RANK = {
+    "":            0,
+    "checking":    1,
+    "available":   2,
+    "downloading": 3,
+    "verifying":   4,
+    "installing":  5,
+    "ready":       6,
+    "up-to-date":  6,
+    "error":       99,
+  };
+  var STAGE_CN = { "check": "检查阶段", "download": "下载阶段", "verify": "校验阶段", "install": "安装阶段" };
+  var rank = 0;
+  var errored = false;
+  var currentRelease = null;
+  var currentVersion = null;
+  var skippedVersion = "";
+
+  function setState(name) {
+    if (errored && name !== "error") return false;
+    if (name === "error") { errored = true; }
+    else {
+      if ((RANK[name] || 0) < rank) return false;
+      rank = RANK[name] || 0;
+    }
+    els.root.setAttribute("data-state", name);
+    els.root.classList.toggle("u--ready",      name === "ready");
+    els.root.classList.toggle("u--up-to-date", name === "up-to-date");
+    els.root.classList.toggle("u--error",      name === "error");
+    if (els.icon) els.icon.textContent = ICONS[name] || "";
+    return true;
+  }
+
+  function renderMarkdown(src) {
+    if (!src) return "";
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    function inline(s) {
+      s = s.replace(/`([^`]+)`/g, function (_, c) { return "<code>" + c + "</code>"; });
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+      s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      return s;
+    }
+    var lines = escapeHtml(src).split(/\r?\n/);
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var L = lines[i];
+      if (/^```/.test(L)) {
+        var buf = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        out.push("<pre><code>" + buf.join("\n") + "</code></pre>");
+        i++; continue;
+      }
+      var h = /^(#{1,6})\s+(.+)$/.exec(L);
+      if (h) {
+        var lvl = Math.min(h[1].length, 3);
+        out.push("<h" + lvl + ">" + inline(h[2]) + "</h" + lvl + ">");
+        i++; continue;
+      }
+      if (/^\|.*\|$/.test(L) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i+1])) {
+        var rows = [L];
+        i += 2;
+        while (i < lines.length && /^\|.*\|$/.test(lines[i])) { rows.push(lines[i]); i++; }
+        var html = "<table>";
+        rows.forEach(function (r, idx) {
+          var cells = r.replace(/^\||\|$/g, "").split("|").map(function (c) { return inline(c.trim()); });
+          var tag = idx === 0 ? "th" : "td";
+          html += "<tr><" + tag + ">" + cells.join("</" + tag + "><" + tag + ">") + "</" + tag + "></tr>";
+        });
+        html += "</table>";
+        out.push(html);
+        continue;
+      }
+      var ulRe = /^[-*]\s+(.+)$/;
+      var olRe = /^\d+\.\s+(.+)$/;
+      if (ulRe.test(L) || olRe.test(L)) {
+        var isOL = olRe.test(L);
+        var re = isOL ? olRe : ulRe;
+        var items = [];
+        while (i < lines.length && re.test(lines[i])) {
+          items.push("<li>" + inline(re.exec(lines[i])[1]) + "</li>");
+          i++;
+        }
+        out.push("<" + (isOL ? "ol" : "ul") + ">" + items.join("") + "</" + (isOL ? "ol" : "ul") + ">");
+        continue;
+      }
+      if (L.trim() === "") { i++; continue; }
+      var para = [L];
+      i++;
+      while (i < lines.length && lines[i].trim() !== "" && !/^[-*]\s/.test(lines[i]) && !/^\d+\.\s/.test(lines[i]) && !/^\|.*\|$/.test(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !/^```/.test(lines[i])) {
+        para.push(lines[i]); i++;
+      }
+      out.push("<p>" + inline(para.join(" ")) + "</p>");
+    }
+    return out.join("\n");
+  }
+
+  function fmtBytes(n) {
+    if (!n || n <= 0) return "";
+    var u = ["B", "KB", "MB", "GB"], k = 1024;
+    var i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(k)));
+    return (n / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1) + " " + u[i];
+  }
+  function fmtRate(bps) {
+    var s = fmtBytes(bps);
+    return s ? s + "/s" : "";
+  }
+
+  function renderSubtitle(rel) {
+    if (!rel) { els.subtitle.textContent = ""; return; }
+    els.subtitle.innerHTML = "";
+    if (currentVersion) {
+      var from = document.createElement("span"); from.className = "u__ver-from"; from.textContent = "v" + currentVersion;
+      var arr  = document.createElement("span"); arr.className  = "u__ver-arrow"; arr.textContent  = "→";
+      els.subtitle.appendChild(from);
+      els.subtitle.appendChild(arr);
+    }
+    if (rel.version) {
+      var to = document.createElement("span"); to.className = "u__ver-to"; to.textContent = "v" + rel.version;
+      els.subtitle.appendChild(to);
+    }
+    var size = (rel.artifact && rel.artifact.size) || 0;
+    if (size > 0) {
+      var sz = document.createElement("span"); sz.className = "u__size"; sz.textContent = "· " + fmtBytes(size);
+      els.subtitle.appendChild(sz);
+    }
+  }
+
+  /* === 状态处理 === */
+  function onCheckStarted() {
+    if (!setState("checking")) return;
+    els.title.textContent = "正在检查更新…";
+    els.spinnerText.textContent = "正在连接更新服务器…";
+  }
+  function onUpdateAvailable(rel) {
+    currentRelease = rel || null;
+    if (!setState("available")) return;
+    els.title.textContent = "发现新版本";
+    renderSubtitle(rel);
+    els.notes.innerHTML = (rel && rel.notes) ? renderMarkdown(rel.notes) : "";
+  }
+  function onNoUpdate() {
+    if (!setState("up-to-date")) return;
+    els.title.textContent = "已是最新版本";
+    els.subtitle.innerHTML = "";
+    if (currentVersion) {
+      var v = document.createElement("span");
+      v.className = "u__ver-to";
+      v.textContent = "v" + currentVersion;
+      els.subtitle.appendChild(v);
+    }
+  }
+  function onDownloadStarted(rel) {
+    if (!setState("downloading")) return;
+    els.title.textContent = "正在下载更新";
+    els.progressState.textContent = "正在准备下载…";
+    els.progressRate.textContent = "";
+    setBar(null, null);
+  }
+  function setBar(written, total) {
+    if (written == null || !total || total <= 0) {
+      els.bar.style.width = "40%";
+      els.bar.classList.add("u__bar-fill--indet");
+      return;
+    }
+    els.bar.classList.remove("u__bar-fill--indet");
+    var pct = Math.min(100, (written / total) * 100);
+    els.bar.style.width = pct + "%";
+  }
+  function onDownloadProgress(p) {
+    if (!p) return;
+    if (rank !== RANK.downloading) return;
+    if (p.total > 0) {
+      setBar(p.written, p.total);
+      var pct = Math.round((p.written / p.total) * 100);
+      els.progressState.textContent = pct + "% · " + fmtBytes(p.written) + " / " + fmtBytes(p.total);
+    } else {
+      setBar(p.written, 0);
+      els.progressState.textContent = "已下载 " + fmtBytes(p.written);
+    }
+    els.progressRate.textContent = p.rate ? fmtRate(p.rate) : "";
+  }
+  function onVerifying() {
+    if (!setState("verifying")) return;
+    els.title.textContent = "正在校验更新";
+    els.spinnerText.textContent = "正在校验文件完整性…";
+  }
+  function onInstalling() {
+    if (!setState("installing")) return;
+    els.title.textContent = "正在安装更新";
+    els.spinnerText.textContent = "正在解压并准备安装…";
+  }
+  function onUpdateReady() {
+    if (!setState("ready")) return;
+    els.title.textContent = "更新已就绪";
+    if (currentRelease) renderSubtitle(currentRelease);
+    if (currentRelease && currentRelease.notes && els.notes) {
+      els.notes.innerHTML = renderMarkdown(currentRelease.notes);
+    }
+  }
+  function onError(info) {
+    setState("error");
+    els.title.textContent = "更新失败";
+    var msg = (info && info.message) ? info.message : "发生未知错误。";
+    if (info && info.stage) msg = (STAGE_CN[info.stage] || info.stage) + "：" + msg;
+    els.error.textContent = msg;
+  }
+
+  /* === 事件接线 === */
+  Events.On("wails:updater:meta", function (e) {
+    var m = e && (e.data != null ? e.data : e);
+    if (m && typeof m.currentVersion === "string") currentVersion = m.currentVersion;
+    if (m && typeof m.skippedVersion === "string") skippedVersion = m.skippedVersion;
+  });
+  Events.On("wails:updater:check-started",     function () { onCheckStarted(); });
+  Events.On("wails:updater:update-available",  function (e) { onUpdateAvailable(e && (e.data != null ? e.data : e)); });
+  Events.On("wails:updater:no-update",         function () { onNoUpdate(); });
+  Events.On("wails:updater:download-started",  function (e) { onDownloadStarted(e && (e.data != null ? e.data : e)); });
+  Events.On("wails:updater:download-progress", function (e) { onDownloadProgress(e && (e.data != null ? e.data : e)); });
+  Events.On("wails:updater:download-complete", function () {});
+  Events.On("wails:updater:verifying",         function () { onVerifying(); });
+  Events.On("wails:updater:installing",        function () { onInstalling(); });
+  Events.On("wails:updater:update-ready",      function (e) { onUpdateReady(); });
+  Events.On("wails:updater:error",             function (e) { onError(e && (e.data != null ? e.data : e)); });
+
+  if (els.btnInstall) els.btnInstall.addEventListener("click", function () { Events.Emit("wails:updater:user:install"); });
+  if (els.btnSkip)    els.btnSkip.addEventListener   ("click", function () { Events.Emit("wails:updater:user:skip"); });
+  if (els.btnRemind)  els.btnRemind.addEventListener ("click", function () { Events.Emit("wails:updater:user:remind"); });
+  if (els.btnCancel)  els.btnCancel.addEventListener ("click", function () { Events.Emit("wails:updater:user:cancel"); });
+  if (els.btnRestart) els.btnRestart.addEventListener("click", function () { Events.Emit("wails:updater:user:restart"); });
+  if (els.btnRetry)   els.btnRetry.addEventListener  ("click", function () { Events.Emit("wails:updater:user:install"); });
+
+  /* 运行时握手：页面就绪后通知框架冲刷积压事件（照抄默认模板，勿删） */
+  (function announce() {
+    if (window._wails && typeof window._wails.invoke === "function") {
+      window._wails.invoke("wails:runtime:ready");
+      Events.Emit("wails:updater:window:ready");
+    } else {
+      setTimeout(announce, 30);
+    }
+  })();
+})();
+</script>
+</body>
+</html>
