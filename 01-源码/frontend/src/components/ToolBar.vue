@@ -2,7 +2,6 @@
 import { computed, h, ref, watch, type Component } from "vue";
 import { useMessage } from "naive-ui";
 import {
-  NButton,
   NDropdown,
   NIcon,
   NTooltip,
@@ -11,7 +10,6 @@ import {
   useDialog,
   type DropdownOption,
 } from "naive-ui";
-import { GetKeyStoreInfo, PickKeyFileDialog } from "../services/keyApi";
 import { Dismiss16Regular } from "@vicons/fluent";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
@@ -169,79 +167,14 @@ watch(
   }
 );
 
-/**
- * 打开失败提示：弹窗（「确认」+「关闭」两个按钮，**必须用户手动关闭**）。
- * 2026-09-29 用户要求——密钥不匹配这类错误必须让人看清，不能只在角落闪一下。
- */
-function showOpenFailedDialog(err: unknown): void {
-  const text = (err as { message?: string } | null)?.message ?? String(err);
-  const storeDir = ref("");
-  const picking = ref(false);
-  // 异步取密钥库路径，供提示「该把 sk.dat 放哪」（失败就只显示通用提示）。
-  void GetKeyStoreInfo()
-    .then((info) => {
-      storeDir.value = info?.dir ?? "";
-    })
-    .catch(() => {
-      storeDir.value = "";
-    });
-
-  const pickKeyFile = async (): Promise<void> => {
-    if (picking.value) return;
-    picking.value = true;
-    try {
-      const tip = await PickKeyFileDialog();
-      if (tip) message.success(tip);
-    } catch (e: any) {
-      if (!isCancel(e)) message.error(`选择密钥失败: ${e?.message ?? e}`);
-    } finally {
-      picking.value = false;
-    }
-  };
-
-  dialog.error({
-    title: "打开 PVF 失败",
-    content: () =>
-      h("div", { style: "line-height:1.8" }, [
-        h("div", { style: "white-space:pre-wrap; word-break:break-all" }, text),
-        h(
-          "div",
-          { style: "margin-top:10px; color:#9aa4b2; font-size:12px" },
-          "编辑器已内置两份 sk.dat，通常无需任何额外文件。若提示密钥不匹配，可点下面的按钮把与该 PVF 配套的 sk.dat 选进密钥库（选一次即永久生效），或直接把它放到 PVF 同一文件夹。"
-        ),
-        h(
-          NButton,
-          {
-            size: "small",
-            secondary: true,
-            disabled: picking.value,
-            style: "margin-top:8px",
-            onClick: () => void pickKeyFile(),
-          },
-          { default: () => "选择 sk.dat 文件…" }
-        ),
-        storeDir.value
-          ? h(
-              "div",
-              { style: "margin-top:6px; color:#9aa4b2; font-size:12px; word-break:break-all" },
-              `密钥库目录：${storeDir.value}`
-            )
-          : null,
-      ]),
-    positiveText: "确认",
-    negativeText: "关闭",
-    closable: false,
-    maskClosable: false,
-    closeOnEsc: false,
-  });
-}
-
 async function onOpen() {
   try {
     await archive.openDialog();
     if (archive.open) message.success(`已打开 ${archive.info?.fileCount.toLocaleString()} 个文件`);
   } catch (e: any) {
-    if (!isCancel(e)) showOpenFailedDialog(e);
+    // 打开失败的提示统一由顶层 ArchiveErrorDialog 负责（含「选择 sk.dat 文件…」按钮），
+    // 这里不再另发 message，避免「弹窗 + 右下角提示」同时出现。
+    if (isCancel(e)) return;
   }
 }
 

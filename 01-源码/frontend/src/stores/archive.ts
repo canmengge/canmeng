@@ -117,9 +117,19 @@ export const useArchiveStore = defineStore("archive", () => {
     return event?.data ?? event;
   }
 
-  /** 记录一次打开失败，供顶层组件弹「缺 sk.dat」提示。 */
+  /** 用户主动取消（原生对话框返回 cancel）不算打开失败。 */
+  function isOpenCancelled(message: string): boolean {
+    const lower = message.toLowerCase();
+    return lower.includes("cancel") || message.includes("已取消");
+  }
+
+  /**
+   * 记录一次打开失败，供顶层 ArchiveErrorDialog 统一弹窗（含「选择 sk.dat 文件…」按钮）。
+   * 2026-09-29：用户取消不算失败；真正的失败也不再由各入口各发一条右下角 message。
+   */
   function recordOpenError(e: any): void {
     const message = String(e?.message ?? e);
+    if (isOpenCancelled(message)) return;
     openError.value = { kind: message.includes("sk.dat") ? "skdat" : "other", message };
   }
 
@@ -179,7 +189,8 @@ export const useArchiveStore = defineStore("archive", () => {
     } catch (e: any) {
       loadError.value = String(e?.message ?? e);
       recordOpenError(e);
-      throw e;
+      // 不向上抛：打开失败的提示统一由顶层 ArchiveErrorDialog 弹窗，各入口无需处理。
+      return null;
     } finally {
       loading.value = false;
     }
@@ -198,7 +209,7 @@ export const useArchiveStore = defineStore("archive", () => {
     } catch (e: any) {
       loadError.value = String(e?.message ?? e);
       recordOpenError(e);
-      throw e;
+      // 同上：不向上抛，避免各入口出现未捕获的 Promise 拒绝。
     } finally {
       loading.value = false;
     }

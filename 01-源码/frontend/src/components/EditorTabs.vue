@@ -94,7 +94,8 @@ async function openDialog(): Promise<void> {
   try {
     await archive.openDialog();
   } catch (e: any) {
-    if (!isCancel(e)) message.error(`打开失败: ${e?.message ?? e}`);
+    // 打开失败的提示统一由顶层 ArchiveErrorDialog 弹窗负责，这里不再重复发 message。
+    if (isCancel(e)) return;
   }
 }
 
@@ -103,8 +104,8 @@ async function openRecent(path: string): Promise<void> {
   openingRecent.value = path;
   try {
     await archive.openPath(path);
-  } catch (e: any) {
-    message.error(`打开失败: ${e?.message ?? e}`);
+  } catch {
+    // 同上：失败提示由顶层统一弹窗。
   } finally {
     openingRecent.value = "";
   }
