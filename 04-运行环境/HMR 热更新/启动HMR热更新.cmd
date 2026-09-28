@@ -40,6 +40,29 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:"127.0.0.1:%PORT%" ^| find
 )
 timeout /t 1 /nobreak >nul
 
+REM ---- Go 源码 / exe 一致性自检（2026-09-29 加）-------------------------------
+REM 本脚本只挑「文件时间最新」的 exe 启动，从不重新编译 Go。若改了 Go 却没先
+REM 重新构建，跑的仍是【旧内核】——用户会误以为修复无效、白跑一轮（2026-09-29
+REM 真实事故）。这里只【警告】不自动构建：自动构建一旦编译失败，用户就直接起不
+REM 来程序了。判断逻辑在 check-exe-stale.ps1（独立成文件，避免 cmd 转义问题）。
+set "PVF_CHK_SRC=%ROOT%\01-源码"
+set "PVF_CHK_EXE_DIR=%CLIENT%"
+set "PVF_CHK_EXE_PAT=PVF工坊-开发人员专用*.exe"
+set "PVFSTALE="
+for /f "delims=" %%T in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%check-exe-stale.ps1"') do set "PVFSTALE=%%T"
+if /i "%PVFSTALE%"=="STALE" (
+  echo.
+  echo ************************************************************
+  echo  [警告] Go 源码比最新 exe 更新 —— 当前启动的是【旧内核】！
+  echo.
+  echo    若你刚改过 Go（main.go / services / internal），
+  echo    请先双击:  03-脚本\构建开发版.cmd
+  echo    再重新双击本脚本；否则本次跑的还是上一次编译的旧代码。
+  echo ************************************************************
+  echo.
+  timeout /t 6 /nobreak >nul
+)
+
 echo === 1/3 启动前端开发服务器（另开窗口，请勿关闭）===
 start "PVF工坊-前端开发服务器(勿关)" "%HERE%_前端开发服务器.cmd"
 
