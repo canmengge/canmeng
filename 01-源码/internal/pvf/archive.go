@@ -193,15 +193,12 @@ func parse(data []byte, sidecarDir string) (*Archive, error) {
 				a.hdr = phdr
 				a.guard = false
 				found = true
-			} else if hasSealedKeyFile(sidecarDir) {
-				// The sidecar keys are right there but did not unlock this
-				// archive: say so instead of blaming the header.
-				return nil, ErrPaged110Keys
 			} else if len(data) >= paged110PageSize {
-				// 标准/变体解析都失败、旁边又没有 sk.dat，且体量达到分页容器下限：
-				// 极可能是 110US 分页归档缺了 sk.dat（打开失败最常见的原因），
-				// 给一个能让人看懂的错误，而不是笼统的"签名无效"。
-				return nil, ErrPaged110MissingKeys
+				// 内置的两份 sk.dat（新/旧）与 PVF 同目录的 sk.dat 都解不开，且体量
+				// 达到分页容器下限：这是一份用了另一套页密钥的 110US 分页归档。
+				// 给出可操作的提示（把配套 sk.dat 放到 PVF 同一文件夹后重开），
+				// 而不是笼统的"签名无效"。2026-09-29：内置密钥后正常归档不再需要外置 sk.dat。
+				return nil, ErrPaged110KeysMismatch
 			}
 		}
 		if !ok && !found {

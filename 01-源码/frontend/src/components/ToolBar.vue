@@ -167,12 +167,37 @@ watch(
   }
 );
 
+/**
+ * 打开失败提示：弹窗（「确认」+「关闭」两个按钮，**必须用户手动关闭**）。
+ * 2026-09-29 用户要求——密钥不匹配这类错误必须让人看清，不能只在角落闪一下。
+ */
+function showOpenFailedDialog(err: unknown): void {
+  const text = (err as { message?: string } | null)?.message ?? String(err);
+  dialog.error({
+    title: "打开 PVF 失败",
+    content: () =>
+      h("div", { style: "line-height:1.8" }, [
+        h("div", { style: "white-space:pre-wrap; word-break:break-all" }, text),
+        h(
+          "div",
+          { style: "margin-top:8px; color:#9aa4b2; font-size:12px" },
+          "编辑器已内置两份 sk.dat 密钥，正常情况下无需额外文件。若提示密钥不匹配，请把与该 PVF 配套的 sk.dat 放到 PVF 同一文件夹后重新打开。"
+        ),
+      ]),
+    positiveText: "确认",
+    negativeText: "关闭",
+    closable: false,
+    maskClosable: false,
+    closeOnEsc: false,
+  });
+}
+
 async function onOpen() {
   try {
     await archive.openDialog();
     if (archive.open) message.success(`已打开 ${archive.info?.fileCount.toLocaleString()} 个文件`);
   } catch (e: any) {
-    if (!isCancel(e)) message.error(`打开失败: ${e?.message ?? e}`);
+    if (!isCancel(e)) showOpenFailedDialog(e);
   }
 }
 

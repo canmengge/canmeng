@@ -63,6 +63,12 @@ var ErrPaged110Keys = errors.New("pvf: paged110 page key table could not be unlo
 // 前端据此给出「请确认归档旁有 sk.dat」的明确弹窗，而不是笼统的"签名无效"。
 var ErrPaged110MissingKeys = errors.New("缺少配套的 sk.dat 密钥文件（110US 分页归档打开需要）")
 
+// ErrPaged110KeysMismatch 表示内置的两份 sk.dat 与归档旁的 sk.dat 都无法解锁该归档，
+// 即它用的是另一套页密钥。前端据此弹窗提示：把与该 PVF 配套的 sk.dat 放到同一文件夹再打开。
+// （2026-09-29：内置密钥后，正常归档不再需要外置 sk.dat；只有换过密钥的客户才会走到这里。）
+var ErrPaged110KeysMismatch = errors.New(
+	"密钥不匹配：内置的两份 sk.dat 都打不开这个 PVF。请把与该 PVF 配套的 sk.dat 放到 PVF 同一文件夹后重试")
+
 // ErrPaged110ReadOnly reports that a Paged110 container cannot be written back
 // because its page keys are not in memory, so the decrypted page guards could
 // not be re-encrypted.
@@ -343,41 +349,69 @@ func paged110Candidates(dir string) [][]byte {
 	return out
 }
 
+// embeddedSealedKeyTables 返回内置的两份 sk.dat（页密钥表），按尝试顺序：新 → 旧。
+// 用户不必再把 sk.dat 手动拷到 PVF 旁边；两份都不匹配时才回退到外置密钥。
+func embeddedSealedKeyTables() [][]byte {
+	out := make([][]byte, 0, 2)
+	for _, h := range []string{embeddedSealedKeyNewHex, embeddedSealedKeyOldHex} {
+		if b, err := hex.DecodeString(h); err == nil && len(b) > 0 {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // unlockPaged110 tries to turn a Paged110 container into a plain (decrypted)
 // archive buffer. It returns the decrypted copy, the unwrapped page key table,
 // the section keys and the decoded header. data is never modified.
 //
-// The embedded metadata key is tried first, so the common case never reads the
-// multi-hundred-megabyte sidecar executable.
+// 密钥来源按顺序尝试：**内置「新」→ 内置「旧」→ PVF 同目录的 sk.dat**。
+// 前两级让绝大多数归档开箱即开；内置密钥都不匹配（例如客户换过密钥）时，
+// 才回退到「把 sk.dat 与 PVF 放同一文件夹」的原有方式。
 func unlockPaged110(data []byte, dir string) ([]byte, []byte, keySet, Header, bool) {
 	if len(data) < paged110PageGuardSize {
 		return nil, nil, keySet{}, Header{}, false
 	}
-	sealed, err := os.ReadFile(filepath.Join(dir, sealedPageKeyName))
-	if err != nil {
-		return nil, nil, keySet{}, Header{}, false
+	for _, sealed := range embeddedSealedKeyTables() {
+		if dec, pkeys, hdr, ok := tryUnlockWith(data, sealed, dir); ok {
+			return dec, pkeys, paged110Keys(), hdr, true
+		}
 	}
-	table, err := unsealPageKeyTable(sealed)
-	if err != nil || len(table) < paged110PageKeySize {
-		return nil, nil, keySet{}, Header{}, false
-	}
-	keys := paged110Keys()
-	if dec, pkeys, hdr, ok := paged110DecryptWith(data, table, keys, paged110EmbeddedMetadataKey()); ok {
-		return dec, pkeys, keys, hdr, true
-	}
-	if dir == "" {
-		return nil, nil, keySet{}, Header{}, false
-	}
-	exe, err := os.ReadFile(filepath.Join(dir, executableName))
-	if err != nil {
-		return nil, nil, keySet{}, Header{}, false
-	}
-	for _, cand := range metadataKeyCandidates(exe) {
-		if dec, pkeys, hdr, ok := paged110DecryptWith(data, table, keys, cand); ok {
-			return dec, pkeys, keys, hdr, true
+	if dir != "" {
+		if sealed, err := os.ReadFile(filepath.Join(dir, sealedPageKeyName)); err == nil {
+			if dec, pkeys, hdr, ok := tryUnlockWith(data, sealed, dir); ok {
+				return dec, pkeys, paged110Keys(), hdr, true
+			}
 		}
 	}
 	return nil, nil, keySet{}, Header{}, false
+}
+
+// tryUnlockWith 用一份密封的页密钥表尝试解锁：RSA 解封 → 解包页密钥表 →
+// 解密页守卫区 → 校验头部签名与关键字段。头部签名校验足以判定密钥是否正确。
+// 内置 metadata key 先试，命中就不会去读几百 MB 的 DFO.exe。
+func tryUnlockWith(data, sealed []byte, dir string) ([]byte, []byte, Header, bool) {
+	table, err := unsealPageKeyTable(sealed)
+	if err != nil || len(table) < paged110PageKeySize {
+		return nil, nil, Header{}, false
+	}
+	keys := paged110Keys()
+	if dec, pkeys, hdr, ok := paged110DecryptWith(data, table, keys, paged110EmbeddedMetadataKey()); ok {
+		return dec, pkeys, hdr, true
+	}
+	if dir == "" {
+		return nil, nil, Header{}, false
+	}
+	exe, err := os.ReadFile(filepath.Join(dir, executableName))
+	if err != nil {
+		return nil, nil, Header{}, false
+	}
+	for _, cand := range metadataKeyCandidates(exe) {
+		if dec, pkeys, hdr, ok := paged110DecryptWith(data, table, keys, cand); ok {
+			return dec, pkeys, hdr, true
+		}
+	}
+	return nil, nil, Header{}, false
 }
 
 // paged110DecryptWith unwraps the page key table with cand and, if the header
