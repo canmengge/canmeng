@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"pvfine/internal/apppaths"
 	"pvfine/internal/logging"
 	"pvfine/internal/pvf"
 	pvfversion "pvfine/internal/version"
@@ -26,6 +28,84 @@ type ArchiveService struct {
 }
 
 func NewArchiveService(c *core) *ArchiveService { return &ArchiveService{c: c} }
+
+// keyStoreDir 返回「密钥库」目录：缓存目录下的 keys/。
+// 放进去的 sk.dat 会被内核在打开 Paged110 归档时自动尝试 —— 这样出现第三套密钥时
+// 只需丢一个文件，无需改代码/重新发包（见 internal/pvf 的 SetExtraKeyDirs）。
+func keyStoreDir() string {
+	dir, err := apppaths.SubDir("keys")
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// KeyStoreInfo 描述密钥库位置与其中已有的密钥文件，供界面提示「该把 sk.dat 放哪」。
+type KeyStoreInfo struct {
+	Dir   string   `json:"dir"`
+	Files []string `json:"files"`
+}
+
+// KeyStoreInfo 返回密钥库目录与现有密钥文件名列表。
+func (s *ArchiveService) KeyStoreInfo() KeyStoreInfo {
+	info := KeyStoreInfo{Files: []string{}}
+	dir := keyStoreDir()
+	info.Dir = dir
+	if dir == "" {
+		return info
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return info
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			info.Files = append(info.Files, e.Name())
+		}
+	}
+	return info
+}
+
+// PickKeyFileDialog 弹出文件对话框选一个 sk.dat 并复制进密钥库（同名覆盖），
+// 供「打开失败 · 密钥不匹配」弹窗的「选择 sk.dat 文件…」按钮使用。
+// 返回一句可展示的提示文案；用户取消时返回空串。
+func (s *ArchiveService) PickKeyFileDialog() (string, error) {
+	paths, err := application.Get().Dialog.OpenFile().
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		AddFilter("密钥文件 (sk.dat)", "*.dat").
+		AddFilter("所有文件", "*").
+		SetTitle("选择与该 PVF 配套的 sk.dat").
+		PromptForMultipleSelection()
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+	dir := keyStoreDir()
+	if dir == "" {
+		return "", errors.New("密钥库目录不可用（缓存目录未就绪）")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建密钥库目录失败: %w", err)
+	}
+	src := paths[0]
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", fmt.Errorf("读取 %q 失败: %w", src, err)
+	}
+	if len(data) == 0 || len(data)%128 != 0 {
+		return "", fmt.Errorf("%q 不像有效的 sk.dat（大小应为 128 字节的整数倍，实际 %d 字节）",
+			filepath.Base(src), len(data))
+	}
+	dst := filepath.Join(dir, filepath.Base(src))
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		return "", fmt.Errorf("写入密钥库失败: %w", err)
+	}
+	logging.For("archive").Info("密钥已加入密钥库", "来源", src, "目标", dst)
+	return fmt.Sprintf("已把 %s 加入密钥库（%s），请重新打开该 PVF", filepath.Base(src), dir), nil
+}
 
 // findSaveRemnant 返回目标归档同目录残留的保存临时文件（<path>.pvftmp）。
 // 内核 save.go 的 SaveAs 采用「写临时文件 + rename」的原子写，正常完成或出错都会
@@ -90,6 +170,9 @@ func (s *ArchiveService) Open(path string) (ArchiveInfo, error) {
 		return ArchiveInfo{}, statErr
 	}
 	log.Info("开始加载归档", "文件", path, "大小MB", float64(stat.Size())/(1<<20))
+
+	// 注入密钥库（缓存目录下的 keys/）：出现第三套密钥时丢文件即生效，无需改代码。
+	pvf.SetExtraKeyDirs(keyStoreDir())
 
 	openStage := logging.StartStage("archive", "解析归档(pvf.Open)")
 	a, err := pvf.Open(path)

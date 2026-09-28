@@ -1,6 +1,7 @@
 package pvf
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rsa"
@@ -11,7 +12,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
 // Paged110 ("110US" clients) is the newest container layout:
@@ -349,6 +353,90 @@ func paged110Candidates(dir string) [][]byte {
 	return out
 }
 
+// ---- 密钥库（外置、可扩展）--------------------------------------------------
+//
+// 内置的两份 sk.dat 覆盖最常见的两种客户端；日后出现第三套密钥时，不必再改代码 /
+// 重新发包 —— 把配套的 sk.dat 丢进「密钥库」目录即可（PVF 同目录放一次也会被自动
+// 收藏进去）。打开归档时的尝试顺序：
+//
+//	① 内置两份（新 → 旧）
+//	② 密钥库目录下的全部密钥文件
+//	③ PVF 同目录的 sk.dat（命中后自动收藏进 ②）
+//
+// 目录由上层（services）打开归档前用 SetExtraKeyDirs 注入；pvf 包本身不依赖 apppaths。
+
+var (
+	extraKeyMu   sync.RWMutex
+	extraKeyDirs []string
+)
+
+// SetExtraKeyDirs 设置密钥库目录（打开 Paged110 归档时会扫描其中的密钥文件）。
+// 传不存在的目录也无妨，扫描时直接跳过。
+func SetExtraKeyDirs(dirs ...string) {
+	extraKeyMu.Lock()
+	extraKeyDirs = append([]string(nil), dirs...)
+	extraKeyMu.Unlock()
+}
+
+// ExtraKeyDirs 返回当前配置的密钥库目录（供界面展示「该把 sk.dat 放哪」）。
+func ExtraKeyDirs() []string {
+	extraKeyMu.RLock()
+	defer extraKeyMu.RUnlock()
+	return append([]string(nil), extraKeyDirs...)
+}
+
+// sealedKeyExtensions 是密钥库里会被当作页密钥表尝试的文件后缀。
+var sealedKeyExtensions = map[string]bool{
+	".dat": true, ".sk": true, ".key": true, ".bin": true,
+}
+
+// storedSealedKeys 列出密钥库目录下的全部密钥文件（按路径排序，保证尝试顺序稳定）。
+func storedSealedKeys() []string {
+	dirs := ExtraKeyDirs()
+	out := make([]string, 0, 4)
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !sealedKeyExtensions[strings.ToLower(filepath.Ext(e.Name()))] {
+				continue
+			}
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// learnSealedKey 把一份确实能解锁归档的外置密钥收藏进密钥库，下次它就不必再与 PVF
+// 同目录。按内容去重；任何失败都静默忽略（绝不影响本次打开）。
+func learnSealedKey(srcPath string) {
+	dirs := ExtraKeyDirs()
+	if srcPath == "" || len(dirs) == 0 || strings.TrimSpace(dirs[0]) == "" {
+		return
+	}
+	src, err := os.ReadFile(srcPath)
+	if err != nil || len(src) == 0 {
+		return
+	}
+	for _, existing := range storedSealedKeys() {
+		if b, err := os.ReadFile(existing); err == nil && bytes.Equal(b, src) {
+			return
+		}
+	}
+	dstDir := dirs[0]
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return
+	}
+	name := "sk-learned-" + time.Now().Format("20060102-150405") + ".dat"
+	_ = os.WriteFile(filepath.Join(dstDir, name), src, 0o600)
+}
+
 // embeddedSealedKeyTables 返回内置的两份 sk.dat（页密钥表），按尝试顺序：新 → 旧。
 // 用户不必再把 sk.dat 手动拷到 PVF 旁边；两份都不匹配时才回退到外置密钥。
 func embeddedSealedKeyTables() [][]byte {
@@ -365,9 +453,10 @@ func embeddedSealedKeyTables() [][]byte {
 // archive buffer. It returns the decrypted copy, the unwrapped page key table,
 // the section keys and the decoded header. data is never modified.
 //
-// 密钥来源按顺序尝试：**内置「新」→ 内置「旧」→ PVF 同目录的 sk.dat**。
-// 前两级让绝大多数归档开箱即开；内置密钥都不匹配（例如客户换过密钥）时，
-// 才回退到「把 sk.dat 与 PVF 放同一文件夹」的原有方式。
+// 密钥来源按顺序尝试：**内置「新」→ 内置「旧」→ 密钥库 → PVF 同目录的 sk.dat**。
+// 内置两份让绝大多数归档开箱即开；密钥库让"新密钥"无需改代码即可支持
+// （丢一个 sk.dat 进 keys/ 目录）；最后才回退到原有的"与 PVF 放同一文件夹"，
+// 并在命中后自动收藏进密钥库，做到"放一次，以后都认得"。
 func unlockPaged110(data []byte, dir string) ([]byte, []byte, keySet, Header, bool) {
 	if len(data) < paged110PageGuardSize {
 		return nil, nil, keySet{}, Header{}, false
@@ -377,9 +466,20 @@ func unlockPaged110(data []byte, dir string) ([]byte, []byte, keySet, Header, bo
 			return dec, pkeys, paged110Keys(), hdr, true
 		}
 	}
+	for _, path := range storedSealedKeys() {
+		sealed, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if dec, pkeys, hdr, ok := tryUnlockWith(data, sealed, dir); ok {
+			return dec, pkeys, paged110Keys(), hdr, true
+		}
+	}
 	if dir != "" {
-		if sealed, err := os.ReadFile(filepath.Join(dir, sealedPageKeyName)); err == nil {
+		sidecar := filepath.Join(dir, sealedPageKeyName)
+		if sealed, err := os.ReadFile(sidecar); err == nil {
 			if dec, pkeys, hdr, ok := tryUnlockWith(data, sealed, dir); ok {
+				learnSealedKey(sidecar) // 放一次，以后走密钥库即可
 				return dec, pkeys, paged110Keys(), hdr, true
 			}
 		}
