@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, h, ref, watch } from "vue";
+import { computed, h, ref, watch, type Component } from "vue";
 import { useMessage } from "naive-ui";
 import {
   NDropdown,
+  NIcon,
   NTooltip,
   NProgress,
   NText,
   useDialog,
   type DropdownOption,
 } from "naive-ui";
+import { Dismiss16Regular } from "@vicons/fluent";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
 import { useAdvancedSearchStore } from "../stores/advancedSearch";
@@ -95,6 +97,11 @@ function renderEmoji(emoji: string) {
   return () => h("span", { style: "font-size:14px;line-height:1" }, emoji);
 }
 
+/** 下拉菜单里的矢量图标（轮廓比 emoji 更清晰，用于「关闭 PVF」等条目）。 */
+function renderIcon(icon: Component) {
+  return () => h(NIcon, { size: 14 }, { default: () => h(icon) });
+}
+
 /** 「打开」下拉：打开文件 / 保存 / 另存为。 */
 const openMenuOptions = computed<DropdownOption[]>(() => [
   {
@@ -120,7 +127,7 @@ const openMenuOptions = computed<DropdownOption[]>(() => [
   {
     label: "关闭 PVF",
     key: "close",
-    icon: renderEmoji("✕"),
+    icon: renderIcon(Dismiss16Regular),
     disabled: !canCloseArchive.value,
   },
 ]);
@@ -410,11 +417,13 @@ async function doCloseArchive(): Promise<void> {
         <template #trigger>
           <button
             type="button"
-            class="tb-btn tb-btn-plain"
+            class="tb-btn tb-btn-close"
             :disabled="!canCloseArchive"
             @click="onCloseArchive"
           >
-            <span class="ic">✕</span>
+            <span class="ic-x">
+              <NIcon :size="12"><Dismiss16Regular /></NIcon>
+            </span>
             <span>{{ closingArchive ? "关闭中…" : "关闭" }}</span>
           </button>
         </template>
@@ -700,6 +709,35 @@ async function doCloseArchive(): Promise<void> {
 .tb-btn-plain:hover:not(:disabled) {
   background: rgba(79, 140, 255, 0.09);
   color: var(--pvf-text-primary);
+}
+/* 关闭 PVF：沿用 tb-btn 的圆角药丸形状，用淡红圆盘图标表达「关闭」语义 */
+.tb-btn-close {
+  background: rgba(128, 128, 128, 0.05);
+  color: var(--pvf-text-secondary);
+  border-color: var(--pvf-border-subtle);
+  font-weight: 500;
+  padding: 0 12px;
+}
+.tb-btn-close:hover:not(:disabled) {
+  background: var(--pvf-error-surface);
+  border-color: var(--pvf-error);
+  color: var(--pvf-error-hover);
+}
+.tb-btn-close .ic-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--pvf-error-surface);
+  color: var(--pvf-error);
+  flex: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tb-btn-close:hover:not(:disabled) .ic-x {
+  background: var(--pvf-error);
+  color: #fff;
 }
 .tb-btn-book {
   background: var(--pvf-primary-soft);

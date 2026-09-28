@@ -1,0 +1,45 @@
+{
+  "folders": [
+    { "name": "01-源码", "path": "01-源码" },
+    { "name": "01-源码·前端", "path": "01-源码\\frontend" },
+    { "name": "02-文档规则", "path": "02-文档规则" },
+    { "name": "03-脚本", "path": "03-脚本" },
+    { "name": "04-运行环境", "path": "04-运行环境" },
+    { "name": "05-构建输出", "path": "05-构建输出" },
+    { "name": "06-交付发布", "path": "06-交付发布" },
+    { "name": "07-归档资料", "path": "07-归档资料" }
+  ],
+  "settings": {
+    "markdown.styles": [
+      ".vscode/md-preview.css"
+    ],
+    "markdown.preview.fontSize": 15,
+    "markdown.preview.lineHeight": 1.7,
+    "files.associations": {
+      "*.xui": "xml"
+    },
+    "search.exclude": {
+      "备份/**": true,
+      "本人备份AI不要动/**": true,
+      "07-归档资料/**": true,
+      "04-运行环境/**": true,
+      "05-构建输出/**": true,
+      "06-交付发布/**": true,
+      "01-源码/frontend/node_modules/**": true,
+      "01-源码/frontend/dist/**": true,
+      "01-源码/frontend/dist-dev/**": true,
+      "01-源码/build/**": true,
+      "01-源码/bin/**": true
+    },
+    "files.exclude": {
+      "01-源码/frontend/node_modules": true,
+      "01-源码/frontend/dist": true,
+      "01-源码/frontend/dist-dev": true
+    },
+    "files.watcherExclude": {
+      "**/01-源码/frontend/node_modules/**": true,
+      "**/01-源码/frontend/dist-dev/**": true,
+      "**/本人备份AI不要动/**": true
+    }
+  }
+}
