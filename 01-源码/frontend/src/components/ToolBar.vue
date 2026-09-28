@@ -29,6 +29,7 @@ import { ArchiveService } from "../../bindings/pvfine/services";
 import { ExportFilesTo } from "../services/exportApi";
 import ExportDialog from "./ExportDialog.vue";
 import { useUnsavedChanges } from "../composables/unsavedChanges";
+import { PickKeyFileDialog } from "../services/keyApi";
 
 const archive = useArchiveStore();
 const editor = useEditorStore();
@@ -122,6 +123,11 @@ const openMenuOptions = computed<DropdownOption[]>(() => [
     key: "save-as",
     icon: renderEmoji("📤"),
     disabled: !canSave.value,
+  },
+  {
+    label: "导入密钥",
+    key: "import-key",
+    icon: renderEmoji("🔑"),
   },
   { type: "divider", key: "close-divider" },
   {
@@ -291,10 +297,24 @@ async function onSaveAs() {
   }
 }
 
+/**
+ * 「导入密钥」：选一个 sk.dat 复制进密钥库（选一次即永久生效，以后打开该 PVF 无需再放密钥）。
+ * 与「打开失败」弹窗里的按钮走同一套逻辑，区别只是入口在「打开」下拉菜单里。
+ */
+async function onImportKey(): Promise<void> {
+  try {
+    const tip = await PickKeyFileDialog();
+    if (tip) message.success(tip);
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`导入密钥失败: ${e?.message ?? e}`);
+  }
+}
+
 function onOpenMenuSelect(key: string | number): void {
   if (key === "open") void onOpen();
   else if (key === "save") onSave();
   else if (key === "save-as") void onSaveAs();
+  else if (key === "import-key") void onImportKey();
   else if (key === "close") onCloseArchive();
 }
 
