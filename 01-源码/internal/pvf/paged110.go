@@ -390,6 +390,13 @@ var sealedKeyExtensions = map[string]bool{
 	".dat": true, ".sk": true, ".key": true, ".bin": true,
 }
 
+// IsSealedKeyFile 报告文件名是否可能是一份 sk.dat 密钥表（密钥库扫描只接受这些后缀）。
+// host 层把用户手选的密钥放进密钥库时，必须按此规范命名 —— 否则文件会「已入库但
+// 永不被尝试」，用户看到「已加入密钥库」却依然打不开（2026-09-29 发布前审查发现）。
+func IsSealedKeyFile(name string) bool {
+	return sealedKeyExtensions[strings.ToLower(filepath.Ext(name))]
+}
+
 // storedSealedKeys 列出密钥库目录下的全部密钥文件（按路径排序，保证尝试顺序稳定）。
 func storedSealedKeys() []string {
 	dirs := ExtraKeyDirs()

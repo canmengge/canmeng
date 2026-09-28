@@ -6,9 +6,12 @@ import {
   NButton,
   NCheckbox,
   NIcon,
+  NInput,
   NModal,
   NPopover,
   NProgress,
+  NRadioButton,
+  NRadioGroup,
   NTag,
   NText,
   NTree,
@@ -195,8 +198,9 @@ async function startImport(): Promise<void> {
     if (result.overwrittenCount > 0) parts.push(`覆盖 ${result.overwrittenCount.toLocaleString()} 个`);
     if (result.skippedCount > 0) parts.push(`跳过 ${result.skippedCount.toLocaleString()} 个`);
     // 文本导入里编码无法识别的二进制文件（.equ/.lst 等脚本）已自动按原始字节写入。
-    if ((result.autoRawCount ?? 0) > 0) {
-      parts.push(`${result.autoRawCount.toLocaleString()} 个自动按原始字节导入`);
+    const autoRaw = result.autoRawCount ?? 0;
+    if (autoRaw > 0) {
+      parts.push(`${autoRaw.toLocaleString()} 个自动按原始字节导入`);
     }
     importer.close();
     message.success(parts.join("，"));

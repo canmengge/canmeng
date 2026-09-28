@@ -99,12 +99,19 @@ func (s *ArchiveService) PickKeyFileDialog() (string, error) {
 		return "", fmt.Errorf("%q 不像有效的 sk.dat（大小应为 128 字节的整数倍，实际 %d 字节）",
 			filepath.Base(src), len(data))
 	}
-	dst := filepath.Join(dir, filepath.Base(src))
+	// 密钥库扫描只认 .dat / .sk / .key / .bin（内核 sealedKeyExtensions）。用户若从
+	// 「所有文件」过滤器选了其它扩展名（含无扩展名）的文件，按原名落库会「已入库但
+	// 永不被尝试」—— 补上 .dat 后缀，保证入库即生效（2026-09-29 发布前审查发现）。
+	dstName := filepath.Base(src)
+	if !pvf.IsSealedKeyFile(dstName) {
+		dstName += ".dat"
+	}
+	dst := filepath.Join(dir, dstName)
 	if err := os.WriteFile(dst, data, 0o600); err != nil {
 		return "", fmt.Errorf("写入密钥库失败: %w", err)
 	}
 	logging.For("archive").Info("密钥已加入密钥库", "来源", src, "目标", dst)
-	return fmt.Sprintf("已把 %s 加入密钥库（%s），请重新打开该 PVF", filepath.Base(src), dir), nil
+	return fmt.Sprintf("已把 %s 加入密钥库（%s），请重新打开该 PVF", dstName, dir), nil
 }
 
 // findSaveRemnant 返回目标归档同目录残留的保存临时文件（<path>.pvftmp）。

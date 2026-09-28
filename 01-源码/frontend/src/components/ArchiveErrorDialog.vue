@@ -14,6 +14,11 @@ import { GetKeyStoreInfo, PickKeyFileDialog } from "../services/keyApi";
 const archive = useArchiveStore();
 const dialog = useDialog();
 
+/** 原生对话框里点「取消」会以错误形式返回，需要与真正的失败区分开。 */
+function isCancel(e: any): boolean {
+  return String(e?.message ?? e).toLowerCase().includes("cancel");
+}
+
 watch(
   () => archive.openError,
   (error) => {
@@ -52,12 +57,16 @@ watch(
           });
         }
       } catch (e: unknown) {
-        dialog.error({
-          title: "选择密钥失败",
-          content: String((e as { message?: string } | null)?.message ?? e),
-          positiveText: "关闭",
-          closable: true,
-        });
+        // 用户在系统文件框里点「取消」也会走 reject（与工具栏/书签等入口一致），
+        // 必须过滤掉，否则会弹出一条假的「选择密钥失败」。
+        if (!isCancel(e)) {
+          dialog.error({
+            title: "选择密钥失败",
+            content: String((e as { message?: string } | null)?.message ?? e),
+            positiveText: "关闭",
+            closable: true,
+          });
+        }
       } finally {
         picking.value = false;
       }

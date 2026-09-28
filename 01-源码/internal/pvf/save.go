@@ -184,21 +184,33 @@ func (a *Archive) savePaged110(w io.Writer) error {
 		return ErrPaged110StructureLocked
 	}
 	logical := a.data
-	rebuilt := false
-	if a.Modified() || logical == nil || int32(len(a.items)) != a.hdr.FileCount {
-		out, err := a.rebuild()
-		if err != nil {
-			return err
-		}
-		logical = out
-		rebuilt = true
+	if !a.Modified() && logical != nil && int32(len(a.items)) == a.hdr.FileCount {
+		return writePageGuarded(w, logical, a.pageKeys)
 	}
-	if err := writePageGuarded(w, logical, a.pageKeys); err != nil {
+
+	// rebuild() 会就地改写 a.hdr（FileCount / BodySize / GroupCount / …）以及新增
+	// 条目的 chunk/off/size。若随后的守卫校验拒绝保存（最常见：页密钥不足以覆盖
+	// 全部页），这些改动必须回滚 —— 否则归档会停在「半保存」状态：逻辑字节还是旧的、
+	// 头信息与条目已是新的，之后的 Info()/编辑都基于错误的头。
+	// 2026-09-29 发布前审查发现；该失败路径在 4.4 的客户环境里很常见（零售 sk.dat
+	// 恰好只覆盖 52 页，任何增长型编辑都会触发拒绝）。
+	savedHdr := a.hdr
+	savedItems := append([]fileItem(nil), a.items...)
+	restore := func() {
+		a.hdr = savedHdr
+		a.items = savedItems
+	}
+
+	out, err := a.rebuild()
+	if err != nil {
+		restore()
 		return err
 	}
-	if rebuilt {
-		a.adoptRebuilt(logical)
+	if err := writePageGuarded(w, out, a.pageKeys); err != nil {
+		restore()
+		return err
 	}
+	a.adoptRebuilt(out)
 	return nil
 }
 
