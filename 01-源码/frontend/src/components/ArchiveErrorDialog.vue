@@ -33,12 +33,17 @@ watch(
         });
     }
 
+    // 记住这个「打开 PVF 失败」弹窗：密钥成功入库后要把它一起关掉，只留成功提示。
+    let failedDialog: ReturnType<typeof dialog.error> | undefined;
+
     const pickKeyFile = async (): Promise<void> => {
       if (picking.value) return;
       picking.value = true;
       try {
         const tip = await PickKeyFileDialog();
         if (tip) {
+          // 密钥已入库 —— 关掉失败弹窗，只留「已加入密钥库」这一条，用户接着重新打开即可。
+          failedDialog?.destroy();
           dialog.success({
             title: "已加入密钥库",
             content: tip,
@@ -58,7 +63,7 @@ watch(
       }
     };
 
-    dialog.error({
+    failedDialog = dialog.error({
       title: "打开 PVF 失败",
       content: () =>
         h("div", { style: "line-height:1.8" }, [
