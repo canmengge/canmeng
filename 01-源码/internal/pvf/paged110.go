@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -73,6 +74,13 @@ var ErrPaged110ReadOnly = errors.New("pvf: paged110 archives cannot be written w
 // rebuilds the name pool and would leave the carried-over HASH pointing at stale
 // name offsets. In-place edits of existing payloads are supported.
 var ErrPaged110StructureLocked = errors.New("pvf: paged110 archives only support in-place edits until the HASH key is known")
+
+// ErrPaged110PageKeysShort 表示归档页数超过了页密钥表能覆盖的范围，多出来的页
+// 无法加密。客户端读取每一页时都会用密钥表解密它：若某页（尤其是末尾几页）以
+// 明文写出，客户端会把明文当成密文去解密，整页数据报废 —— 2026-09-29 客户事故
+// 正是末尾 3 页未加密，导致该页内 5 张字符串表读不出、界面显示
+// `<20::main_menu...>` 这类占位符。宁可拒绝保存，也不产出客户端读不了的文件。
+var ErrPaged110PageKeysShort = errors.New("pvf: 页密钥表覆盖的页数少于归档页数，末尾页会以未加密写出，已拒绝保存")
 
 // wideSeed is the newer client's seed derivation: four 16-bit key units
 // (UTF-16 code units), Horner over base 0x393 with a 0x339E9711 multiplier.
@@ -218,6 +226,16 @@ func encryptPageGuards(data, pageKeys []byte) int {
 // never needs a second copy of the whole container in memory.
 func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 	pages := len(pageKeys) / paged110PageKeySize
+	// 页密钥必须覆盖整个归档。客户端读取每一页时都会用密钥表解密它：若某页以
+	// 明文写出，客户端会拿密钥去"解密"这段明文，得到垃圾数据，该页内所有文件
+	// 随之报废（2026-09-29 客户事故：末尾 3 页未加密 → 该页内 5 张字符串表读
+	// 不出 → 界面显示 <20::main_menu...> 占位符）。
+	//
+	// 校验放在写出任何字节之前，失败时目标文件保持为空，不会留下半成品。
+	if need := (len(logical) + paged110PageSize - 1) / paged110PageSize; need > pages {
+		return fmt.Errorf("%w（需要 %d 页密钥，实际只有 %d 页）",
+			ErrPaged110PageKeysShort, need, pages)
+	}
 	guard := make([]byte, paged110PageGuardSize)
 	for i := 0; ; i++ {
 		off := i * paged110PageSize
@@ -229,13 +247,17 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 			end = len(logical)
 		}
 		head := off + paged110PageGuardSize
-		if i >= pages || head > len(logical) {
-			// Beyond the key table (or a trailing partial page) nothing is
-			// guarded; mirror decryptPageGuards, which stops there too.
+		if head > len(logical) {
+			// 末尾不足一个守卫块：按原样写出（客户端同样不会给它解密）。
 			if _, err := w.Write(logical[off:end]); err != nil {
 				return err
 			}
 			continue
+		}
+		if i >= pages {
+			// 上面的页数校验已保证不会走到这里；万一状态被并发改动，
+			// 也绝不静默写明文。
+			return ErrPaged110PageKeysShort
 		}
 		copy(guard, logical[off:head])
 		block, err := aes.NewCipher(pageKeys[i*paged110PageKeySize : (i+1)*paged110PageKeySize])

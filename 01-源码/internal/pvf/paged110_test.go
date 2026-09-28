@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -346,6 +347,110 @@ func TestPaged110SaveEditRoundTrip(t *testing.T) {
 }
 
 // replaceStringTableValue rewrites the value of one `key>value` line.
+// TestWritePageGuardedRejectsShortKeyTable 确认：页密钥表覆盖的页数少于归档页数
+// 时，写出会立即报错且不产生任何字节。2026-09-29 客户事故（末尾若干页以明文写
+// 出，客户端按密文解密后成片乱码）由此从根上堵死。
+func TestWritePageGuardedRejectsShortKeyTable(t *testing.T) {
+	logical := make([]byte, paged110PageSize*2) // 需要 2 页
+	keys := make([]byte, paged110PageKeySize)   // 只有 1 页
+
+	var out bytes.Buffer
+	err := writePageGuarded(&out, logical, keys)
+	if !errors.Is(err, ErrPaged110PageKeysShort) {
+		t.Fatalf("err = %v, want ErrPaged110PageKeysShort", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("报错前不应写出任何字节，实际写出 %d 字节", out.Len())
+	}
+}
+
+// 密钥页数恰好等于归档页数：必须放行，且每页守卫区确实被加密、其后的数据原样保留。
+func TestWritePageGuardedAcceptsExactKeyTable(t *testing.T) {
+	const pages = 2
+	logical := make([]byte, paged110PageSize*pages)
+	for i := range logical {
+		logical[i] = byte(i%251 + 1)
+	}
+	keys := make([]byte, paged110PageKeySize*pages)
+	for i := range keys {
+		keys[i] = byte(i + 1)
+	}
+
+	var out bytes.Buffer
+	if err := writePageGuarded(&out, logical, keys); err != nil {
+		t.Fatalf("writePageGuarded: %v", err)
+	}
+	if out.Len() != len(logical) {
+		t.Fatalf("写出长度 = %d, want %d", out.Len(), len(logical))
+	}
+	for i := 0; i < pages; i++ {
+		off := i * paged110PageSize
+		if bytes.Equal(out.Bytes()[off:off+paged110PageGuardSize], logical[off:off+paged110PageGuardSize]) {
+			t.Fatalf("页 %d 的守卫区仍是明文", i)
+		}
+		if !bytes.Equal(out.Bytes()[off+paged110PageGuardSize:off+paged110PageSize],
+			logical[off+paged110PageGuardSize:off+paged110PageSize]) {
+			t.Fatalf("页 %d 守卫区之后的数据被改动", i)
+		}
+	}
+}
+
+// 末尾不足一个守卫块的残页：按原样写出且不报错（客户端同样不会给它解密）。
+func TestWritePageGuardedTrailingPartialPage(t *testing.T) {
+	logical := make([]byte, paged110PageSize+paged110PageGuardSize/2)
+	keys := make([]byte, paged110PageKeySize*2)
+
+	var out bytes.Buffer
+	if err := writePageGuarded(&out, logical, keys); err != nil {
+		t.Fatalf("writePageGuarded: %v", err)
+	}
+	if out.Len() != len(logical) {
+		t.Fatalf("写出长度 = %d, want %d", out.Len(), len(logical))
+	}
+	if !bytes.Equal(out.Bytes()[paged110PageSize:], logical[paged110PageSize:]) {
+		t.Fatal("末尾残页应原样写出")
+	}
+}
+
+// 密钥多于所需页数时必须放行（不得误报）。
+func TestWritePageGuardedAcceptsExtraKeys(t *testing.T) {
+	logical := make([]byte, paged110PageSize)
+	keys := make([]byte, paged110PageKeySize*3)
+
+	var out bytes.Buffer
+	if err := writePageGuarded(&out, logical, keys); err != nil {
+		t.Fatalf("writePageGuarded: %v", err)
+	}
+	if out.Len() != len(logical) {
+		t.Fatalf("写出长度 = %d, want %d", out.Len(), len(logical))
+	}
+}
+
+// 读写对称：写出的守卫区能被 decryptPageGuards 原样解回。
+func TestWritePageGuardedRoundTrip(t *testing.T) {
+	const pages = 2
+	logical := make([]byte, paged110PageSize*pages)
+	for i := range logical {
+		logical[i] = byte(i*7 + 3)
+	}
+	keys := make([]byte, paged110PageKeySize*pages)
+	for i := range keys {
+		keys[i] = byte(i*13 + 5)
+	}
+
+	var out bytes.Buffer
+	if err := writePageGuarded(&out, logical, keys); err != nil {
+		t.Fatal(err)
+	}
+	back := append([]byte(nil), out.Bytes()...)
+	if got := decryptPageGuards(back, keys); got != pages {
+		t.Fatalf("decryptPageGuards 处理页数 = %d, want %d", got, pages)
+	}
+	if !bytes.Equal(back, logical) {
+		t.Fatal("加密后再解密未还原原始字节")
+	}
+}
+
 func replaceStringTableValue(text, key, value string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
