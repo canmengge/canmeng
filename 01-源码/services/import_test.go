@@ -274,7 +274,11 @@ func TestArchiveServiceImportFilesRawOverwritesAndUpdatesType(t *testing.T) {
 	}
 }
 
-func TestArchiveServiceImportFilesRollsBackOnInvalidText(t *testing.T) {
+// 文本导入遇到无法解码的二进制文件（.equ/.lst 脚本）时，不再中止整批导入，
+// 而是只把这一个文件按原始字节写入，并计入 AutoRawCount；同批的文本文件照常走
+// 文本导入。2026-09-29：用户拖入客户提取的 .equ 时被"文本编码不匹配"挡住，
+// 现改为自动降级，等价于对该文件单独选择「原始字节」。
+func TestArchiveServiceImportFilesAutoRawFallbackOnBinary(t *testing.T) {
 	sourceDir := t.TempDir()
 	validPath := filepath.Join(sourceDir, "valid.equ")
 	invalidPath := filepath.Join(sourceDir, "invalid.equ")
@@ -282,7 +286,8 @@ func TestArchiveServiceImportFilesRollsBackOnInvalidText(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 奇数长度且非 UTF-8/UTF-16 的字节序列：既非有效文本也无法按 UTF-16 解码。
-	if err := os.WriteFile(invalidPath, []byte{0x81, 0x82, 0x83}, 0o644); err != nil {
+	binary := []byte{0x81, 0x82, 0x83}
+	if err := os.WriteFile(invalidPath, binary, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,21 +301,30 @@ func TestArchiveServiceImportFilesRollsBackOnInvalidText(t *testing.T) {
 	}
 	t.Cleanup(c.closeArchive)
 
-	beforeCount := c.archive.FileCount()
-	beforeModified := c.archive.ModifiedCount()
-	_, err := NewArchiveService(c).ImportFiles(
+	res, err := NewArchiveService(c).ImportFiles(
 		[]string{validPath, invalidPath},
 		"",
 		ImportModeText,
 	)
-	if err == nil || !strings.Contains(err.Error(), "无法识别") || !strings.Contains(err.Error(), "原始字节") {
-		t.Fatalf("invalid text error = %v", err)
+	if err != nil {
+		t.Fatalf("文本导入不应因二进制文件而失败: %v", err)
 	}
-	if c.archive.FileCount() != beforeCount || c.archive.ModifiedCount() != beforeModified {
-		t.Fatalf("archive changed after failed import: count=%d modified=%d", c.archive.FileCount(), c.archive.ModifiedCount())
+	if res.AutoRawCount != 1 {
+		t.Fatalf("AutoRawCount = %d, want 1", res.AutoRawCount)
 	}
-	if _, ok := c.archive.Find("valid.equ"); ok {
-		t.Fatal("valid file was partially imported")
+	idx, ok := c.archive.Find("invalid.equ")
+	if !ok {
+		t.Fatal("invalid.equ 未被导入")
+	}
+	got, err := c.archive.RawBytes(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, binary) {
+		t.Fatalf("二进制内容被改动: got % x, want % x", got, binary)
+	}
+	if _, ok := c.archive.Find("valid.equ"); !ok {
+		t.Fatal("同批的文本文件未被导入")
 	}
 }
 

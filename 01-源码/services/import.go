@@ -41,6 +41,9 @@ type ImportResult struct {
 	// ChangedIndexes 与 ChangedPaths 一一对应，供调用方做目录索引的增量补丁
 	// （前端不需要，但服务端装索引时要靠它避免全量重建）。
 	ChangedIndexes []int32 `json:"changedIndexes,omitempty"`
+	// AutoRawCount 记录文本导入中被自动改为「原始字节」写入的文件数：这些文件的
+	// 编码无法识别（.equ / .lst 等脚本二进制），按原始字节写回才是正确做法。
+	AutoRawCount int `json:"autoRawCount"`
 }
 
 // ImportPreview describes the validated changes without modifying the live
@@ -65,12 +68,16 @@ type ImportPreviewEntry struct {
 	Overwrite  bool   `json:"overwrite"`
 }
 
+// importFile 是一个待写入暂存归档的来源文件。文本导入时若某个文件的编码无法
+// 识别（.equ / .lst 等脚本二进制），不中止整批导入，而是把该文件标记为 autoRaw
+// 并按原始字节写入 —— 等价于只对这一个文件改用「原始字节」模式。
 type importFile struct {
 	sourcePath string
 	targetPath string
 	data       []byte
 	text       string
 	dataType   int32
+	autoRaw    bool
 }
 
 type importSelection struct {
@@ -652,9 +659,11 @@ func readImportFiles(files []importFile, mode string, job *importJob) error {
 		if mode == ImportModeText {
 			text, err := decodeImportText(file.sourcePath, data)
 			if err != nil {
-				return err
+				// 编码无法识别：不再中止整批导入，改为该文件按原始字节写入。
+				file.autoRaw = true
+			} else {
+				file.text = text
 			}
-			file.text = text
 		}
 	}
 	return nil
@@ -780,7 +789,7 @@ func importTextPlausible(text string) bool {
 }
 
 func applyImportFile(a *pvf.Archive, file importFile, mode string, index int32) error {
-	if mode == ImportModeText {
+	if mode == ImportModeText && !file.autoRaw {
 		return a.SetText(index, file.text)
 	}
 	return a.SetRawBytes(index, file.data)
@@ -788,7 +797,7 @@ func applyImportFile(a *pvf.Archive, file importFile, mode string, index int32) 
 
 // addImportFile 追加一个新条目，返回它在暂存归档里的索引（增量索引补丁需要）。
 func addImportFile(a *pvf.Archive, file importFile, mode string) (int32, error) {
-	if mode == ImportModeText {
+	if mode == ImportModeText && !file.autoRaw {
 		return a.AddFileText(file.targetPath, file.text, file.dataType)
 	}
 	return a.AddFile(file.targetPath, file.data, file.dataType), nil
@@ -865,6 +874,9 @@ func applyPreparedImport(a *pvf.Archive, files []importFile, mode, conflict stri
 		if exists && conflict == ImportConflictSkip {
 			result.SkippedCount++
 			continue
+		}
+		if file.autoRaw {
+			result.AutoRawCount++
 		}
 		if exists && conflict == ImportConflictRename {
 			// 另存为不重名的新条目；写保护按最终路径判定。

@@ -55,6 +55,8 @@ export interface ImportResult {
   importedCount: number;
   overwrittenCount: number;
   skippedCount: number;
+  /** 文本导入中被自动改为「原始字节」写入的文件数（编码无法识别的二进制脚本）。 */
+  autoRawCount?: number;
   changedPaths?: string[];
 }
 
