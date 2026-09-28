@@ -46,16 +46,18 @@ import type { AnnotationTagPlacement } from "../stores/settings";
 import { useImageStore } from "../stores/images";
 import { scriptCompletionSource as declarationCompletionSource } from "../scriptLanguageService";
 import type { ResolvedThemeId } from "../theme";
-import { listNamePlugin } from "../listNames";
+import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
 
 const props = defineProps<{
   doc: string;
   language?: "pvf" | "javascript";
   readOnly?: boolean;
-  /** 大文件（>8MB）：不装折行与空白高亮，避免几十万行把渲染拖死。 */
+  /** 大文件（>8MB）：不装空白高亮，避免几十万行把渲染拖死（折行保留）。 */
   largeFile?: boolean;
   annotations?: EditorAnnotation[];
   tagPlacement?: AnnotationTagPlacement;
+  /** 「绿色关联框」（ID 关联标签）是否显示：Alt+Q 切换，默认显示。 */
+  showReferenceTags?: boolean;
   vimMode?: boolean;
   themeId: ResolvedThemeId;
   /** 搜索结果定位请求(seq 变化即触发一次定位)，needles 依次尝试直至命中。 */
@@ -92,6 +94,7 @@ const images = useImageStore();
 interface AnnotationDisplay {
   annotations: EditorAnnotation[];
   placement: AnnotationTagPlacement;
+  showReferenceTags: boolean;
 }
 
 const setAnnotations = StateEffect.define<AnnotationDisplay>();
@@ -149,7 +152,13 @@ class AnnotationWidget extends WidgetType {
     tag.className = inlineImage
       ? "cm-annotation-inline-image"
       : `cm-annotation-tag cm-annotation-tag--${this.annotation.type || "text"}`;
-    if (!inlineImage) tag.textContent = this.annotation.title;
+    if (!inlineImage) {
+      // 译文/名称末尾常带空白（字符串表里常见普通空格、以及不换行空格 U+00A0 / 全角空格
+      // U+3000 —— 后两者不会被 nowrap 折叠，会把胶囊框右侧撑出一段空洞）。显示时去掉
+      // 首尾空白，让框紧贴文字；提示文本仍用原始 title/不动的 content。
+      tag.textContent = this.annotation.title.replace(/^[\s\u00a0\u3000]+|[\s\u00a0\u3000]+$/gu, "");
+      if (tag.textContent === "") tag.textContent = this.annotation.title;
+    }
     const hints = [
       this.annotation.targetFileIndex >= 0 ? "Cmd/Ctrl+单击打开来源字符串表" : "",
       placeholder ? "单击修改译文" : "",
@@ -315,6 +324,7 @@ function showAnnotationTooltip(annotation: EditorAnnotation, element: HTMLElemen
         ? `${annotation.image.path}[${annotation.image.index}]`
         : annotation.title),
       annotation.targetFileIndex >= 0 ? "Cmd/Ctrl+单击可以跳转" : "",
+      annotation.type === "reference" ? "Alt+Q：隐藏 / 显示绿色关联框" : "",
     ].filter(Boolean).join("\n\n"),
     dataUrl: "",
     loading: !!annotation.image,
@@ -379,29 +389,53 @@ watch(
   }
 );
 
+/** 单个文件参与装饰的标注上限；超出不再渲染（与后端 annotationCountLimit 同向兜底）。 */
+const annotationRenderLimit = 20000;
+
 function annotationDecorations(
   state: EditorState,
   display: AnnotationDisplay
 ): DecorationSet {
-  const ranges = display.annotations.flatMap((annotation) => {
+  // 渲染上限：每条标注都要一次 sliceString / lineAt 并 new 一个 Widget，
+  // 几十万条会冻结界面。超出部分直接不装饰（后端已有同向的数量上限，此处兜底）。
+  const source =
+    display.annotations.length > annotationRenderLimit
+      ? display.annotations.slice(0, annotationRenderLimit)
+      : display.annotations;
+  const ranges = source.flatMap((annotation) => {
     const targetStart = Math.max(0, Math.min(state.doc.length, annotation.start));
     const targetEnd = Math.max(targetStart, Math.min(state.doc.length, annotation.end));
     const result: Range<Decoration>[] = [];
 
-    if (annotation.targetFileIndex >= 0 && targetStart < targetEnd) {
-      // .lst 路径链接：悬停用原生 title 给出操作提示（单击打开并定位左树 / Ctrl+单击仅跳转）。
+    if (annotation.targetFileIndex >= 0 && targetStart < targetEnd && annotation.type !== "reference") {
+      // .lst 路径链接：悬停用原生 title 给出操作提示（仅 Ctrl+单击才跳转，见 click 处理）。
+      // ID 关联（type=reference）不在此列：关联目标只由后面的绿色标签承载，
+      // 原文 token 保持普通可编辑文本（2026-09-27 用户要求）。
       const linkText = state.doc.sliceString(targetStart, targetEnd);
       result.push(
         Decoration.mark({
           class: "cm-annotation-link",
           attributes: {
-            title: `单击：打开并定位到左侧文件树\nCtrl+单击：仅跳转文件\n${linkText}`,
+            title: `Ctrl+单击：打开文件并在左侧文件树中定位\n${linkText}`,
           },
         }).range(targetStart, targetEnd)
       );
     }
 
-    if (display.placement !== "hidden" && annotation.title.trim() !== "") {
+    if (annotation.type === "reference" && targetStart < targetEnd) {
+      // 关联目标（物品 ID）本身：加一个强调样式。黄色 ID 是主、后面的绿色关联框是次，
+      // 所以这里让 ID 更重更亮（2026-09-27 用户要求）。
+      result.push(
+        Decoration.mark({ class: "cm-annotation-target" }).range(targetStart, targetEnd)
+      );
+    }
+
+    if (
+      display.placement !== "hidden" &&
+      annotation.title.trim() !== "" &&
+      // 绿色关联框（ID 关联标签）：Alt+Q 可整体隐藏，原文保持可编辑（2026-09-28 用户要求）。
+      (display.showReferenceTags || annotation.type !== "reference")
+    ) {
       const position =
         display.placement === "line-end" ? state.doc.lineAt(targetEnd).to : targetEnd;
       result.push(
@@ -427,6 +461,7 @@ const annotationDisplayField = StateField.define<AnnotationDisplay>({
     return {
       annotations: props.annotations ?? [],
       placement: props.tagPlacement ?? "after-target",
+      showReferenceTags: props.showReferenceTags ?? true,
     };
   },
   update(display, transaction) {
@@ -484,6 +519,15 @@ const diagnosticLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/**
+ * tab 箭头的形状：**与 CodeMirror 内置完全相同的几何**（同一张 200×20 的 SVG、
+ * 同样 `auto 100%` + `right 90%`，仍会随 tab 宽度被裁切 —— 观感与原版一致）。
+ * 这里只把它当"形状遮罩"，颜色交给 `background-color: currentColor`：
+ * 于是能跟随主题、并且可以提亮（用户 2026-09-27：只改颜色，不动样式）。
+ */
+const TAB_ARROW_MASK =
+  `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="20"><path stroke="%23000" stroke-width="1" fill="none" d="M1 10H196L190 5M190 15L196 10M197 4L197 16"/></svg>')`;
+
 function createEditorTheme(themeId: ResolvedThemeId) {
   return EditorView.theme(
     {
@@ -504,6 +548,21 @@ function createEditorTheme(themeId: ResolvedThemeId) {
       color: "var(--pvf-editor-gutter-text)",
     },
     ".cm-content": { padding: "8px 0" },
+    // tab 箭头：几何/尺寸/位置**完全沿用 CodeMirror 内置样式**（还原成最初始观感），
+    // 只把颜色换成跟随主题的正文色并提亮 ⇒ 一眼能看出哪里是 tab（只改颜色，不动样式）。
+    ".cm-highlightTab": {
+      backgroundImage: "none",
+      backgroundColor: "currentColor",
+      opacity: "0.7",
+      maskImage: TAB_ARROW_MASK,
+      maskSize: "auto 100%",
+      maskPosition: "right 90%",
+      maskRepeat: "no-repeat",
+      "-webkit-mask-image": TAB_ARROW_MASK,
+      "-webkit-mask-size": "auto 100%",
+      "-webkit-mask-position": "right 90%",
+      "-webkit-mask-repeat": "no-repeat",
+    },
     ".cm-activeLine": { backgroundColor: "var(--pvf-editor-active-line)" },
     ".cm-activeLineGutter": { backgroundColor: "var(--pvf-editor-active-line)" },
     ".cm-selectionMatch": { backgroundColor: "var(--pvf-editor-selection-match)" },
@@ -512,10 +571,36 @@ function createEditorTheme(themeId: ResolvedThemeId) {
   );
 }
 
+/** 大文件的 change 回传合并：整篇序列化是 O(行数)，每次击键都做会卡住输入。 */
+let changeTimer: number | undefined;
+/** 最近一次回报给父组件的文本：watch(props.doc) 用它做 O(1) 短路。 */
+let lastEmitted: string | null = null;
+
+function reportChange(text: string): void {
+  lastEmitted = text;
+  emit("change", text);
+}
+
+function scheduleChange(currentView: EditorView): void {
+  if (changeTimer !== undefined) window.clearTimeout(changeTimer);
+  changeTimer = window.setTimeout(() => {
+    changeTimer = undefined;
+    reportChange(currentView.state.doc.toString());
+  }, 250);
+}
+
+/** 卸载或整篇替换前把未回传的改动补发出去，避免丢修改。 */
+function flushPendingChange(): void {
+  if (changeTimer === undefined) return;
+  window.clearTimeout(changeTimer);
+  changeTimer = undefined;
+  if (view) reportChange(view.state.doc.toString());
+}
+
 function makeExtensions(themeId: ResolvedThemeId) {
   const isJavaScript = props.language === "javascript";
-  // 大文件降级：折行要逐字符测量、空白高亮要给每个空白字符加装饰，几十万行时这两项
-  // 是卡顿主因，这里直接从扩展列表里剔除（对用户可见的代价：不折行、不显示空白点）。
+  // 大文件降级：空白高亮要给每个空白字符加装饰、折行要逐字符测量，几十万行时都是
+  // 卡顿主因；这里只剔除空白高亮（折行保留：长行不换行会看不见内容）。
   const large = props.largeFile === true;
   return [
     lineNumbers(),
@@ -537,6 +622,9 @@ function makeExtensions(themeId: ResolvedThemeId) {
     EditorView.domEventHandlers({
       click(event, currentView) {
         const mouseEvent = event as MouseEvent;
+        // 路径链接只在 Ctrl（macOS：Cmd）+ 左键时跳转；普通单击保持纯文本编辑行为
+        // （2026-09-28 用户要求）。
+        if (!mouseEvent.ctrlKey && !mouseEvent.metaKey) return false;
         const position = currentView.posAtCoords({
           x: mouseEvent.clientX,
           y: mouseEvent.clientY,
@@ -545,18 +633,31 @@ function makeExtensions(themeId: ResolvedThemeId) {
         const display = currentView.state.field(annotationDisplayField, false);
         const annotation = display?.annotations.find(
           (item) =>
-            item.targetFileIndex >= 0 && item.start <= position && position < item.end
+            item.targetFileIndex >= 0 &&
+            // ID 关联（reference）不拦截正文点击：原文照旧可编辑，关联只走绿色标签。
+            item.type !== "reference" &&
+            item.start <= position &&
+            position < item.end
         );
-        if (!annotation) return false;
+        if (!annotation) {
+          // 超大清单（标注被后端跳过）的行内路径链接兜底：点击落在 `路径` token 上时，
+          // 惰性解析目标 fileIndex（可见区已批量预取，通常命中缓存，无额外往返）。
+          if (!props.listNames) return false;
+          const linkPath = listLinkAt(currentView, position);
+          if (!linkPath) return false;
+          mouseEvent.preventDefault();
+          mouseEvent.stopPropagation();
+          void resolveListLinkIndex(linkPath).then((fileIndex) => {
+            if (fileIndex < 0) return;
+            // Ctrl/Cmd+单击：打开文件并在左侧文件树中定位。
+            emit("activate-reference", fileIndex);
+          });
+          return true;
+        }
         mouseEvent.preventDefault();
         mouseEvent.stopPropagation();
-        if (mouseEvent.ctrlKey || mouseEvent.metaKey) {
-          // Ctrl/Cmd+单击：仅跳转文件（沿用原行为）。
-          emit("open-reference", annotation.targetFileIndex);
-        } else {
-          // 单击：打开文件并在左侧文件树中定位。
-          emit("activate-reference", annotation.targetFileIndex);
-        }
+        // Ctrl/Cmd+单击：打开文件并在左侧文件树中定位。
+        emit("activate-reference", annotation.targetFileIndex);
         return true;
       },
     }),
@@ -567,18 +668,32 @@ function makeExtensions(themeId: ResolvedThemeId) {
     // .lst 清单：可见行路径后显示目标文件名称（惰性，不影响打开速度）。
     ...(props.listNames ? [listNamePlugin] : []),
     indentUnit.of("\t"),
-    isJavaScript ? javascript() : pvfLanguage.extension,
-    isJavaScript
-      ? [
-          tooltips({ parent: document.body, position: "fixed" }),
-          javascriptHighlighting,
-          autocompletion({ override: [scriptCompletionSource] }),
-        ]
-      : pvfHighlighting,
+    // 语法解析（lezer）要扫描全文：41 万行的清单解析一次就是几十秒，
+    // 是"打开第二个大文件直接卡死"的主因。超大文本以纯文本模式打开：
+    // 不做语法着色，其余能力（链接跳转、定位、搜索、名称标签）全部保留。
+    ...(large ? [] : [isJavaScript ? javascript() : pvfLanguage.extension]),
+    ...(large
+      ? []
+      : isJavaScript
+        ? [
+            tooltips({ parent: document.body, position: "fixed" }),
+            javascriptHighlighting,
+            autocompletion({ override: [scriptCompletionSource] }),
+          ]
+        : [pvfHighlighting]),
     editorThemeComp.of(createEditorTheme(themeId)),
-    ...(large ? [] : [EditorView.lineWrapping]),
+    // 折行：长行（[item list] 一长串 ID）必须换行显示，否则要横向滚动、看不全。
+    // 大文件也保留折行（2026-09-27 用户明确要求）。
+    EditorView.lineWrapping,
     EditorView.updateListener.of((u) => {
-      if (u.docChanged) emit("change", u.state.doc.toString());
+      if (!u.docChanged) return;
+      // 整篇序列化是 O(行数)：大文件每敲一个键都做一遍会卡住输入，
+      // 这里合并到 250ms 后回传一次（内容不丢，卸载/切档前会强制 flush）。
+      if (large) {
+        scheduleChange(u.view);
+        return;
+      }
+      reportChange(u.state.doc.toString());
     }),
   ];
 }
@@ -672,6 +787,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   hideAnnotationTooltip();
+  flushPendingChange(); // 大文件的改动可能还在防抖窗口里，先补发再销毁
   view?.destroy();
   view = null;
 });
@@ -733,16 +849,18 @@ watch(
 );
 
 watch(
-  () => [props.annotations, props.tagPlacement] as const,
-  ([annotations, placement]) => {
+  () => [props.annotations, props.tagPlacement, props.showReferenceTags] as const,
+  ([annotations, placement, showReferenceTags]) => {
     view?.dispatch({
       effects: setAnnotations.of({
         annotations: annotations ?? [],
         placement: placement ?? "after-target",
+        showReferenceTags: showReferenceTags ?? true,
       }),
     });
   },
-  { deep: true }
+  // 刻意不用 deep：标注每次都由后端整体重算后替换（数组引用必变），deep 会逐字段
+  // 遍历几十万条标注做依赖收集，是打开大清单时卡顿的次要来源。
 );
 
 watch(
@@ -819,6 +937,8 @@ watch(
 .code-editor :deep(.cm-annotation-tag) {
   display: inline-flex;
   align-items: center;
+  /* 兜底：宽度按文字实际宽度收缩，避免被父级拉伸导致右侧留出空白。 */
+  width: max-content;
   max-width: 220px;
   height: 18px;
   margin-left: 7px;
@@ -845,6 +965,10 @@ watch(
   color: var(--pvf-editor-annotation-reference-text);
   background: var(--pvf-editor-annotation-reference-surface);
   border-color: var(--pvf-editor-annotation-reference-border);
+}
+/* 关联目标（物品 ID）：ID 是主、关联框是次，这里把 ID 加重，视线先落在 ID 上。 */
+.code-editor :deep(.cm-annotation-target) {
+  font-weight: 600;
 }
 /* 字符串表占位符的译文：文档里仍是占位符，这里只做展示。 */
 .code-editor :deep(.cm-annotation-tag--placeholder) {

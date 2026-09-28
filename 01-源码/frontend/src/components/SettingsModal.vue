@@ -38,7 +38,7 @@ import {
   useDialog,
   useMessage,
 } from "naive-ui";
-import { AnnotationService, RenderingService, UpdateService } from "../../bindings/pvfine/services";
+import { AnnotationService, RenderingService } from "../../bindings/pvfine/services";
 import type { AIAssistantSettings, AICustomAction } from "../../bindings/pvfine/services/models";
 import { AnnotationSources, type AnnotationReloadResult } from "../services/annotationApi";
 import { TestConnection } from "../services/aiApi";
@@ -47,7 +47,6 @@ import { BUILTIN_QUICK_ACTIONS } from "../services/quickActions";
 import {
   useSettingsStore,
   AI_PROVIDER_CHOICES,
-  TEXT_EDIT_LIMIT_CHOICES,
   type AnnotationTagPlacement,
   type ExplorerOpenMode,
   type ThemeMode,
@@ -56,6 +55,7 @@ import { useEditorStore } from "../stores/editor";
 import { useExplorerStore } from "../stores/explorer";
 import { useImageStore } from "../stores/images";
 import { invalidateStringTableGuardCache } from "../services/stringGuardApi";
+import { useUpdateStore } from "../stores/update";
 
 type TabKey = "general" | "editor" | "npk" | "system" | "ai";
 
@@ -63,6 +63,7 @@ const settings = useSettingsStore();
 const editor = useEditorStore();
 const explorer = useExplorerStore();
 const images = useImageStore();
+const update = useUpdateStore();
 const message = useMessage();
 const dialog = useDialog();
 
@@ -118,24 +119,6 @@ async function onVimModeChange(value: boolean) {
 async function onBackupSourceOnSaveChange(value: boolean) {
   try {
     await settings.saveBackupSourceOnSave(value);
-  } catch (error: any) {
-    message.error(`保存设置失败: ${error?.message ?? error}`);
-  }
-}
-
-const textEditLimitOptions = TEXT_EDIT_LIMIT_CHOICES.map((item) => ({
-  label: item.label,
-  value: item.value,
-}));
-
-async function onTextEditLimitChange(value: string | number | boolean) {
-  const next = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(next)) return;
-  try {
-    await settings.saveTextEditLimitMB(next);
-    message.success(
-      next === 0 ? "文本编辑上限已设为不限（大文件可能卡顿、占用大量内存）" : `文本编辑上限已设为 ${next} MB`
-    );
   } catch (error: any) {
     message.error(`保存设置失败: ${error?.message ?? error}`);
   }
@@ -402,7 +385,17 @@ async function onCheckUpdates(): Promise<void> {
   if (checkingUpdates.value) return;
   checkingUpdates.value = true;
   try {
-    await UpdateService.CheckForUpdates();
+    // 只做版本检查；发现新版本由 update store 弹出「提示更新」窗口
+    // （内含官网下载地址，可点击打开、可复制）。
+    const info = await update.check();
+    if (!info) return;
+    if (info.hasUpdate) {
+      message.info(`发现新版本 v${info.latestVersion}`);
+    } else {
+      message.success(
+        `已是最新版本${info.currentVersion ? `（当前 v${info.currentVersion}）` : ""}`
+      );
+    }
   } catch (error: any) {
     message.error(`检查更新失败: ${error?.message ?? error}`);
   } finally {
@@ -431,6 +424,19 @@ async function onMcpEnabledChange(value: boolean): Promise<void> {
       value
         ? "已开启「MCP 只读服务」，重启应用后在本机回环地址提供只读归档工具"
         : "已关闭「MCP 只读服务」，重启应用后生效"
+    );
+  } catch (error: any) {
+    message.error(`保存设置失败: ${error?.message ?? error}`);
+  }
+}
+
+async function onMcpWriteEnabledChange(value: boolean): Promise<void> {
+  try {
+    await settings.saveMcpWriteEnabled(value);
+    message.success(
+      value
+        ? "已开启「MCP 写能力」；还需关闭「AI 写保护」后外部 AI 才可写入内存覆盖层"
+        : "已关闭「MCP 写能力」，外部 AI 仅可执行只读工具"
     );
   } catch (error: any) {
     message.error(`保存设置失败: ${error?.message ?? error}`);
@@ -822,37 +828,7 @@ async function copyNPKDirectory(): Promise<void> {
             </div>
           </section>
 
-          <!-- 大文件 -->
-          <section class="settings-group">
-            <div class="group-header">
-              <div class="group-title">大文件</div>
-            </div>
 
-            <div class="settings-card">
-              <div class="setting-item">
-                <div class="setting-item-icon">
-                  <NIcon :size="18"><Code24Regular /></NIcon>
-                </div>
-                <div class="setting-item-content">
-                  <div class="setting-item-label-row">
-                    <span class="setting-item-label">文本编辑上限</span>
-                  </div>
-                  <div class="setting-item-desc">
-                    超过上限的文件只显示占位提示，不载入编辑器；在上限之内但超过 8MB 的文件会先二次确认，然后以只读方式打开并关闭折行与空白高亮，需要编辑时点编辑器里的「允许编辑」
-                  </div>
-                </div>
-                <div class="setting-item-control">
-                  <NSelect
-                    size="small"
-                    style="min-width: 240px"
-                    :value="settings.textEditLimitMB"
-                    :options="textEditLimitOptions"
-                    @update:value="onTextEditLimitChange"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
         </div>
 
         <!-- Tab 3: NPK 资源库 -->
@@ -1144,12 +1120,12 @@ async function copyNPKDirectory(): Promise<void> {
             </div>
           </section>
 
-          <!-- MCP 只读服务 -->
+          <!-- MCP 服务 -->
           <section class="settings-group">
             <div class="group-header">
-              <div class="group-title">MCP 只读服务</div>
+              <div class="group-title">MCP 服务</div>
               <div class="group-subtitle">
-                以 Model Context Protocol 向外部 AI 客户端开放本机只读归档工具（不开放任何写能力）
+                以 Model Context Protocol 向外部 AI 客户端开放本机归档工具；默认只读，写能力需二次开启并通过「AI 写保护」门禁
               </div>
             </div>
 
@@ -1159,11 +1135,24 @@ async function copyNPKDirectory(): Promise<void> {
                   <NIcon :size="18"><Bot24Regular /></NIcon>
                 </div>
                 <div class="setting-item-content">
-                  <div class="setting-item-label">开启 MCP 只读服务</div>
-                  <div class="setting-item-desc">开启后应用启动时监听本机回环地址（默认 127.0.0.1:17650），仅提供读取类工具；切换后需重启应用生效</div>
+                  <div class="setting-item-label">开启 MCP 服务</div>
+                  <div class="setting-item-desc">开启后应用启动时监听本机回环地址（默认 127.0.0.1:17650）；切换后需重启应用生效</div>
                 </div>
                 <div class="setting-item-control">
                   <NSwitch :value="settings.mcpEnabled" @update:value="onMcpEnabledChange" />
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <div class="setting-item-icon">
+                  <NIcon :size="18"><ShieldLock24Regular /></NIcon>
+                </div>
+                <div class="setting-item-content">
+                  <div class="setting-item-label">MCP 写能力（外部 AI 可改内存覆盖层）</div>
+                  <div class="setting-item-desc">默认关闭；开启后外部 AI 才可能调用 edit_file 写入内存覆盖层，且必须同时关闭「AI 助手 → AI 写保护」。写入只进覆盖层，归档保存仍只能由你手动执行</div>
+                </div>
+                <div class="setting-item-control">
+                  <NSwitch :value="settings.mcpWriteEnabled" @update:value="onMcpWriteEnabledChange" />
                 </div>
               </div>
             </div>

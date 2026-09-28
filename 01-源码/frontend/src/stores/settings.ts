@@ -11,18 +11,6 @@ export type SettingsTab = "general" | "editor" | "npk" | "system" | "ai";
 export type UpdateChannel = "stable" | "dev";
 export type { ThemeMode } from "../theme";
 
-/** 默认文本编辑上限（MB），与后端 DefaultAppSettings 一致。 */
-export const DEFAULT_TEXT_EDIT_LIMIT_MB = 8;
-
-/** 文本编辑上限的可选项；0 表示不限（超大文件会占用大量内存并可能卡顿）。 */
-export const TEXT_EDIT_LIMIT_CHOICES: { label: string; value: number }[] = [
-  { label: "8 MB（默认）", value: 8 },
-  { label: "16 MB", value: 16 },
-  { label: "32 MB", value: 32 },
-  { label: "64 MB", value: 64 },
-  { label: "不限（大文件可能卡顿、占用大量内存）", value: 0 },
-];
-
 /** AI 服务商预设（与后端 AI镶嵌.md §四 一致）；custom = 用户自填 OpenAI 兼容地址。 */
 export const AI_PROVIDER_CHOICES: { label: string; value: string; baseURL: string; model: string }[] = [
   { label: "自定义（OpenAI 兼容地址）", value: "custom", baseURL: "", model: "" },
@@ -52,10 +40,10 @@ const defaultSettings: AppSettings = {
   npkDirectory: "",
   theme: "dark",
   protectedStringTableGuard: false,
-  textEditLimitMB: DEFAULT_TEXT_EDIT_LIMIT_MB,
   ai: { ...defaultAIAssistantSettings },
   updateChannel: "stable",
   mcpEnabled: false,
+  mcpWriteEnabled: false,
 };
 
 export const useSettingsStore = defineStore("settings", () => {
@@ -70,10 +58,16 @@ export const useSettingsStore = defineStore("settings", () => {
   const npkDirectory = ref("");
   const themeMode = ref<ThemeMode>("dark");
   const protectedStringTableGuard = ref(false);
-  const textEditLimitMB = ref<number>(DEFAULT_TEXT_EDIT_LIMIT_MB);
   const ai = ref<AIAssistantSettings>({ ...defaultAIAssistantSettings });
   const updateChannel = ref<UpdateChannel>("stable");
   const mcpEnabled = ref(false);
+  const mcpWriteEnabled = ref(false);
+  /** 编辑器内「绿色关联框」（ID 关联标签）是否显示：Alt+Q 切换，仅本次会话有效。 */
+  const showReferenceTags = ref(true);
+
+  function toggleReferenceTags(): void {
+    showReferenceTags.value = !showReferenceTags.value;
+  }
 
   async function load() {
     if (loaded.value) return;
@@ -88,10 +82,10 @@ export const useSettingsStore = defineStore("settings", () => {
       protectedStringTableGuard.value = normalizeProtectedStringTableGuard(
         settings.protectedStringTableGuard
       );
-      textEditLimitMB.value = normalizeTextEditLimitMB(settings.textEditLimitMB);
       ai.value = normalizeAIAssistantSettings(settings.ai);
       updateChannel.value = normalizeUpdateChannel(settings.updateChannel);
       mcpEnabled.value = normalizeMcpEnabled(settings.mcpEnabled);
+      mcpWriteEnabled.value = normalizeBool(settings.mcpWriteEnabled);
     } catch (error) {
       console.error("load settings failed", error);
       annotationTagPlacement.value = "after-target";
@@ -101,10 +95,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory.value = "";
       themeMode.value = "dark";
       protectedStringTableGuard.value = false;
-      textEditLimitMB.value = DEFAULT_TEXT_EDIT_LIMIT_MB;
       ai.value = { ...defaultAIAssistantSettings };
       updateChannel.value = "stable";
       mcpEnabled.value = false;
+      mcpWriteEnabled.value = false;
     } finally {
       loaded.value = true;
     }
@@ -119,10 +113,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -135,10 +129,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -151,10 +145,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -167,10 +161,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -183,10 +177,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -199,26 +193,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
-    });
-  }
-
-  async function saveTextEditLimitMB(value: number) {
-    await saveSettings({
-      annotationTagPlacement: annotationTagPlacement.value,
-      explorerOpenMode: explorerOpenMode.value,
-      vimMode: vimMode.value,
-      backupSourceOnSave: backupSourceOnSave.value,
-      npkDirectory: npkDirectory.value,
-      theme: themeMode.value,
-      protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: value,
-      ai: ai.value,
-      updateChannel: updateChannel.value,
-      mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -231,10 +209,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: value,
       updateChannel: updateChannel.value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -247,10 +225,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: value,
       mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
     });
   }
 
@@ -263,10 +241,26 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory: npkDirectory.value,
       theme: themeMode.value,
       protectedStringTableGuard: protectedStringTableGuard.value,
-      textEditLimitMB: textEditLimitMB.value,
       ai: ai.value,
       updateChannel: updateChannel.value,
       mcpEnabled: value,
+      mcpWriteEnabled: mcpWriteEnabled.value,
+    });
+  }
+
+  async function saveMcpWriteEnabled(value: boolean) {
+    await saveSettings({
+      annotationTagPlacement: annotationTagPlacement.value,
+      explorerOpenMode: explorerOpenMode.value,
+      vimMode: vimMode.value,
+      backupSourceOnSave: backupSourceOnSave.value,
+      npkDirectory: npkDirectory.value,
+      theme: themeMode.value,
+      protectedStringTableGuard: protectedStringTableGuard.value,
+      ai: ai.value,
+      updateChannel: updateChannel.value,
+      mcpEnabled: mcpEnabled.value,
+      mcpWriteEnabled: value,
     });
   }
 
@@ -278,10 +272,10 @@ export const useSettingsStore = defineStore("settings", () => {
     const previousNPKDirectory = npkDirectory.value;
     const previousThemeMode = themeMode.value;
     const previousProtectedStringTableGuard = protectedStringTableGuard.value;
-    const previousTextEditLimitMB = textEditLimitMB.value;
     const previousAI = ai.value;
     const previousUpdateChannel = updateChannel.value;
     const previousMcpEnabled = mcpEnabled.value;
+    const previousMcpWriteEnabled = mcpWriteEnabled.value;
     annotationTagPlacement.value = normalizePlacement(next.annotationTagPlacement);
     explorerOpenMode.value = normalizeExplorerOpenMode(next.explorerOpenMode);
     vimMode.value = normalizeVimMode(next.vimMode);
@@ -291,10 +285,10 @@ export const useSettingsStore = defineStore("settings", () => {
     protectedStringTableGuard.value = normalizeProtectedStringTableGuard(
       next.protectedStringTableGuard
     );
-    textEditLimitMB.value = normalizeTextEditLimitMB(next.textEditLimitMB);
     ai.value = normalizeAIAssistantSettings(next.ai);
     updateChannel.value = normalizeUpdateChannel(next.updateChannel);
     mcpEnabled.value = normalizeMcpEnabled(next.mcpEnabled);
+    mcpWriteEnabled.value = normalizeBool(next.mcpWriteEnabled);
     saving.value = true;
     try {
       await SettingsService.SaveSettings({
@@ -309,10 +303,10 @@ export const useSettingsStore = defineStore("settings", () => {
       npkDirectory.value = previousNPKDirectory;
       themeMode.value = previousThemeMode;
       protectedStringTableGuard.value = previousProtectedStringTableGuard;
-      textEditLimitMB.value = previousTextEditLimitMB;
       ai.value = previousAI;
       updateChannel.value = previousUpdateChannel;
       mcpEnabled.value = previousMcpEnabled;
+      mcpWriteEnabled.value = previousMcpWriteEnabled;
       throw error;
     } finally {
       saving.value = false;
@@ -341,10 +335,12 @@ export const useSettingsStore = defineStore("settings", () => {
     npkDirectory,
     themeMode,
     protectedStringTableGuard,
-    textEditLimitMB,
     ai,
     updateChannel,
     mcpEnabled,
+    mcpWriteEnabled,
+    showReferenceTags,
+    toggleReferenceTags,
     load,
     savePlacement,
     saveExplorerOpenMode,
@@ -352,10 +348,10 @@ export const useSettingsStore = defineStore("settings", () => {
     saveBackupSourceOnSave,
     saveThemeMode,
     saveProtectedStringTableGuard,
-    saveTextEditLimitMB,
     saveAIAssistant,
     saveUpdateChannel,
     saveMcpEnabled,
+    saveMcpWriteEnabled,
     open,
   };
 });
@@ -375,6 +371,11 @@ function normalizeUpdateChannel(value: string): UpdateChannel {
 
 /** MCP 只读服务开关：只有显式 true 才算开启（默认关闭，与后端一致）。 */
 function normalizeMcpEnabled(value: boolean): boolean {
+  return value === true;
+}
+
+/** 通用布尔开关：只有显式 true 才算开启（用于 MCP 写能力等默认关闭项）。 */
+function normalizeBool(value: boolean): boolean {
   return value === true;
 }
 
@@ -398,14 +399,6 @@ function normalizeThemeMode(value: string | null | undefined): ThemeMode {
 /** 写保护开关：只有显式 true 才算开启（默认关闭，与后端 DefaultAppSettings 一致）。 */
 function normalizeProtectedStringTableGuard(value: boolean): boolean {
   return value === true;
-}
-
-/** 文本编辑上限：0 表示不限；非法值回退到默认 8MB。 */
-function normalizeTextEditLimitMB(value: number | null | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return DEFAULT_TEXT_EDIT_LIMIT_MB;
-  }
-  return Math.floor(value);
 }
 
 /** AI 配置：非法/缺失字段逐个回退默认（写保护只有显式 false 才算关）。 */

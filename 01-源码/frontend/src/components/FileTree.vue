@@ -147,8 +147,10 @@ watch(
       expandedKeys.value = next;
       searchExpansionInitialized.value = true;
     }
-  },
-  { deep: true }
+  }
+  // 注意：这里刻意不用 deep。deep 会让 Vue 逐字段遍历**全部已加载节点**（几十万节点
+  // 的树一次展开就是一轮 O(N) 依赖收集），每次 ListChildren 后重算一遍，是树定位
+  // 卡顿的次要来源；本监听只关心 items 引用变化（store 每次都是整体换新数组）。
 );
 
 // 只有显式的“定位”请求才会展开目录并滚动到目标节点；选中态本身不触发滚动。
@@ -163,23 +165,30 @@ watch(
   { immediate: true }
 );
 
+/**
+ * 目标 key 的祖先 key 列表。
+ * 改走 `itemsByKey` 映射查找（过去逐层 `children.find`，每层都是 O(同层节点数)）；
+ * 且祖先尚未加载时不再中途返回空——祖先路径是已知的，先置为展开，由 onLoad 补齐。
+ */
 function findAncestorKeys(key: string): string[] {
   const parts = key.split("/").filter(Boolean);
   if (parts.length < 2) return [];
 
   const ancestors: string[] = [];
-  let items = props.items;
   for (let index = 0; index < parts.length - 1; index++) {
     const ancestorKey = parts.slice(0, index + 1).join("/");
-    const item = items.find((candidate) => candidate.key === ancestorKey);
-    if (!item || !item.isDir) return [];
+    const item = itemsByKey.value.get(ancestorKey);
+    if (!item) return ancestors;
+    if (!item.isDir) return ancestors;
     ancestors.push(item.key);
-    items = item.children ?? [];
   }
   return ancestors;
 }
 
 async function revealPath(key: string): Promise<void> {
+  // 先等父级 items 刷新（explorer.revealPath 已浅拷贝 roots 并 nextTick），
+  // 否则 findAncestorKeys 用旧 Map 算不出新加载的祖先 → 不展开 → 滚动落空。
+  await nextTick();
   const ancestors = findAncestorKeys(key);
   if (ancestors.length > 0) {
     expandedKeys.value = [...new Set([...expandedKeys.value, ...ancestors])];

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>软件更新</title>
+<style>
+:root {
+  /* 深色主题 — 与主程序一致 */
+  --bg:        #0f1420;
+  --bg-2:      #141d33;
+  --surface:   #1b2436;
+  --surface-2: #232f47;
+  --fg:        #e8ecf4;
+  --fg-dim:    #8b97ad;
+  --fg-faint:  #6b7690;
+  --border:    #2a3550;
+  --accent:    #4fd1ff;
+  --accent-2:  #5b8cff;
+  --accent-fg: #0b1120;
+  --success:   #49d17c;
+  --error:     #ff5d6c;
+  --gold:      #ffd54f;
+
+  --radius:    12px;
+  --radius-sm: 8px;
+  --pad:       20px;
+  --gap:       14px;
+
+  --font: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.5 var(--font);
+  background: radial-gradient(500px 260px at 85% -10%, #1d2c4d 0%, var(--bg) 55%) fixed, var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* === 布局 === */
+.u { display: flex; flex-direction: column; height: 100%; padding: var(--pad); gap: var(--gap); }
+.u__hero { display: flex; align-items: flex-start; gap: 14px; }
+.u__icon {
+  flex: 0 0 auto; width: 46px; height: 46px; border-radius: 13px;
+  background: linear-gradient(135deg, rgba(79,209,255,.18), rgba(91,140,255,.12));
+  border: 1px solid rgba(79,209,255,.25);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1; user-select: none;
+}
+.u--ready      .u__icon { background: linear-gradient(135deg, rgba(73,209,124,.2), rgba(73,209,124,.08)); border-color: rgba(73,209,124,.3); color: var(--success); }
+.u--up-to-date .u__icon { background: linear-gradient(135deg, rgba(73,209,124,.2), rgba(73,209,124,.08)); border-color: rgba(73,209,124,.3); color: var(--success); }
+.u--error      .u__icon { background: linear-gradient(135deg, rgba(255,93,108,.18), rgba(255,93,108,.06)); border-color: rgba(255,93,108,.3); color: var(--error); }
+
+.u__head { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.u__title { margin: 0; font-size: 16.5px; font-weight: 700; letter-spacing: .3px; }
+.u__subtitle { font-size: 12px; color: var(--fg-dim); display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.u__ver-from { text-decoration: line-through; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.u__ver-arrow { color: var(--fg-faint); }
+.u__ver-to { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.u__size { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+/* === 更新说明 === */
+.u__notes {
+  flex: 1 1 auto; min-height: 60px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; overflow-y: auto; color: var(--fg); line-height: 1.6; font-size: 12.5px;
+  user-select: text;
+}
+.u__notes:empty::before { content: "暂无更新说明。"; color: var(--fg-faint); font-style: italic; }
+.u__notes::-webkit-scrollbar { width: 8px; }
+.u__notes::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.u__notes::-webkit-scrollbar-track { background: transparent; }
+.u__notes p { margin: 0 0 8px 0; }
+.u__notes p:last-child { margin-bottom: 0; }
+.u__notes strong { font-weight: 700; color: var(--gold); }
+.u__notes em { font-style: italic; }
+.u__notes code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px;
+  padding: 1px 5px; background: var(--surface-2); border-radius: 4px;
+}
+.u__notes pre {
+  background: var(--surface-2); padding: 8px 10px; border-radius: 8px; overflow-x: auto; margin: 6px 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; white-space: pre;
+}
+.u__notes pre code { background: none; padding: 0; font-size: inherit; }
+.u__notes ul, .u__notes ol { margin: 4px 0 8px 0; padding-left: 20px; }
+.u__notes li { margin: 2px 0; }
+.u__notes h1, .u__notes h2, .u__notes h3 { margin: 10px 0 6px 0; font-weight: 700; font-size: 13px; }
+.u__notes h1 { font-size: 14px; color: var(--gold); }
+.u__notes table { border-collapse: collapse; margin: 6px 0; font-size: 11.5px; border: 1px solid var(--border); }
+.u__notes th, .u__notes td { padding: 3px 8px; border: 1px solid var(--border); text-align: left; }
+.u__notes th { background: var(--surface-2); font-weight: 700; }
+.u__notes a { color: var(--accent); text-decoration: none; }
+.u__notes a:hover { text-decoration: underline; }
+
+/* === 下载进度 === */
+.u__progress-box {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 13px 15px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); flex: 0 0 auto;
+}
+.u__progress-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--fg-dim); }
+.u__progress-state { font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+.u__progress-rate { color: var(--accent); font-variant-numeric: tabular-nums; }
+.u__bar-wrap { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.u__bar-fill {
+  height: 100%; width: 0%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  box-shadow: 0 0 10px rgba(79,209,255,.5);
+  transition: width 120ms linear;
+  position: relative;
+}
+.u__bar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.25) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: u-shine 1.6s linear infinite;
+}
+@keyframes u-shine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.u__bar-fill--indet { width: 40% !important; animation: u-slide 1.2s ease-in-out infinite; }
+@keyframes u-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+/* === 加载中 === */
+.u__spinner {
+  flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; min-height: 80px; color: var(--fg-dim);
+}
+.u__spinner::before {
+  content: ""; width: 30px; height: 30px; border-radius: 50%;
+  border: 3px solid var(--surface-2); border-top-color: var(--accent);
+  animation: u-spin .9s linear infinite;
+}
+@keyframes u-spin { to { transform: rotate(360deg); } }
+
+/* === 错误横幅 === */
+.u__error {
+  background: rgba(255,93,108,.1); border: 1px solid rgba(255,93,108,.5); color: var(--error);
+  padding: 11px 14px; border-radius: var(--radius); font-size: 12.5px; flex: 0 0 auto;
+  line-height: 1.55; user-select: text;
+}
+
+/* === 按钮 === */
+.u__footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex: 0 0 auto; }
+.u__secondary-actions { display: flex; gap: 4px; }
+.u__primary-actions { display: flex; gap: 8px; margin-left: auto; }
+.u__btn {
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+  padding: 8px 18px; border-radius: var(--radius-sm); cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+  user-select: none; white-space: nowrap;
+}
+.u__btn:hover:not(:disabled) { background: var(--surface-2); border-color: #3d5cb0; }
+.u__btn:active:not(:disabled) { transform: scale(.97); }
+.u__btn:disabled { opacity: .4; cursor: default; }
+.u__btn--ghost { border-color: transparent; background: transparent; color: var(--fg-dim); padding: 8px 10px; }
+.u__btn--ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--fg); }
+.u__btn--primary {
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  color: var(--accent-fg); border-color: transparent;
+  box-shadow: 0 4px 14px rgba(79,209,255,.28);
+}
+.u__btn--primary:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 6px 18px rgba(79,209,255,.4); }
+.u__btn--primary:active:not(:disabled) { filter: brightness(.95); }
+
+/* === 状态驱动显示 === */
+.u [data-show] { display: none; }
+.u[data-state="checking"]     [data-show~="checking"]     { display: flex; }
+.u[data-state="available"]    [data-show~="available"]    { display: flex; }
+.u[data-state="downloading"]  [data-show~="downloading"]  { display: flex; }
+.u[data-state="verifying"]    [data-show~="verifying"]    { display: flex; }
+.u[data-state="installing"]   [data-show~="installing"]   { display: flex; }
+.u[data-state="ready"]        [data-show~="ready"]        { display: flex; }
+.u[data-state="up-to-date"]   [data-show~="up-to-date"]   { display: flex; }
+.u[data-state="error"]        [data-show~="error"]        { display: flex; }
+
+.u[data-state="available"] .u__notes[data-show~="available"],
+.u[data-state="ready"]     .u__notes[data-show~="ready"] { display: block; }
+
+.u[data-state] .u__btn[data-show] { display: none; }
+.u[data-state="available"]   .u__btn[data-show~="available"]   { display: inline-flex; }
+.u[data-state="downloading"] .u__btn[data-show~="downloading"] { display: inline-flex; }
+.u[data-state="ready"]       .u__btn[data-show~="ready"]       { display: inline-flex; }
+.u[data-state="up-to-date"]  .u__btn[data-show~="up-to-date"]  { display: inline-flex; }
+.u[data-state="error"]       .u__btn[data-show~="error"]       { display: inline-flex; }
+
+.u__subtitle:empty { display: none; }
+</style>
+</head>
+<body>
+<main class="u wails-updater" id="root" data-state="checking" data-wails-updater-window="1">
+  <header class="u__hero">
+    <div class="u__icon" id="state-icon" aria-hidden="true">↓</div>
+    <div class="u__head">
+      <h1 class="u__title" id="title">正在检查更新…</h1>
+      <div class="u__subtitle" id="subtitle"></div>
+    </div>
+  </header>
+
+  <!-- 检查 / 校验 / 安装共用加载动画 -->
+  <div class="u__spinner" data-show="checking verifying installing" id="spinner-text">正在连接更新服务器…</div>
+
+  <!-- 更新说明 -->
+  <div class="u__notes" data-show="available ready" id="notes"></div>
+
+  <!-- 下载进度 -->
+  <div class="u__progress-box" data-show="downloading">
+    <div class="u__progress-row">
+      <span class="u__progress-state" id="progress-state">正在准备下载…</span>
+      <span class="u__progress-rate" id="progress-rate"></span>
+    </div>
+    <div class="u__bar-wrap"><div class="u__bar-fill" id="bar"></div></div>
+  </div>
+
+  <!-- 错误横幅 -->
+  <div class="u__error" data-show="error" id="error-text">发生未知错误。</div>
+
+  <footer class="u__footer">
+    <div class="u__secondary-actions">
+      <button class="u__btn u__btn--ghost" data-show="available" id="btn-skip" type="button">跳过此版本</button>
+      <button class="u__btn u__btn--ghost" data-show="available" id="btn-remind" type="button">稍后提醒</button>
+    </div>
+    <div class="u__primary-actions">
+      <button class="u__btn" data-show="available downloading ready error up-to-date" id="btn-cancel" type="button">关闭</button>
+      <button class="u__btn u__btn--primary" data-show="available" id="btn-install" type="button">立即更新</button>
+      <button class="u__btn u__btn--primary" data-show="ready" id="btn-restart" type="button">重启并应用</button>
+      <button class="u__btn u__btn--primary" data-show="error" id="btn-retry" type="button">重试</button>
+    </div>
+  </footer>
+</main>
+
+<!-- 临时诊断：把运行时 API 与收到的事件写进窗口标题（排查完成后删除） -->
+  <script src="/updater.js?v=20260927c"></script>
+</body>
+</html>

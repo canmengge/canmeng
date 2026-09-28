@@ -23,6 +23,10 @@ import BookmarkPopup from "./BookmarkPopup.vue";
 import DevPanel from "./DevPanel.vue";
 import { useDevStore } from "../stores/dev";
 import { DEV_TOOLS } from "../buildInfo";
+import { ArchiveService } from "../../bindings/pvfine/services";
+import { ExportFilesTo } from "../services/exportApi";
+import ExportDialog from "./ExportDialog.vue";
+import { useUnsavedChanges } from "../composables/unsavedChanges";
 
 const archive = useArchiveStore();
 const editor = useEditorStore();
@@ -39,9 +43,16 @@ const dialog = useDialog();
 const hashRegistrationVisible = ref(false);
 const bookmarkPopupVisible = ref(false);
 const bookmarkBtnRef = ref<HTMLElement | null>(null);
+const exportingModified = ref(false);
+const exportPickVisible = ref(false);
+const exportPickPaths = ref<string[]>([]);
 
 const canSave = computed(() => archive.open && !editor.saving);
 const canSaveToSource = computed(() => archive.open && !!archive.info?.path && !editor.saving);
+/** 关闭 PVF：与关闭窗口共用同一份「未保存」判定。 */
+const unsaved = useUnsavedChanges();
+const closingArchive = ref(false);
+const canCloseArchive = computed(() => archive.open && !closingArchive.value);
 const versionChangeCount = computed(() => {
   if (!archive.open) return 0;
   if (version.enabled) {
@@ -104,6 +115,13 @@ const openMenuOptions = computed<DropdownOption[]>(() => [
     key: "save-as",
     icon: renderEmoji("📤"),
     disabled: !canSave.value,
+  },
+  { type: "divider", key: "close-divider" },
+  {
+    label: "关闭 PVF",
+    key: "close",
+    icon: renderEmoji("✕"),
+    disabled: !canCloseArchive.value,
   },
 ]);
 
@@ -205,6 +223,7 @@ function onOpenMenuSelect(key: string | number): void {
   if (key === "open") void onOpen();
   else if (key === "save") onSave();
   else if (key === "save-as") void onSaveAs();
+  else if (key === "close") onCloseArchive();
 }
 
 function onMoreMenuSelect(key: string | number): void {
@@ -250,8 +269,94 @@ function toggleBookmarkPopup(): void {
   bookmarkPopupVisible.value = !bookmarkPopupVisible.value;
 }
 
+/**
+ * 导出归档中所有「已修改未封包」的条目（文件树里显示为黄色的条目）。
+ * 复用资源管理器「导出文件」的同一套流程：整包扫描取路径 → 选择目标目录 → 按相对路径落盘。
+ */
+async function onExportModified(): Promise<void> {
+  if (exportingModified.value || !archive.open) return;
+  const archivePath = archive.info?.path ?? "";
+  message.info("正在收集已修改的条目…");
+  try {
+    const paths = (await ArchiveService.ListModifiedPaths()) ?? [];
+    if (archive.info?.path !== archivePath) return;
+    if (paths.length === 0) {
+      message.info("当前没有已修改未封包的条目");
+      return;
+    }
+    exportPickPaths.value = paths;
+    exportPickVisible.value = true;
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`收集已修改条目失败: ${e?.message ?? e}`);
+  }
+}
+
+/** 目录选定后导出：落在 <所选目录>\<时间戳>改动文件导出\ 内。 */
+async function onExportModifiedPicked(payload: { dir: string; paths: string[] }): Promise<void> {
+  const { dir, paths } = payload;
+  if (!dir || paths.length === 0) return;
+  exportingModified.value = true;
+  try {
+    const out = await ExportFilesTo(dir, paths, "改动文件导出");
+    if (out) message.success(`已导出 ${paths.length} 个已修改条目到 ${out}`);
+  } catch (e: any) {
+    if (!isCancel(e)) message.error(`导出已修改条目失败: ${e?.message ?? e}`);
+  } finally {
+    exportingModified.value = false;
+    exportPickPaths.value = [];
+  }
+}
+
 function isCancel(e: any): boolean {
   return String(e?.message ?? e).includes("cancel");
+}
+
+/**
+ * 关闭当前 PVF：有未保存改动先确认。
+ * 关闭动作本身带兜底：先清空界面（编辑器标签），再请求后端关闭；
+ * 后端即使卡住/报错也只会提示，界面一定回到「未打开」状态，不会出现关不掉。
+ */
+function onCloseArchive(): void {
+  if (!canCloseArchive.value) return;
+  // 没有未保存改动也确认一次（用户 2026-09-28 要求）：是 = 关闭，否 = 取消。
+  if (!unsaved.value) {
+    dialog.warning({
+      title: "关闭 PVF",
+      content: "是否关闭 PVF？",
+      positiveText: "是",
+      negativeText: "否",
+      onPositiveClick: () => void doCloseArchive(),
+    });
+    return;
+  }
+  dialog.warning({
+    title: "PVF 未保存",
+    content:
+      "当前 PVF 还有未保存的改动（未封包 / 未提交的修改），关闭后这些改动将丢失且无法恢复。确定要关闭吗？",
+    positiveText: "仍要关闭",
+    negativeText: "取消",
+    onPositiveClick: () => void doCloseArchive(),
+  });
+}
+
+async function doCloseArchive(): Promise<void> {
+  if (closingArchive.value) return;
+  closingArchive.value = true;
+  const closedPath = archive.info?.path ?? "";
+  try {
+    // 先清本地界面状态：保证「关不掉」不会发生（后端异常也不影响这里）。
+    editor.closeAllTabs();
+  } catch (e: any) {
+    console.error("清空编辑器标签失败", e);
+  }
+  try {
+    await archive.close();
+    message.success(closedPath ? `已关闭 PVF：${closedPath}` : "已关闭当前 PVF");
+  } catch (e: any) {
+    message.error(`关闭 PVF 失败: ${e?.message ?? e}`);
+  } finally {
+    closingArchive.value = false;
+  }
 }
 </script>
 
@@ -259,32 +364,32 @@ function isCancel(e: any): boolean {
   <div class="toolbar" role="toolbar" aria-label="主工具栏">
     <!-- ① 文件：打开（含下拉）+ 封包 -->
     <div class="tb-group" role="group" aria-label="文件">
-      <div class="open-split">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <button
-              type="button"
-              class="tb-btn tb-btn-primary open-main"
-              :disabled="archive.loading"
-              @click="onOpen"
-            >
-              <span class="ic">📂</span>
-              <span>打开</span>
-            </button>
-          </template>
-          打开 PVF 归档 (Cmd+O)
-        </NTooltip>
-        <NDropdown
-          trigger="click"
-          placement="bottom-start"
-          :options="openMenuOptions"
-          @select="onOpenMenuSelect"
-        >
+      <NDropdown
+        trigger="click"
+        placement="bottom-start"
+        :options="openMenuOptions"
+        @select="onOpenMenuSelect"
+      >
+        <div class="open-split">
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="tb-btn tb-btn-primary open-main"
+                :disabled="archive.loading"
+                @click.stop="onOpen"
+              >
+                <span class="ic">📂</span>
+                <span>打开</span>
+              </button>
+            </template>
+            打开 PVF 归档 (Cmd+O)
+          </NTooltip>
           <button type="button" class="open-caret" aria-label="打开菜单">
             <span class="caret">▾</span>
           </button>
-        </NDropdown>
-      </div>
+        </div>
+      </NDropdown>
 
       <NTooltip trigger="hover">
         <template #trigger>
@@ -299,6 +404,21 @@ function isCancel(e: any): boolean {
           </button>
         </template>
         封包 = 保存到源文件（写回 PVF，需确认）
+      </NTooltip>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-plain"
+            :disabled="!canCloseArchive"
+            @click="onCloseArchive"
+          >
+            <span class="ic">✕</span>
+            <span>{{ closingArchive ? "关闭中…" : "关闭" }}</span>
+          </button>
+        </template>
+        关闭当前 PVF 文件（有未保存改动时会先确认）
       </NTooltip>
     </div>
 
@@ -388,6 +508,22 @@ function isCancel(e: any): boolean {
           </button>
         </template>
         在归档中搜索路径、名称或 ID（双击命中直接打开）
+      </NTooltip>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="tb-btn tb-btn-plain"
+            :disabled="!archive.open || exportingModified"
+            @click="onExportModified"
+          >
+            <span class="ic">📤</span>
+            <span>导出改动</span>
+            <span v-if="archive.modifiedCount > 0" class="tb-cnt">{{ archive.modifiedCount }}</span>
+          </button>
+        </template>
+        导出所有已修改未封包的条目（文件树中显示为黄色的条目）
       </NTooltip>
     </div>
 
@@ -483,6 +619,12 @@ function isCancel(e: any): boolean {
       @update:show="hashRegistrationVisible = $event"
     />
     <BookmarkPopup v-model:show="bookmarkPopupVisible" :anchor-el="bookmarkBtnRef" />
+    <ExportDialog
+      v-model:show="exportPickVisible"
+      title="导出改动"
+      :paths="exportPickPaths"
+      @confirm="onExportModifiedPicked"
+    />
   </div>
 
   <DevPanel v-if="DEV_TOOLS" />

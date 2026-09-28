@@ -15,20 +15,17 @@ import (
 	"pvfine/internal/pvf"
 )
 
-// defaultMaxEditableBytes:设置不可用时的兜底上限(8MB)。
-const defaultMaxEditableBytes = 8 << 20
+// bigTextBytes / bigTextLines 是「反编译后文本」规模的大文件阈值，与 bigFileBytes
+//（归档内原始体积）并用：归档内小 ≠ 展开后小，前端靠 LargeFile 决定渲染降级策略
+//（纯文本模式、关闭折行/空白高亮），漏判会让前端带着几百万字符跑语法解析而卡死。
+const (
+	bigTextBytes = 4 << 20 // 展开后 4MB
+	bigTextLines = 100000  // 或 10 万行
+)
 
-// bigFileBytes:超过该大小的文本文件按「大文件降级」处理——即使在上限之内,前端也以
-// 只读打开并关闭折行/空白高亮,避免几十万行的文件把编辑器拖死。
+// bigFileBytes:超过该大小的文本文件按「大文件降级」处理——前端关闭折行/空白高亮，
+// 避免几十万行的文件把编辑器拖死；**不再有任何读写限制**（2026-09-28 用户要求）。
 const bigFileBytes = 8 << 20
-
-// editableByteLimitBytes 返回当前生效的文本编辑上限(字节),取自设置服务的进程内副本。
-func editableByteLimitBytes() int64 {
-	if limit := editableByteLimit.Load(); limit > 0 {
-		return limit
-	}
-	return defaultMaxEditableBytes
-}
 
 // EditorService: 文件内容读取、内存编辑、保存/另存为、导出与整包解包。
 type EditorService struct {
@@ -63,6 +60,9 @@ type FileMeta struct {
 
 // GetFile 返回文件的反编译文本(内存编辑视图)。
 func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
+	// 标记为前台请求：后台索引构建会让路，点击打开不再被 70 秒的构建拖住。
+	s.c.beginFront()
+	defer s.c.endFront()
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
 	a := s.c.archive
@@ -91,13 +91,6 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 		if f.DataSize > bigFileBytes {
 			meta.LargeFile = true
 		}
-		limit := editableByteLimitBytes()
-		if int64(f.DataSize) > limit {
-			meta.Text = fmt.Sprintf(
-				"; 文件过大(%d 字节),超过文本编辑上限 %d 字节\n; 可在「设置 → 代码编辑器 → 文本编辑上限」调高后重新打开",
-				f.DataSize, limit)
-			return meta, nil
-		}
 		text, ok := s.c.editorText[index]
 		if !ok {
 			var err error
@@ -108,12 +101,40 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 		}
 		meta.Editable = true
 		meta.Text = text
+		// 反编译文本可能远大于归档内原始体积（stackable.lst 原始 1.4MB → 展开后
+		// 719 万字符、14 万行）：LargeFile 只按 DataSize 判会漏掉这类文件，前端就会
+		// 带着几百万字符去跑语法解析 → 打开即卡死。按展开后的体积/行数补判一次。
+		if !meta.LargeFile && (int64(len(text)) > bigTextBytes || strings.Count(text, "\n") > bigTextLines) {
+			meta.LargeFile = true
+		}
 		if f.DataType == pvf.TypeScript {
+			// 追踪：打开耗时与卡死现场（见 editortrace.go）。
+			stage := traceBegin(index, meta.Path)
+			steps := map[string]string{}
+			readMs := time.Duration(0)
+			if stage != nil {
+				readMs = time.Since(stage.Start)
+			}
+			steps["读取文本"] = logging.FormatDuration(readMs)
+			traceStep(stage, "annotations")
+			annotStart := time.Now()
 			annotations, err := s.c.editorAnnotationsLocked(index, text)
 			if err != nil {
+				traceStep(stage, "failed")
 				return nil, err
 			}
+			steps["标注解析"] = logging.FormatDuration(time.Since(annotStart))
+			rows := strings.Count(text, "\n") + 1
+			skipped := ""
+			if rows > annotationRowLimit {
+				skipped = fmt.Sprintf("行数>%d", annotationRowLimit)
+			}
 			meta.Annotations = annotations
+			traceStep(stage, "done")
+			traceDone(stage, OpenTrace{
+				Index: index, Path: meta.Path, Bytes: int64(f.DataSize), Lines: rows,
+				StepMs: steps, Annotations: len(annotations), Skipped: skipped,
+			})
 		}
 	default:
 		meta.Text = fmt.Sprintf("; 不支持的类型 %d(v1 仅支持脚本/文本编辑)", f.DataType)
@@ -311,19 +332,20 @@ type exportSelection struct {
 	path  string
 }
 
+// exportTimestampDir 生成导出用的顶层文件夹名：<时间戳><kind>，例如
+// 「2026年9月27日10.15.20文件导出」/「…改动文件导出」。时分秒用点号分隔，
+// 天然规避 Windows 文件名非法字符。
+func exportTimestampDir(kind string) string {
+	return time.Now().Format("2006年1月2日15.04.05") + kind
+}
+
 // ExportFilesDialog 将选中的文件或目录导出到目标目录,文件内容使用渲染后的 UTF-8 文本。
-// 目录会递归展开,并保留归档内的相对路径。
+// 目录会递归展开,并保留归档内的相对路径。目标目录用系统原生对话框选择,
+// 实际写入 <所选目录>\<时间戳>文件导出\。
 func (s *EditorService) ExportFilesDialog(scopes []string) (string, error) {
-	s.c.mu.RLock()
-	a := s.c.archive
-	if a == nil {
-		s.c.mu.RUnlock()
-		return "", ErrNoArchive
-	}
-	selections := collectExportSelections(a, s.c.sortedPaths, scopes)
-	s.c.mu.RUnlock()
-	if len(selections) == 0 {
-		return "", fmt.Errorf("没有可导出的文件")
+	a, selections, err := s.prepareExport(scopes)
+	if err != nil {
+		return "", err
 	}
 	dir, err := application.Get().Dialog.OpenFile().
 		CanChooseFiles(false).
@@ -337,11 +359,48 @@ func (s *EditorService) ExportFilesDialog(scopes []string) (string, error) {
 	if dir == "" {
 		return "", nil
 	}
+	return s.exportTo(filepath.Join(dir, exportTimestampDir("文件导出")), a, selections)
+}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// ExportFilesTo 把 scopes 导出到 dir 下新建的「<时间戳><kind>」文件夹,返回实际写入的目录。
+// 目标目录由前端自绘的目录选择器给出；kind 为空时按「文件导出」命名。
+func (s *EditorService) ExportFilesTo(dir string, scopes []string, kind string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", fmt.Errorf("未选择导出目录")
+	}
+	if strings.TrimSpace(kind) == "" {
+		kind = "文件导出"
+	}
+	a, selections, err := s.prepareExport(scopes)
+	if err != nil {
 		return "", err
 	}
+	return s.exportTo(filepath.Join(dir, exportTimestampDir(kind)), a, selections)
+}
 
+// prepareExport 把 scopes 解析为待写出的条目清单,同时返回解析时刻的活动归档
+// （供写盘前的会话守卫用,避免归档被换掉后写到别的文件上）。
+func (s *EditorService) prepareExport(scopes []string) (*pvf.Archive, []exportSelection, error) {
+	s.c.mu.RLock()
+	a := s.c.archive
+	if a == nil {
+		s.c.mu.RUnlock()
+		return nil, nil, ErrNoArchive
+	}
+	selections := collectExportSelections(a, s.c.sortedPaths, scopes)
+	s.c.mu.RUnlock()
+	if len(selections) == 0 {
+		return nil, nil, fmt.Errorf("没有可导出的文件")
+	}
+	return a, selections, nil
+}
+
+// exportTo 建好 base 目录并把条目按归档内相对路径写入,返回 base。
+func (s *EditorService) exportTo(base string, a *pvf.Archive, selections []exportSelection) (string, error) {
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", err
+	}
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	if s.c.archive != a {
@@ -352,7 +411,7 @@ func (s *EditorService) ExportFilesDialog(scopes []string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("渲染 %q 失败: %w", selection.path, err)
 		}
-		dst, err := safeExportPath(dir, selection.path)
+		dst, err := safeExportPath(base, selection.path)
 		if err != nil {
 			return "", err
 		}
@@ -363,7 +422,7 @@ func (s *EditorService) ExportFilesDialog(scopes []string) (string, error) {
 			return "", err
 		}
 	}
-	return dir, nil
+	return base, nil
 }
 
 func collectExportSelections(a *pvf.Archive, sortedPaths []pathEntry, scopes []string) []exportSelection {

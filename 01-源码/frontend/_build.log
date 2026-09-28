@@ -1,0 +1,21 @@
+npm warn Unknown project config "minimum-release-age". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> frontend@0.0.0 build
+> vue-tsc && vite build --mode production
+
+[36mvite v8.2.2 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 12949 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                         0.45 kB │ gzip:   0.34 kB
+dist/assets/index-BJQU1lJA.css        110.25 kB │ gzip:  18.12 kB
+dist/assets/index-rK-Jd7j2.js       1,781.35 kB │ gzip: 543.99 kB
+dist/assets/typescript-Ig9biKJf.js  3,453.00 kB │ gzip: 970.26 kB
+
+[32m✓ built in 5.87s[39m
+[33m[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m

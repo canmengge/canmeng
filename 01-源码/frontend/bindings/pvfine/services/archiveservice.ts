@@ -124,6 +124,15 @@ export function ListDescendantFiles(scopePath: string): $CancellablePromise<($mo
 }
 
 /**
+ * ListModifiedPaths returns the archive paths of entries carrying uncommitted
+ * in-memory edits (the yellow entries in the file tree). Only paths are
+ * returned so the call stays cheap on archives with millions of files.
+ */
+export function ListModifiedPaths(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(978462804);
+}
+
+/**
  * ListRegistrationOptions returns the configured lists that can point to a
  * file. Existing registrations are supplied by the search index and displayed
  * beside the editor file, so this endpoint only supplies a target list and a

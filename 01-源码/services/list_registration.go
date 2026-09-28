@@ -490,7 +490,7 @@ func invalidateRegistrationIndexesLocked(c *core) {
 	c.batchRevision++
 	c.batchPlan = nil
 	c.invalidateScriptLocked()
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.editorAnnotation = editorAnnotationCache{}
 	c.invalidateAdvancedSearchLocked()
 }

@@ -94,3 +94,20 @@ export interface LocalEntry {
 export function ListLocalFiles(path: string): $CancellablePromise<LocalEntry[]> {
   return $Call.ByName("pvfine/services.ArchiveService.ListLocalFiles", path);
 }
+
+/**
+ * ListLocalDirectories 只列出本地目录（不含文件）；path 为空返回盘符列表。
+ * 供「选择目标文件夹」这类只允许选目录的选择器使用。
+ * fqn = pvfine/services.ArchiveService.ListLocalDirectories
+ */
+export function ListLocalDirectories(path: string): $CancellablePromise<LocalEntry[]> {
+  return $Call.ByName("pvfine/services.ArchiveService.ListLocalDirectories", path);
+}
+
+/**
+ * CreateLocalDirectory 在本地新建目录（含父级），返回创建后的路径。
+ * fqn = pvfine/services.ArchiveService.CreateLocalDirectory
+ */
+export function CreateLocalDirectory(path: string): $CancellablePromise<string> {
+  return $Call.ByName("pvfine/services.ArchiveService.CreateLocalDirectory", path);
+}

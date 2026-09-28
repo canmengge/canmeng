@@ -16,24 +16,51 @@ import {
 import { StateEffect, type Range } from "@codemirror/state";
 import { Events } from "@wailsio/runtime";
 import { ArchiveService } from "../bindings/pvfine/services";
+import { markTrace } from "./diagTrace";
 
 /** 路径 → 显示名（空串表示"已查询但无名称"，区分于"未查询"的 undefined）。 */
 const nameCache = new Map<string, string>();
+/** 路径 → 目标 fileIndex（-1 表示"已查询但归档中不存在"，区分于"未查询"的 undefined）。 */
+const indexCache = new Map<string, number>();
 /** 正在请求中的路径，避免重复发起。 */
 const pendingPaths = new Set<string>();
+const pendingIndexPaths = new Set<string>();
 /** 当前挂载的编辑器视图：请求返回后据此触发一次重绘。 */
 const liveViews = new Set<EditorView>();
 /** 名称缓存更新后，用它触发一次装饰重建。 */
 const refreshEffect = StateEffect.define<null>();
 
-// 归档切换后「路径 → 名称」可能变化，整体作废（模块级只注册一次）。
-Events.On("archive:opened", () => nameCache.clear());
-Events.On("archive:closed", () => nameCache.clear());
+// 归档切换后「路径 → 名称 / fileIndex」可能变化，整体作废（模块级只注册一次）。
+Events.On("archive:opened", () => {
+  nameCache.clear();
+  indexCache.clear();
+});
+Events.On("archive:closed", () => {
+  nameCache.clear();
+  indexCache.clear();
+});
 
 /** 从一行 .lst 文本提取反引号包裹的路径；没有则返回空串。 */
 export function extractListPath(text: string): string {
   const match = /`([^`]+)`/.exec(text);
   return match ? match[1].trim() : "";
+}
+
+export interface ListPathRange {
+  path: string;
+  /** 行内偏移（不含反引号），加 line.from 得文档位置。 */
+  start: number;
+  end: number;
+}
+
+/** 行内路径 token 的范围；与 extractListPath 同一提取规则（反引号包裹）。 */
+export function extractListPathRange(text: string): ListPathRange | null {
+  const match = /`([^`]+)`/.exec(text);
+  if (!match) return null;
+  const path = match[1].trim();
+  if (!path) return null;
+  const start = match.index + 1;
+  return { path, start, end: start + match[1].length };
 }
 
 class ListNameWidget extends WidgetType {
@@ -80,6 +107,66 @@ async function requestNames(paths: string[]): Promise<void> {
   }
 }
 
+/** 批量解析「路径 → fileIndex」（-1 = 归档中不存在），返回后刷新所有在用视图。 */
+async function requestIndexes(paths: string[]): Promise<void> {
+  const need: string[] = [];
+  for (const path of paths) {
+    if (!path || indexCache.has(path) || pendingIndexPaths.has(path) || need.includes(path)) continue;
+    need.push(path);
+  }
+  if (need.length === 0) return;
+  for (const path of need) pendingIndexPaths.add(path);
+  const resolved = new Map<string, number>();
+  try {
+    const nodes = (await ArchiveService.ResolveFiles(need)) ?? [];
+    for (const node of nodes) {
+      if (node) resolved.set(node.path, node.fileIndex);
+    }
+  } catch {
+    // 归档未打开/已切换：不写缓存，下次滚动到该区域再试。
+    for (const path of need) pendingIndexPaths.delete(path);
+    return;
+  }
+  need.forEach((path) => {
+    indexCache.set(path, resolved.get(path) ?? -1);
+    pendingIndexPaths.delete(path);
+  });
+  for (const view of liveViews) {
+    view.dispatch({ effects: refreshEffect.of(null) });
+  }
+}
+
+/**
+ * 查询路径的目标 fileIndex：先查缓存，未命中再单次请求。
+ * 供编辑器 click 兜底使用（超大清单的行内链接不走标注链路，见 listNamePlugin）。
+ */
+export async function resolveListLinkIndex(path: string): Promise<number> {
+  const cached = indexCache.get(path);
+  if (cached !== undefined) {
+    markTrace("路径→索引（命中缓存）", { 路径: path, 索引: cached });
+    return cached;
+  }
+  try {
+    const nodes = (await ArchiveService.ResolveFiles([path])) ?? [];
+    const index = nodes.find((node) => !!node)?.fileIndex ?? -1;
+    indexCache.set(path, index);
+    return index;
+  } catch {
+    return -1;
+  }
+}
+
+/** 命中行内路径链接时返回该路径（供编辑器 click 判断点击是否落在路径 token 上）。 */
+export function listLinkAt(view: EditorView, position: number): string | null {
+  const line = view.state.doc.lineAt(position);
+  const range = extractListPathRange(line.text);
+  if (!range) return null;
+  const start = line.from + range.start;
+  const end = line.from + range.end;
+  if (position < start || position > end) return null;
+  return range.path;
+}
+
 /**
  * .lst 名称装饰插件：只给可见行的路径行尾挂 widget。
  * 未缓存的路径先收集起来异步请求，返回后经 refreshEffect 重建装饰。
@@ -111,16 +198,32 @@ export const listNamePlugin = ViewPlugin.fromClass(
 
     private refresh(view: EditorView): void {
       const ranges: Range<Decoration>[] = [];
-      const missing: string[] = [];
+      const missingNames: string[] = [];
+      const missingIndexes: string[] = [];
       for (const visible of view.visibleRanges) {
         let position = visible.from;
         while (position <= visible.to) {
           const line = view.state.doc.lineAt(position);
-          const path = extractListPath(line.text);
-          if (path) {
-            const cached = nameCache.get(path);
+          const range = extractListPathRange(line.text);
+          if (range) {
+            // 行内路径链接（惰性）：超大清单的标注会被后端跳过（打开速度优先），
+            // 这里对可见行的路径 token 补回「Ctrl+单击跳转并定位 / 悬停提示」。
+            const linkStart = line.from + range.start;
+            const linkEnd = line.from + range.end;
+            if (linkEnd > linkStart) {
+              ranges.push(
+                Decoration.mark({
+                  class: "cm-annotation-link",
+                  attributes: {
+                    title: `Ctrl+单击：打开文件并在左侧文件树中定位\n${range.path}`,
+                  },
+                }).range(linkStart, linkEnd),
+              );
+            }
+            if (!indexCache.has(range.path)) missingIndexes.push(range.path);
+            const cached = nameCache.get(range.path);
             if (cached === undefined) {
-              missing.push(path);
+              missingNames.push(range.path);
             } else if (cached) {
               ranges.push(
                 Decoration.widget({ widget: new ListNameWidget(cached), side: 1 }).range(line.to),
@@ -132,7 +235,8 @@ export const listNamePlugin = ViewPlugin.fromClass(
         }
       }
       this.decorations = Decoration.set(ranges, true);
-      if (missing.length > 0) void requestNames(missing);
+      if (missingNames.length > 0) void requestNames(missingNames);
+      if (missingIndexes.length > 0) void requestIndexes(missingIndexes);
     }
   },
   { decorations: (value) => value.decorations },

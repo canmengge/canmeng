@@ -76,6 +76,20 @@ func pathAnnotationsForNode(engine *annotationrules.Engine, path string, isDir b
 	return annotations
 }
 
+// annotationRowLimit 是允许做逐行标注解析的行数上限。
+// 标注解析要跑 ParseScriptView（整文 []rune + 逐 token 建表）并对每行解析一次目标文件
+// （解码 + 取字段），复杂度 ≈ O(行数 × 目标文件大小)；几十万行的 list/*.lst 会在
+// GetFile 的全局锁内跑几十秒，界面完全冻结。超过上限直接不生成标注：
+// 文件照常打开、可编辑、可搜索定位。
+const annotationRowLimit = 60000
+
+// annotationCountLimit 是单文件标注条数硬上限。几十万条标注既会让 JSON 跨 IPC
+// 变得巨大，也会让前端为每条构造 Widget，同样导致卡顿；超出即截断。
+const annotationCountLimit = 20000
+
+// listNameCacheLimit 是「清单行 → 目标名」缓存的条目上限；超出整表清空（名称可重算）。
+const listNameCacheLimit = 50000
+
 func (c *core) editorAnnotationsLocked(index int32, text string) ([]EditorAnnotation, error) {
 	if c.annotationErr != nil {
 		return nil, c.annotationErr
@@ -85,6 +99,10 @@ func (c *core) editorAnnotationsLocked(index int32, text string) ([]EditorAnnota
 	}
 	if c.editorAnnotation.valid && c.editorAnnotation.fileIndex == index && c.editorAnnotation.text == text {
 		return cloneEditorAnnotations(c.editorAnnotation.annotations), nil
+	}
+	if strings.Count(text, "\n")+1 > annotationRowLimit {
+		c.editorAnnotation = editorAnnotationCache{valid: true, fileIndex: index, text: text}
+		return nil, nil
 	}
 	filePath := c.archive.Path(index)
 	view := pvf.ParseScriptView(text)
@@ -104,6 +122,9 @@ func (c *core) editorAnnotationsLocked(index int32, text string) ([]EditorAnnota
 	}
 	annotations = c.appendUnindexedListLinksLocked(filePath, view, annotations)
 	annotations = c.appendPlaceholderAnnotationsLocked(view, annotations)
+	if len(annotations) > annotationCountLimit {
+		annotations = annotations[:annotationCountLimit]
+	}
 	c.editorAnnotation = editorAnnotationCache{
 		valid:       true,
 		fileIndex:   index,
@@ -167,13 +188,13 @@ func (c *core) appendPlaceholderAnnotationsLocked(view pvf.ScriptView, annotatio
 				Fallback:   resolution.Fallback,
 			},
 		}
-		// Link to the string table itself when the editor can open it.
-		if sourceIndex, ok := c.archive.Find(resolution.Source); ok && int64(c.archive.File(sourceIndex).DataSize) <= editableByteLimitBytes() {
+		// Link to the string table itself（不再按体积设限：任何大小的表都可打开）。
+		if sourceIndex, ok := c.archive.Find(resolution.Source); ok {
 			annotation.TargetFileIndex = sourceIndex
 			annotation.Content += "\n\nCmd/Ctrl+单击打开字符串表；单击标签可修改译文"
 		} else {
 			annotation.TargetFileIndex = -1
-			annotation.Content += "\n\n单击标签可修改译文（表过大，不会整文件打开）"
+			annotation.Content += "\n\n单击标签可修改译文"
 		}
 		annotations = append(annotations, annotation)
 	}
@@ -271,24 +292,53 @@ func (c *core) resolveListAnnotationReferenceLocked(relationName, id, context, l
 	reference := annotationrules.Reference{
 		ID: id, Path: c.archive.Path(fileIndex), FileIndex: fileIndex,
 	}
-	text, err := c.archive.Text(fileIndex)
-	if err != nil {
-		return reference, true
-	}
-	reference.Name = c.readRelationTargetNameFromTextLocked(listPath, relation.NameSection, text)
+	reference.Name = c.readRelationTargetNameLocked(fileIndex, listPath, relation.NameSection)
 	return reference, true
 }
 
+// resetAnnotationCachesLocked 作废「注解派生缓存」：关系映射 + 「清单行 → 目标名」缓存。
+//
+// 任何内容改动都必须调用它。此前只重置了 annotationRelations，漏掉了 listNameCache：
+// 编辑目标文件（改 [name]）后，清单里仍显示旧名称 —— 自检时由
+// TestListFileAnnotationsResolveNamesAndTargets 等三个用例暴露出来。
+func (c *core) resetAnnotationCachesLocked() {
+	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.listNameCache = nil
+}
+
+// listNameCacheKey 组合影响名称结果的三要素；listPath 参与是因为部分清单
+// （如 itemshop）在缺 [name] 时会回退到 npc 名取值路径。
+func listNameCacheKey(fileIndex int32, listPath, nameSection string) string {
+	return fmt.Sprintf("%d|%s|%s", fileIndex, listPath, nameSection)
+}
+
+// storeListNameLocked 写入「清单行 → 目标名」缓存；容量到顶时整表清空（名称可重算）。
+func (c *core) storeListNameLocked(key, value string) {
+	if c.listNameCache == nil {
+		c.listNameCache = make(map[string]string)
+	}
+	if len(c.listNameCache) >= listNameCacheLimit {
+		c.listNameCache = make(map[string]string)
+	}
+	c.listNameCache[key] = value
+}
+
 func (c *core) readRelationTargetNameLocked(fileIndex int32, listPath, nameSection string) string {
+	key := listNameCacheKey(fileIndex, listPath, nameSection)
+	if cached, ok := c.listNameCache[key]; ok {
+		return cached
+	}
 	text, err := c.archive.Text(fileIndex)
 	if err != nil {
 		return ""
 	}
-	return c.readRelationTargetNameFromTextLocked(listPath, nameSection, text)
+	name := c.readRelationTargetNameFromTextLocked(listPath, nameSection, text)
+	c.storeListNameLocked(key, name)
+	return name
 }
 
 func (c *core) readRelationTargetNameFromTextLocked(listPath, nameSection, text string) string {
-	name := firstSectionValue(text, nameSection)
+	name := c.resolveNameTextLocked(firstSectionValue(text, nameSection))
 	if name != "" || !sameSearchPath(listPath, itemShopListPath) {
 		return name
 	}
@@ -310,6 +360,61 @@ func (c *core) readRelationTargetNameFromTextLocked(listPath, nameSection, text 
 		}
 	}
 	return ""
+}
+
+// resolveIndexedReferenceLocked 用搜索索引把 ID 解析成归档文件，作为注解关联的兜底。
+// 索引与关系清单同源（同样来自 equipment.lst / stackable.lst 等），但路径解析更宽松，
+// 因此能救回"清单切分与真实版式对不上、或 ID 登记在同类别的另一份清单里"的引用。
+// 只接受与关系同 category 的记录，避免不同清单之间 ID 撞号。
+func (c *core) resolveIndexedReferenceLocked(relationName, id string) (annotationrules.Reference, bool) {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" || c.archive == nil {
+		return annotationrules.Reference{}, false
+	}
+	category := strings.ToLower(relationSearchCategory(relationName))
+	c.ensureSearchIDIndexLocked()
+	recordIndex, ok := c.searchIDIndex[category+"\x00"+strings.ToLower(trimmed)]
+	if !ok {
+		return annotationrules.Reference{}, false
+	}
+	hit := c.searchRecords[recordIndex].hit
+	if hit.FileIndex < 0 || hit.Path == "" {
+		return annotationrules.Reference{}, false
+	}
+	// 名称优先用索引里已解析好的元数据名（占位符已还原成中文），
+	// 缺失时再回落到直接读目标文件的 [name]。
+	name := c.resolveNameTextLocked(hit.Name)
+	if name == "" {
+		name = c.readRelationTargetNameLocked(hit.FileIndex, "", "name")
+	}
+	return annotationrules.Reference{ID: trimmed, Path: hit.Path, FileIndex: hit.FileIndex, Name: name}, true
+}
+
+// ensureSearchIDIndexLocked 惰性构建「类别 + ID → 搜索记录下标」索引。
+// 首次构建 O(记录数)，之后复用；索引重建或换归档（indexGen 变化）后自动重建。
+func (c *core) ensureSearchIDIndexLocked() {
+	if c.searchRecords == nil {
+		c.searchIDIndex = nil
+		c.searchIDIndexGen = c.indexGen
+		return
+	}
+	if c.searchIDIndex != nil && c.searchIDIndexGen == c.indexGen {
+		return
+	}
+	index := make(map[string]int32, len(c.searchRecords))
+	for i := range c.searchRecords {
+		lowerID := c.searchRecords[i].lowerID
+		if lowerID == "" {
+			continue
+		}
+		key := strings.ToLower(c.searchRecords[i].hit.Category) + "\x00" + lowerID
+		if _, duplicate := index[key]; duplicate {
+			continue
+		}
+		index[key] = int32(i)
+	}
+	c.searchIDIndex = index
+	c.searchIDIndexGen = c.indexGen
 }
 
 func (c *core) resolveAnnotationReferenceLocked(relationName, id string) (annotationrules.Reference, bool) {
@@ -344,7 +449,9 @@ func (c *core) resolveAnnotationReferenceContextLocked(relationName, id, context
 	}
 	target, ok := targets[id]
 	if !ok {
-		return annotationrules.Reference{}, false
+		// 清单切分与真实版式不符、或该 ID 由同一类别的其它清单登记时，退回搜索
+		// 索引兜底解析（索引与关系同源，但按 FindList + 候选路径解析，容错更好）。
+		return c.resolveIndexedReferenceLocked(relationName, id)
 	}
 	if !target.nameLoaded {
 		target.nameLoaded = true
@@ -380,7 +487,9 @@ func (c *core) buildAnnotationRelationFromListLocked(relation annotationrules.Re
 	if c.archive == nil {
 		return result
 	}
-	listIndex, ok := c.archive.Find(listPath)
+	// FindList 同时兼容两种客户端版式：90US 的 `equipment/equipment.lst`
+	// 与 110US 把清单集中到 `list/` 下的 `list/equipment.lst`。
+	listIndex, ok := c.archive.FindList(listPath)
 	if !ok {
 		return result
 	}
@@ -430,6 +539,39 @@ func annotationContextPath(paths map[string]string, context string) (string, boo
 
 func normalizeAnnotationContext(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// resolveNameTextLocked 把"名字"里可能存在的字符串表占位符（如 `<13::name_590712499>`）
+// 解析成实际文本；不是占位符、或表里查不到时原样返回。
+// 关联目标文件的 [name] 常常写成 `{8= `<13::name_<id>>`}`，不解析就会把未翻译的
+// 标签原文当成物品名显示出来。
+func (c *core) resolveNameTextLocked(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || c.archive == nil {
+		return value
+	}
+	index, key, ok := pvf.ParsePlaceholder(trimmed)
+	if !ok {
+		// `{8= `<13::name_x>`}` 这类"整块占位符"写法：取最外层的一对尖括号再解析。
+		start := strings.Index(trimmed, "<")
+		end := strings.LastIndex(trimmed, ">")
+		if start < 0 || end <= start {
+			return value
+		}
+		index, key, ok = pvf.ParsePlaceholder(trimmed[start : end+1])
+		if !ok {
+			return value
+		}
+	}
+	resolution, found := c.archive.ResolveStringTable(index, key)
+	if !found || resolution.Text == "" {
+		return value
+	}
+	text := resolution.Text
+	if resolution.Fallback {
+		text += untranslatedMark
+	}
+	return text
 }
 
 // firstSectionValue returns the first direct value of a top-level section.

@@ -67,17 +67,25 @@ type pathEntry struct {
 // core owns the loaded archive plus derived indexes. Guarded by mu; all
 // services take it per call.
 type core struct {
-	mu                  sync.RWMutex
-	archive             *pvf.Archive
-	annotationEngine    *annotationrules.Engine
-	annotationErr       error
+	mu               sync.RWMutex
+	archive          *pvf.Archive
+	annotationEngine *annotationrules.Engine
+	annotationErr    error
 	// annotationExternal 记录最近一次外置注释加载的统计（供界面显示来源与规模）。
-	annotationExternal annotationrules.ExternalSummary
+	annotationExternal  annotationrules.ExternalSummary
 	renderingEngine     *renderingrules.Engine
 	renderingErr        error
 	annotationRelations map[string]map[string]*relationTarget
 	editorText          map[int32]string
 	editorAnnotation    editorAnnotationCache
+	// frontWaiters 是"正在等待/执行的前台交互请求"计数（GetFile / ListChildren / Search）。
+	// 后台的搜索索引构建（438 万条目、约 70 秒）每处理若干条会看一眼它：有人在用界面
+	// 就让出几十毫秒，界面点击立刻响应；没人用就全速构建 —— 既不留卡顿，也不拖慢索引。
+	frontWaiters atomic.Int32
+	// listNameCache 缓存「清单行 → 目标名」的解析结果（键见 listNameCacheKey）。
+	// 解析一次要把目标文件整体解码再取字段（O(目标文件大小)）；几十万行的
+	// list/*.lst 会触发同等次数的解码，是打开大清单时界面冻结的主因之一。
+	listNameCache map[string]string
 	// pathAnnotations 是「路径 → 目录标注」的**按需**缓存，由 pathAnnotationsMu 保护
 	// （与 mu 分开：访问点多在持有 mu.RLock 时发生，无法就地写入；加锁顺序恒为
 	// mu → pathAnnotationsMu，不得反向）。
@@ -104,11 +112,16 @@ type core struct {
 	annotationOverrides   map[string]PathAnnotationOverride
 	annotationOverridesMu sync.RWMutex
 
-	dirChildren map[string][]*TreeNode // dirPath -> ordered children ("" = root)
-	directories         []string
-	sortedPaths         []pathEntry
-	searchRecords       []searchRecord
-	searchByFile        map[int32][]int
+	dirChildren   map[string][]*TreeNode // dirPath -> ordered children ("" = root)
+	directories   []string
+	sortedPaths   []pathEntry
+	searchRecords []searchRecord
+	searchByFile  map[int32][]int
+	// searchIDIndex: "category\x00小写ID" → searchRecords 下标，惰性构建。
+	// 供"按 ID 精确查归档文件"的场景复用（如脚本注解里物品引用的兜底解析）；
+	// 用 indexGen 做失效判定：索引重建/换归档后自动重建，无需逐处清理。
+	searchIDIndex    map[string]int32
+	searchIDIndexGen uint64
 	// searchMetadata is the canonical semantic snapshot used to rebuild the
 	// derived search records after a path/list delta. It intentionally keeps
 	// only list-backed records; ordinary file records are derived from
@@ -179,9 +192,10 @@ func makeCore() *core {
 		annotationEngine:   annotationEngine,
 		annotationExternal: annotationExternal,
 		annotationErr:      annotationErr,
-		renderingEngine:  renderingEngine,
-		renderingErr:     renderingErr,
-		visualsByFile:    make(map[int32]fileVisuals),
+		renderingEngine:    renderingEngine,
+		renderingErr:       renderingErr,
+		visualsByFile:      make(map[int32]fileVisuals),
+		listNameCache:      make(map[string]string),
 	}
 }
 
@@ -398,7 +412,7 @@ func (c *core) replaceArchivePayloadLocked(a *pvf.Archive, changedIndexes map[in
 	}
 	c.editorText = make(map[int32]string)
 	c.editorAnnotation = editorAnnotationCache{}
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.advancedIndex = nil
 	c.advancedDirty = nil
 	c.advancedStatus = AdvancedSearchIndexStatus{State: AdvancedIndexStateIdle}
@@ -455,7 +469,7 @@ func (c *core) installArchiveIndexesLockedWithSearch(a *pvf.Archive, children ma
 	sort.Strings(directories)
 	c.bindRenderingEngineLocked(a)
 	c.archive = a
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.editorText = make(map[int32]string)
 	c.editorAnnotation = editorAnnotationCache{}
 	c.resetPathAnnotationsLocked()
@@ -518,6 +532,7 @@ func (c *core) closeArchive() {
 	c.invalidateScriptLocked()
 	c.archive = nil
 	c.annotationRelations = nil
+	c.listNameCache = nil
 	c.editorText = nil
 	c.editorAnnotation = editorAnnotationCache{}
 	c.resetPathAnnotationsLocked()

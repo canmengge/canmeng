@@ -4,8 +4,9 @@
 //   - 默认不监听任何端口、不打开任何 I/O；
 //   - 设置 PVFINE_MCP=1 后，main.go 会在 PVFINE_MCP_ADDR（默认 127.0.0.1:17650）
 //     以 HTTP 方式提供 MCP 服务（POST 单条 JSON-RPC）；
-//   - ⚠️ 只对外暴露只读工具：写能力（edit_file / apply_replace）一律不开放，
-//     避免绕过「AI 写保护」门禁；
+//   - 写能力（edit_file / apply_replace）默认不开放；设置「MCP 写能力」或环境变量
+//     PVFINE_MCP_WRITE=1 后开放，且每次调用还要通过「AI 写保护」门禁
+//     （WriteProtection 必须为 false），save_archive 永远拒绝；
 //   - 工具与内置 AI 助手共用同一张注册表（services.buildAITools），避免两套逻辑漂移。
 package mcp
 
@@ -30,6 +31,13 @@ var exposed = os.Getenv("PVFINE_MCP") == "1"
 // Exposed 返回 MCP 服务是否已开放（由环境变量 PVFINE_MCP 控制）。
 func Exposed() bool { return exposed }
 
+// writeExposed 是否开放写工具（环境变量 PVFINE_MCP_WRITE=1，默认关闭）。
+// 仅表示「授权写通道」，真正放行还要过 writeGate（UI 侧「AI 写保护」）。
+var writeExposed = os.Getenv("PVFINE_MCP_WRITE") == "1"
+
+// WriteExposed 返回是否通过环境变量授权了 MCP 写通道。
+func WriteExposed() bool { return writeExposed }
+
 // Addr 返回 HTTP MCP 服务的监听地址（环境变量 PVFINE_MCP_ADDR，默认 127.0.0.1:17650）。
 func Addr() string {
 	addr := strings.TrimSpace(os.Getenv("PVFINE_MCP_ADDR"))
@@ -48,11 +56,24 @@ type ToolSource func() []services.AITool
 // Server 是一个基于 stdio 的极简 MCP 服务端（JSON-RPC 2.0，逐行分帧）。
 type Server struct {
 	source ToolSource
+	// writeGate 每次调用写工具前求值；返回 true 才允许执行（「AI 写保护」已关闭）。
+	writeGate func() bool
 }
 
-// New 创建 MCP 服务端。
-func New(source ToolSource) *Server {
-	return &Server{source: source}
+// New 创建 MCP 服务端。writeGate 为 nil 或返回 false 时，写工具既不出现在
+// tools/list 中，也不允许被调用。
+func New(source ToolSource, writeGate func() bool) *Server {
+	return &Server{source: source, writeGate: writeGate}
+}
+
+// writeAllowed 判定当前是否允许使用写工具：由调用方注入的门禁（writeGate）决定，
+// main.go 的门禁＝「写通道已授权（UI 开关或 PVFINE_MCP_WRITE=1）」且「AI 写保护已关闭」。
+// gate 为 nil 时一律按关闭处理（默认不放行写能力）。
+func (s *Server) writeAllowed() bool {
+	if s.writeGate == nil {
+		return false
+	}
+	return s.writeGate()
 }
 
 // Start 以 stdio 传输启动 MCP 服务端。
@@ -61,7 +82,7 @@ func Start(source ToolSource) error {
 	if !exposed {
 		return errDisabled
 	}
-	return New(source).Serve(context.Background(), bufio.NewReader(os.Stdin), os.Stdout)
+	return New(source, nil).Serve(context.Background(), bufio.NewReader(os.Stdin), os.Stdout)
 }
 
 // Serve 在 r（请求）与 w（响应）之间按行处理 JSON-RPC 2.0。
@@ -141,8 +162,8 @@ func (s *Server) toolDescriptors() []map[string]any {
 	tools := s.source()
 	descriptors := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
-		// 只对外暴露只读工具：MCP 不开放任何写能力。
-		if !tool.ReadOnly {
+		// 写工具只在门禁放行时对外可见（默认不可见，避免客户端误调）。
+		if !tool.ReadOnly && !s.writeAllowed() {
 			continue
 		}
 		descriptors = append(descriptors, map[string]any{
@@ -159,8 +180,11 @@ func (s *Server) callTool(name string, arguments json.RawMessage) (string, error
 		if tool.Name != name {
 			continue
 		}
-		if !tool.ReadOnly {
-			return "", fmt.Errorf("工具 %s 是写操作，MCP 不对外开放写能力", name)
+		// 写工具走同一道门禁：未放行时明确报原因，而不是含糊失败。
+		if !tool.ReadOnly && !s.writeAllowed() {
+			return "", fmt.Errorf(
+				"工具 %s 是写操作：需先在「设置 → MCP 服务」打开「MCP 写能力」，并在「AI 助手」关闭「AI 写保护」，两者同时满足才可用",
+				name)
 		}
 		return tool.Run(string(arguments))
 	}

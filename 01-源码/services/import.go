@@ -129,6 +129,25 @@ func (s *ArchiveService) ListLocalFiles(path string) ([]LocalEntry, error) {
 	return listLocalDirEntries(path, true)
 }
 
+// ListLocalDirectories 只列出本地目录（不含文件），path 为空时返回盘符列表。
+// 供「选择导出目标目录」这类只允许选文件夹的应用内选择器使用。
+func (s *ArchiveService) ListLocalDirectories(path string) ([]LocalEntry, error) {
+	return listLocalDirEntries(path, false)
+}
+
+// CreateLocalDirectory 在本地创建目录（含父级），返回创建后的路径。
+// 供应用内的目录选择器在导出前新建目标文件夹使用。
+func (s *ArchiveService) CreateLocalDirectory(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("目录路径不能为空")
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return "", fmt.Errorf("创建目录 %q 失败: %w", path, err)
+	}
+	return path, nil
+}
+
 func listLocalDirEntries(path string, includeFiles bool) ([]LocalEntry, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {

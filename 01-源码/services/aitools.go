@@ -32,6 +32,24 @@ func NewAIToolSource(c *core, settings *SettingsService) func() []AITool {
 	return func() []AITool { return buildAITools(c, settings) }
 }
 
+// guardWrite 包装写工具：统一 recover 兜底 + 统一错误前缀。
+// 无论由内置 AI 助手还是外部 MCP 客户端调用，写工具都只改内存覆盖层，
+// 归档保存（落盘）永远由人类完成。
+func guardWrite(name string, run func(args string) (string, error)) func(args string) (string, error) {
+	return func(args string) (out string, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("%s 执行异常（已拦截）: %v", name, r)
+			}
+		}()
+		out, err = run(args)
+		if err != nil {
+			return "", fmt.Errorf("%s 失败: %w", name, err)
+		}
+		return out, nil
+	}
+}
+
 // buildAITools 组装当前可用的全部 AI 工具。所有工具都复用既有服务与既有的
 // 写保护/备份链路，不另起炉灶。
 func buildAITools(c *core, settings *SettingsService) []AITool {
@@ -262,13 +280,13 @@ func buildAITools(c *core, settings *SettingsService) []AITool {
 		},
 		{
 			Name:        "edit_file",
-			Description: "把一个文本文件的完整新内容写入内存覆盖层（不会立即落盘；归档保存属于人类操作，AI 禁止自动归档）。",
+			Description: "把一个文本文件的完整新内容写入内存覆盖层（不会立即落盘；归档保存属于人类操作，AI 禁止自动归档）。外部 MCP 客户端调用时同样受「AI 写保护」门禁约束。",
 			Schema: aiObjectSchema(map[string]any{
 				"path": map[string]any{"type": "string", "description": "归档内路径"},
 				"text": map[string]any{"type": "string", "description": "完整的新文件内容"},
 			}, []string{"path", "text"}),
 			ReadOnly: false,
-			Run: func(args string) (string, error) {
+			Run: guardWrite("edit_file", func(args string) (string, error) {
 				parsed, err := aiParseArgs(args)
 				if err != nil {
 					return "", err
@@ -283,7 +301,7 @@ func buildAITools(c *core, settings *SettingsService) []AITool {
 					return "", err
 				}
 				return "已写入内存覆盖层（尚未保存到磁盘；归档保存属于人类操作，请提示用户手动保存）", nil
-			},
+			}),
 		},
 		{
 			Name:        "save_archive",

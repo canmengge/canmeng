@@ -59,7 +59,7 @@ func (s *AnnotationService) ReloadRules() (AnnotationReloadResult, error) {
 	s.c.annotationEngine = engine
 	s.c.annotationErr = nil
 	s.c.annotationExternal = external
-	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
+	s.c.resetAnnotationCachesLocked()
 	s.c.editorAnnotation = editorAnnotationCache{}
 	archiveOpen := s.c.archive != nil
 	if archiveOpen {

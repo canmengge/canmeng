@@ -357,7 +357,7 @@ func (c *core) rewritePlaceholderToSafeTable(
 		c.editorText = make(map[int32]string)
 	}
 	c.editorText[index] = rewritten
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.editorAnnotation = editorAnnotationCache{}
 	c.markAdvancedSearchDirtyLocked(index)
 	delete(c.visualsByFile, index)

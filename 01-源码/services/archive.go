@@ -168,6 +168,9 @@ func (s *ArchiveService) RebuildSearchIndex() (IndexStatus, error) {
 
 // ListChildren 懒加载某目录的直接子节点;path 为空表示根。
 func (s *ArchiveService) ListChildren(path string) ([]*TreeNode, error) {
+	// 前台请求：后台索引构建让路（展开目录/定位左树不再等构建）。
+	s.c.beginFront()
+	defer s.c.endFront()
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	if s.c.archive == nil {
@@ -231,6 +234,25 @@ func (s *ArchiveService) ListDescendantFiles(scopePath string) ([]*TreeNode, err
 			Icon:        cloneImageReference(visuals.icon),
 			FieldImage:  cloneImageReference(visuals.fieldImage),
 		})
+	}
+	return result, nil
+}
+
+// ListModifiedPaths returns the archive paths of entries carrying uncommitted
+// in-memory edits (the yellow entries in the file tree). Only paths are
+// returned so the call stays cheap on archives with millions of files.
+func (s *ArchiveService) ListModifiedPaths() ([]string, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	if s.c.archive == nil {
+		return nil, ErrNoArchive
+	}
+
+	result := make([]string, 0)
+	for _, entry := range s.c.sortedPaths {
+		if archiveChangeKind(s.c.archive, entry.idx) == ChangeKindModified {
+			result = append(result, entry.path)
+		}
 	}
 	return result, nil
 }
@@ -657,6 +679,9 @@ func (s *ArchiveService) SearchExact(query string, cursor int, limit int) (*Sear
 }
 
 func (s *ArchiveService) search(query string, cursor int, limit int, exact bool) (*SearchResult, error) {
+	// 前台请求：搜索同样不能被后台索引构建拖住。
+	s.c.beginFront()
+	defer s.c.endFront()
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	res := &SearchResult{Hits: []*SearchHit{}, NextCursor: -1}

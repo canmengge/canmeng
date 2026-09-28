@@ -710,7 +710,7 @@ func (s *ScriptService) Apply(planID string, changeKeys []string) (ScriptApplyRe
 	s.c.batchPlan = nil
 	s.c.invalidateScriptPlanLocked()
 	s.c.editorAnnotation = editorAnnotationCache{}
-	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
+	s.c.resetAnnotationCachesLocked()
 	s.c.invalidateAdvancedSearchLocked()
 	info := plan.archive.Info()
 	revision := s.c.batchRevision

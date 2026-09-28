@@ -23,6 +23,7 @@ import { useEditorStore } from "../stores/editor";
 import { useAdvancedSearchStore } from "../stores/advancedSearch";
 import { useVersionStore } from "../stores/version";
 import { useScriptStore } from "../stores/script";
+import { BUILD_LABEL } from "../buildInfo";
 import EditorLayout from "./EditorLayout.vue";
 import ScriptWorkbench from "./ScriptWorkbench.vue";
 import type { ResolvedThemeId } from "../theme";
@@ -42,6 +43,44 @@ let dropTargetObserver: MutationObserver | null = null;
 const isMac = /Macintosh|Mac OS X|MacIntel/i.test(
   `${navigator.platform} ${navigator.userAgent}`
 );
+
+/**
+ * 欢迎页更新记录（从新到旧）。整个欢迎页只在未打开归档时显示，
+ * 打开 PVF 后随页面一起消失，不需要额外控制显隐。
+ * 内容是我们写死的常量，用 v-html 仅为加粗关键词，无外部输入。
+ */
+const changelogEntries = [
+  {
+    version: "4.1",
+    title: "4.1（2026-09-27）· 大文件与性能专项",
+    lines: [
+      "<b>大文件限制已移除</b>：超大清单 / 大文本一律按普通文件打开并可直接编辑（不再只读预览、不再需要解锁）；超大文件仍会自动关闭空白高亮以保证打开速度。",
+      "<b>点击路径 → 打开文件更快</b>：先打开文件、再在后台定位左侧文件树，打开动作不再被定位拖慢。",
+      "<b>定位左树修复</b>：点击路径后，左侧文件树能正确展开并高亮到目标文件。",
+      "<b>后台索引不再抢界面</b>：打开归档后的索引整理放在后台进行，期间点击、搜索依然流畅。",
+      "<b>索引缓存生效</b>：第二次打开同一个归档，索引直接载入（约 5 秒），不再重新构建。",
+      "<b>大文件识别修正</b>：按展开后的实际大小判断，避免“归档里看着不大、打开却巨卡”的漏判。",
+    ],
+  },
+  {
+    version: "3.0",
+    title: "3.0（2026-09-26）· 恢复自动更新",
+    lines: [
+      "恢复内置自动更新：设置 → 系统维护 → 关于 →「检查更新」。",
+      "更新窗口全面中文化（深色主题）。",
+      "修复程序图标缺失、更新包下载超时等问题。",
+    ],
+  },
+  {
+    version: "2.x",
+    title: "2.x 系列（2026-09-24 ~ 26）· 功能大发展",
+    lines: [
+      "AI 助手：模型自选、写保护默认开启、内置知识库、流式输出与工具实时回显。",
+      "注释自定义、高级搜索重构（列宽拖拽、打开并定位）、搜索视窗、导入窗口重构、书签簿管理。",
+      "更早的 1.0 / 2.0 能力与完整版本说明，见程序目录内《更新记录.md》。",
+    ],
+  },
+];
 
 const props = defineProps<{
   themeId: ResolvedThemeId;
@@ -301,6 +340,24 @@ function isCancel(e: any): boolean {
             <div class="recent-empty-text">暂无最近打开的历史记录</div>
           </div>
         </div>
+
+        <!-- 更新记录：只在此欢迎页显示，打开归档后随页面一起消失 -->
+        <div class="changelog-section">
+          <div class="changelog-heading">
+            <NIcon :size="15"><DocumentText24Regular /></NIcon>
+            <span>更新记录</span>
+            <NTag size="tiny" round :bordered="false" type="primary">{{ BUILD_LABEL }}</NTag>
+            <span class="changelog-note">从新到旧 · 打开归档后自动收起</span>
+          </div>
+          <div class="changelog-body">
+            <div v-for="entry in changelogEntries" :key="entry.version" class="changelog-item">
+              <div class="changelog-item-title">{{ entry.title }}</div>
+              <ul class="changelog-list">
+                <li v-for="line in entry.lines" :key="line" v-html="line"></li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -537,6 +594,60 @@ function isCancel(e: any): boolean {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 更新记录（欢迎页）：限高可滚动，不打扰主操作 */
+.changelog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.changelog-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  color: var(--pvf-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.changelog-note {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--pvf-text-faint);
+}
+.changelog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.changelog-item {
+  padding: 8px 10px;
+  border: 1px solid var(--pvf-border-faint);
+  border-radius: 6px;
+  background: var(--pvf-surface-subtle);
+}
+.changelog-item-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pvf-text-primary);
+  margin-bottom: 4px;
+}
+.changelog-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.changelog-list li {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--pvf-text-secondary);
 }
 .recent-heading {
   display: flex;

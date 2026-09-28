@@ -95,6 +95,31 @@ type fileVisuals struct {
 	fieldImage *ImageReference
 }
 
+// 前台优先：后台索引构建的让路参数。
+//   - indexYieldEvery：每处理多少条检查一次是否有前台请求（检查本身是原子读，几乎免费）；
+//   - indexYieldMax：单次让路上限，避免索引被无限拖住（最坏也就慢这么一点）。
+const (
+	indexYieldEvery = 64
+	indexYieldMax   = 50 * time.Millisecond
+)
+
+// beginFront / endFront 标记一次前台交互请求（界面点击引发的服务调用）。
+// 后台索引构建据此让路，避免"点一下卡 20 秒"。
+func (c *core) beginFront() { c.frontWaiters.Add(1) }
+func (c *core) endFront()   { c.frontWaiters.Add(-1) }
+
+// yieldToFront 在"有人正在用界面"时短暂让路：后台索引构建每处理若干条调用一次。
+// 没有前台请求时立即返回（零开销），空闲时不会拖慢构建。
+func (c *core) yieldToFront() {
+	if c.frontWaiters.Load() <= 0 {
+		return
+	}
+	deadline := time.Now().Add(indexYieldMax)
+	for time.Now().Before(deadline) && c.frontWaiters.Load() > 0 {
+		time.Sleep(time.Millisecond)
+	}
+}
+
 type searchableListSpec struct {
 	listPath string
 	category string
@@ -335,7 +360,10 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 			skipped++
 			continue
 		}
-		for _, pair := range pairs {
+		for pairIndex, pair := range pairs {
+			if pairIndex%indexYieldEvery == 0 {
+				c.yieldToFront()
+			}
 			target, ok := c.findListTarget(a, gen, ctx, spec.listPath, pair.Path)
 			if !ok {
 				skipped++
@@ -379,6 +407,10 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 	for i, ref := range refs {
 		if !c.indexCurrent(a, gen, ctx) {
 			return
+		}
+		// 前台优先：有人点界面就让路（毫秒级），没人用则零开销、全速构建。
+		if i%indexYieldEvery == 0 {
+			c.yieldToFront()
 		}
 
 		fileIndex, ok := c.findArchiveEntry(a, gen, ctx, ref.path)
@@ -840,7 +872,7 @@ func (c *core) setText(index int32, text string) (bool, string, error) {
 		c.editorText = make(map[int32]string)
 	}
 	c.editorText[index] = text
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.editorAnnotation = editorAnnotationCache{}
 	c.markAdvancedSearchDirtyLocked(index)
 	delete(c.visualsByFile, index)
@@ -968,7 +1000,7 @@ func (c *core) setPlaceholderText(index int32, tableIndex int32, key, text strin
 	c.batchPlan = nil
 	c.invalidateScriptLocked()
 	versioned := c.versionRepo != nil
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.editorAnnotation = editorAnnotationCache{}
 	c.markAdvancedSearchDirtyLocked(index)
 	delete(c.visualsByFile, index)

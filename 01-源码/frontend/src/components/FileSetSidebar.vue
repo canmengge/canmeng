@@ -30,8 +30,9 @@ import {
   useMessage,
   useDialog,
 } from "naive-ui";
-import { EditorService } from "../../bindings/pvfine/services";
 import { useArchiveStore } from "../stores/archive";
+import { ExportFilesTo } from "../services/exportApi";
+import ExportDialog from "./ExportDialog.vue";
 import { useEditorStore } from "../stores/editor";
 import { useFileSetStore, type FileSetEntry } from "../stores/fileSets";
 import { useBatchStore } from "../stores/batch";
@@ -52,6 +53,10 @@ const settings = useSettingsStore();
 const message = useMessage();
 const dialog = useDialog();
 
+const exportPickVisible = ref(false);
+const exportPickPaths = ref<string[]>([]);
+const exportPickSetName = ref("");
+const exportPickSkipped = ref(0);
 const namingVisible = ref(false);
 const namingMode = ref<"create" | "rename">("create");
 const namingSetId = ref("");
@@ -196,15 +201,34 @@ async function exportCurrent(): Promise<void> {
     ) {
       return;
     }
-    const path = await EditorService.ExportFilesDialog(paths);
+    exportPickPaths.value = paths;
+    exportPickSetName.value = active.name;
+    exportPickSkipped.value = unavailableCount;
+    exportPickVisible.value = true;
+  } catch (error: any) {
+    if (!isCancel(error)) message.error(`导出文件集失败: ${error?.message ?? error}`);
+  } finally {
+    exporting.value = false;
+  }
+}
+
+/** 目录选定后导出文件集：落在 <所选目录>\<时间戳>文件导出\ 内。 */
+async function onExportPicked(payload: { dir: string; paths: string[] }): Promise<void> {
+  const { dir, paths } = payload;
+  if (!dir || paths.length === 0) return;
+  exporting.value = true;
+  try {
+    const path = await ExportFilesTo(dir, paths, "");
     if (path) {
-      const skippedText = unavailableCount > 0 ? `，跳过 ${unavailableCount} 个不存在的文件` : "";
-      message.success(`已导出文件集“${active.name}”到 ${path}${skippedText}`);
+      const skippedText =
+        exportPickSkipped.value > 0 ? `，跳过 ${exportPickSkipped.value} 个不存在的文件` : "";
+      message.success(`已导出文件集“${exportPickSetName.value}”到 ${path}${skippedText}`);
     }
   } catch (error: any) {
     if (!isCancel(error)) message.error(`导出文件集失败: ${error?.message ?? error}`);
   } finally {
     exporting.value = false;
+    exportPickPaths.value = [];
   }
 }
 
@@ -606,6 +630,12 @@ watch(
         {{ sidebar.visible ? "收起侧栏" : "展开侧栏" }}
       </NTooltip>
     </div>
+    <ExportDialog
+      v-model:show="exportPickVisible"
+      title="导出文件集"
+      :paths="exportPickPaths"
+      @confirm="onExportPicked"
+    />
   </aside>
 </template>
 

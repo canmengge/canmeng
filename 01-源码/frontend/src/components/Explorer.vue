@@ -16,7 +16,9 @@ import {
   useMessage,
 } from "naive-ui";
 import { ArrowCollapseAll20Regular, Target20Regular } from "@vicons/fluent";
-import { ArchiveService, EditorService } from "../../bindings/pvfine/services";
+import { ArchiveService } from "../../bindings/pvfine/services";
+import { ExportFilesTo } from "../services/exportApi";
+import ExportDialog from "./ExportDialog.vue";
 import type { FileRegistration, TreeTag, TreeNode } from "../../bindings/pvfine/services/models";
 import { useArchiveStore } from "../stores/archive";
 import { useExplorerStore, type SearchItem, type TreeItem } from "../stores/explorer";
@@ -53,6 +55,8 @@ const fileTreeRef = ref<{ collapseAll: () => void } | null>(null);
 const adding = ref(false);
 const bookmarking = ref(false);
 const exporting = ref(false);
+const exportPickVisible = ref(false);
+const exportPickScopes = ref<string[]>([]);
 const copying = ref(false);
 const batching = ref(false);
 const creating = ref(false);
@@ -258,47 +262,9 @@ async function onTreeLoad(item: TreeItem): Promise<void> {
   await explorer.loadChildren(item);
 }
 
-/** 大文件降级阈值：与后端 bigFileBytes（8MB）一致，超过就先确认再打开。 */
-const LARGE_FILE_BYTES = 8 * 1024 * 1024;
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const mb = bytes / (1024 * 1024);
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-/** 打开大文件前的二次确认；返回 false 表示已取消，不应继续打开。 */
-function confirmOpenLargeFile(item: TreeItem): boolean {
-  const limitMB = settings.textEditLimitMB;
-  const overLimit = limitMB > 0 && item.size > limitMB * 1024 * 1024;
-  if (overLimit) {
-    dialog.warning({
-      title: "超过文本编辑上限",
-      content: `${item.label} 为 ${formatBytes(item.size)}，超过当前上限 ${limitMB} MB，打开后只能看到占位提示。可到「设置 → 代码编辑器 → 文本编辑上限」调高上限。`,
-      positiveText: "仍要打开",
-      negativeText: "取消",
-      onPositiveClick: () => void editor.openFile(item.fileIndex),
-    });
-    return false;
-  }
-  if (item.size > LARGE_FILE_BYTES) {
-    dialog.warning({
-      title: "打开大文件",
-      content: `${item.label} 为 ${formatBytes(item.size)}：会以只读方式打开（关闭折行与空白高亮），需要编辑时点编辑器顶部的「允许编辑」。载入会占用较多内存并可能短暂卡顿。`,
-      positiveText: "打开（只读）",
-      negativeText: "取消",
-      onPositiveClick: () => void editor.openFile(item.fileIndex),
-    });
-    return false;
-  }
-  return true;
-}
-
 async function onTreeOpen(item: TreeItem): Promise<void> {
   if (item && !item.isDir) {
     explorer.selectPath(item.key);
-    if (!confirmOpenLargeFile(item)) return;
     void editor.openFile(item.fileIndex);
   }
 }
@@ -851,14 +817,30 @@ async function onExportSelected(items: TreeItem[]): Promise<void> {
       message.info("选中的目录中没有文件");
       return;
     }
-    const path = await EditorService.ExportFilesDialog(scopes);
-    if (path) message.success(`已导出选中文件到 ${path}`);
+    exportPickScopes.value = scopes;
+    exportPickVisible.value = true;
   } catch (error: any) {
     if (session === fileSets.sessionId && archive.info?.path === archivePath) {
       if (!isCancel(error)) message.error(`导出失败: ${error?.message ?? error}`);
     }
   } finally {
     exporting.value = false;
+  }
+}
+
+/** 目录选定后导出：落在 <所选目录>\<时间戳>文件导出\ 内。 */
+async function onExportPicked(payload: { dir: string; paths: string[] }): Promise<void> {
+  const { dir } = payload;
+  if (!dir || payload.paths.length === 0) return;
+  exporting.value = true;
+  try {
+    const path = await ExportFilesTo(dir, payload.paths, "");
+    if (path) message.success(`已导出选中文件到 ${path}`);
+  } catch (error: any) {
+    if (!isCancel(error)) message.error(`导出失败: ${error?.message ?? error}`);
+  } finally {
+    exporting.value = false;
+    exportPickScopes.value = [];
   }
 }
 
@@ -913,22 +895,6 @@ function isCancel(error: any): boolean {
 <template>
   <div class="explorer">
     <div class="exp-search">
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton
-            quaternary
-            circle
-            size="small"
-            class="collapse-all"
-            :disabled="!archive.open"
-            aria-label="收起所有目录"
-            @click="collapseAllDirectories"
-          >
-            <template #icon><NIcon><ArrowCollapseAll20Regular /></NIcon></template>
-          </NButton>
-        </template>
-        收起所有目录
-      </NTooltip>
       <NInput
         v-model:value="searchInput"
         :placeholder="
@@ -964,6 +930,22 @@ function isCancel(error: any): boolean {
           </NTooltip>
         </template>
       </NInput>
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <NButton
+            quaternary
+            circle
+            size="small"
+            class="collapse-all"
+            :disabled="!archive.open"
+            aria-label="收起所有目录"
+            @click="collapseAllDirectories"
+          >
+            <template #icon><NIcon><ArrowCollapseAll20Regular /></NIcon></template>
+          </NButton>
+        </template>
+        收起所有目录
+      </NTooltip>
     </div>
 
     <NSpin
@@ -1060,6 +1042,12 @@ function isCancel(error: any): boolean {
         </div>
       </template>
     </NModal>
+    <ExportDialog
+      v-model:show="exportPickVisible"
+      title="导出文件"
+      :paths="exportPickScopes"
+      @confirm="onExportPicked"
+    />
   </div>
 </template>
 
@@ -1094,7 +1082,8 @@ function isCancel(error: any): boolean {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px;
+  /* 左内边距 = 工具栏外边距 10 + 边框 1 + 内边距 14，使搜索框左边缘与「打开」按钮对齐。 */
+  padding: 8px 8px 8px 25px;
   flex-shrink: 0;
 }
 .exp-search :deep(.n-input) {

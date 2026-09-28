@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { ArchiveService } from "../../bindings/pvfine/services";
 import type {
@@ -182,27 +182,44 @@ export const useExplorerStore = defineStore("explorer", () => {
     registerItems(node.children);
   }
 
-  /** 加载目标条目的父目录，并将其设为资源树当前选中项并滚动定位（文件与文件夹都支持）。 */
+  /**
+   * 加载目标条目的父目录，并将其设为资源树当前选中项并滚动定位（文件与文件夹都支持）。
+   *
+   * 性能（2026-09-27 修复）：路径已知 ⇒ 各层祖先**一次性并行**加载（过去是逐级
+   * `await loadChildren`，深度 d 就要 d+1 次串行往返），查找走 `itemsByKey` 映射
+   * （过去是每层线性 `items.find`）。这正是「高级搜索定位快、清单里 Ctrl+左键定位慢」
+   * 的根因：搜索结果的目标多半已落在展开过的目录里被短路，而清单路径要一层层现拉。
+   */
   async function revealPath(path: string): Promise<boolean> {
     if (!archive.open) return false;
     const parts = normalizePath(path).split("/").filter(Boolean);
     if (parts.length === 0) return false;
 
     if (roots.value.length === 0) await loadRoots();
-    let items = roots.value;
-    let node: TreeItem | undefined;
-    for (let index = 0; index < parts.length; index++) {
-      const key = parts.slice(0, index + 1).join("/");
-      node = items.find((item) => item.key === key);
-      if (!node) return false;
-      if (index === parts.length - 1) break;
-      if (!node.isDir) return false;
-      await loadChildren(node);
-      if (!node.children) return false;
-      items = node.children;
-    }
+    const keys = parts.map((_part, index) => parts.slice(0, index + 1).join("/"));
+    // 只请求尚未加载的祖先层；已展开过的目录直接命中，不再发 IPC。
+    const pending = keys.slice(0, -1).filter((key) => {
+      const node = itemsByKey.get(key);
+      if (!node) return true;
+      return node.isDir && !node.children;
+    });
+    await Promise.all(
+      pending.map(async (key) => {
+        const nodes = (await ArchiveService.ListChildren(key)) ?? [];
+        const children = nodes.filter((n): n is TreeNode => !!n).map(toTreeItem);
+        const parent = itemsByKey.get(key);
+        if (parent?.isDir) parent.children = children;
+        registerItems(children);
+      })
+    );
 
+    const node = itemsByKey.get(keys[keys.length - 1]);
     if (!node) return false;
+    // 祖先目录是"原地改 children"，roots 引用没变 ⇒ FileTree 的 treeData / itemsByKey
+    // 两个 computed 不会重算，展开键算不出来、naive 树也拿不到新节点 → 定位失效。
+    // 这里浅拷贝一次 roots 强制刷新（只在 reveal 时发生一次，代价 O(已加载节点)）。
+    roots.value = [...roots.value];
+    await nextTick();
     selectedKey.value = node.key;
     revealRequest.value = { path: node.key, nonce: ++revealNonce };
     return true;

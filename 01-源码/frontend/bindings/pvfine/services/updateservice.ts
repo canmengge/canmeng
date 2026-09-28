@@ -12,9 +12,32 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 /**
- * CheckForUpdates checks the configured release source and opens the Wails
- * updater flow when an update is available.
+ * UpdateInfo 是「检查更新」的结果，只用于界面提示，不含任何自动安装动作。
  */
-export function CheckForUpdates(): $CancellablePromise<void> {
+export interface UpdateInfo {
+    currentVersion: string;
+    latestVersion: string;
+    hasUpdate: boolean;
+    downloadUrl: string;
+}
+
+/**
+ * CheckForUpdates 检查更新源并把结果交给界面；发现新版本时不做任何自动安装。
+ */
+export function CheckForUpdates(): $CancellablePromise<UpdateInfo | null> {
     return $Call.ByID(3771798315);
+}
+
+/**
+ * OpenDownloadPage 用系统默认浏览器打开官网下载页。
+ */
+export function OpenDownloadPage(): $CancellablePromise<void> {
+    return $Call.ByID(2329587439);
+}
+
+/**
+ * CopyDownloadURL 把官网下载地址写入系统剪贴板，返回是否成功。
+ */
+export function CopyDownloadURL(): $CancellablePromise<boolean> {
+    return $Call.ByID(3242230134);
 }

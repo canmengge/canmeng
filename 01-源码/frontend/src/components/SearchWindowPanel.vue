@@ -6,6 +6,9 @@ import {
   NDropdown,
   NEmpty,
   NIcon,
+  NInput,
+  NModal,
+  NSelect,
   NTag,
   NText,
   useMessage,
@@ -24,6 +27,8 @@ import { useBookmarkStore } from "../stores/bookmarks";
 import { useSearchWindowStore } from "../stores/searchWindow";
 import { useSidebarStore } from "../stores/sidebar";
 import FileTree from "./FileTree.vue";
+import ExportDialog from "./ExportDialog.vue";
+import { useFileNodeActions } from "../composables/fileNodeActions";
 
 /**
  * 搜索视窗：与左侧资源管理器**同格式**的文件列表，但只装"搜索命中的文件"与
@@ -40,6 +45,8 @@ const ai = useAIStore();
 const sidebar = useSidebarStore();
 const annotationEdit = useAnnotationEditStore();
 const message = useMessage();
+// 与左侧文件树同语义的文件动作（新建 / 导入 / 删除 / 批量 / 导出）。
+const fileActions = useFileNodeActions();
 
 // ---- 标签与文件树对齐（用户 2026-09-26：ID + [中文名] 要与左树一致）----
 // 手动收进/导入后收进的条目 SearchItem 不带登记信息；这里对缺标签的条目批量
@@ -161,6 +168,27 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
   },
   { type: "divider", key: "divider-open" },
   {
+    label: "新建文件",
+    key: "new-file",
+    disabled: !archive.open || contextMenu.value.items.some((item) => item.isDir),
+  },
+  {
+    label: "导入文件…",
+    key: "import",
+    disabled: !archive.open,
+  },
+  {
+    label: "删除文件",
+    key: "delete",
+    disabled: contextMenu.value.items.length === 0,
+  },
+  { type: "divider", key: "divider-file" },
+  {
+    label: "导出文件",
+    key: "export",
+    disabled: contextMenu.value.items.length === 0,
+  },
+  {
     label: "复制",
     key: "copy",
     disabled: contextMenu.value.items.length === 0,
@@ -171,13 +199,18 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     ],
   },
   {
+    label: `加入“${fileSets.activeSet?.name ?? "当前文件集"}”`,
+    key: "add-to-file-set",
+    disabled: contextMenu.value.items.length === 0,
+  },
+  {
     label: "加入当前书签簿",
     key: "bookmark-add",
     disabled: contextMenu.value.items.length === 0,
   },
   {
-    label: `加入“${fileSets.activeSet?.name ?? "当前文件集"}”`,
-    key: "add-to-file-set",
+    label: "批量处理…",
+    key: "batch",
     disabled: contextMenu.value.items.length === 0,
   },
   {
@@ -374,6 +407,31 @@ function onContextMenuSelect(key: string | number): void {
     onAIIntroduce(items);
     return;
   }
+  if (key === "new-file") {
+    hideContextMenu();
+    fileActions.openNewFileDialog(anchor);
+    return;
+  }
+  if (key === "import") {
+    hideContextMenu();
+    fileActions.onImport(anchor);
+    return;
+  }
+  if (key === "delete") {
+    hideContextMenu();
+    void fileActions.onDeleteSelected(items);
+    return;
+  }
+  if (key === "export") {
+    hideContextMenu();
+    void fileActions.onExportSelected(items, "", "选中文件");
+    return;
+  }
+  if (key === "batch") {
+    hideContextMenu();
+    void fileActions.onBatchSelected(items, "搜索视窗选择");
+    return;
+  }
 }
 </script>
 
@@ -425,6 +483,52 @@ function onContextMenuSelect(key: string | number): void {
       @select="onContextMenuSelect"
       @clickoutside="hideContextMenu"
     />
+    <NModal
+      :show="fileActions.newFileVisible.value"
+      preset="card"
+      title="新建文件"
+      :style="{ width: 'min(420px, calc(100vw - 48px))' }"
+      :mask-closable="false"
+      @update:show="(show: boolean) => !show && fileActions.closeNewFileDialog()"
+    >
+      <div class="sw-new-file">
+        <NText depth="3">
+          创建位置：{{ fileActions.newFileParent.value ? `${fileActions.newFileParent.value}/` : "归档根目录/" }}
+        </NText>
+        <NInput
+          v-model:value="fileActions.newFileName.value"
+          autofocus
+          placeholder="输入文件名或相对路径，例如 dir/new.equ"
+          :disabled="fileActions.creating.value"
+          :status="fileActions.newFileError.value ? 'error' : undefined"
+          @keydown.enter.prevent="fileActions.submitNewFile"
+        />
+        <NSelect
+          v-model:value="fileActions.newFileType.value"
+          :options="fileActions.newFileTypeOptions"
+          :disabled="fileActions.creating.value"
+        />
+        <NText v-if="fileActions.newFileError.value" type="error">
+          {{ fileActions.newFileError.value }}
+        </NText>
+      </div>
+      <template #footer>
+        <div class="sw-modal-actions">
+          <NButton quaternary :disabled="fileActions.creating.value" @click="fileActions.closeNewFileDialog">
+            取消
+          </NButton>
+          <NButton type="primary" :loading="fileActions.creating.value" @click="fileActions.submitNewFile">
+            创建
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+    <ExportDialog
+      v-model:show="fileActions.exportPickVisible.value"
+      title="导出文件"
+      :paths="fileActions.exportPickScopes.value"
+      @confirm="fileActions.onExportPicked"
+    />
   </div>
 </template>
 
@@ -458,5 +562,15 @@ function onContextMenuSelect(key: string | number): void {
   min-height: 0;
   margin: 0 -12px;
   overflow: hidden;
+}
+.sw-new-file {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sw-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

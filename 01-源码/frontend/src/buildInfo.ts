@@ -5,7 +5,7 @@
  * 序号，界面状态栏最右侧就会显示「版本号2.N」——用户一眼就能确认自己跑的是哪一版，
  * 避免"改了没生效 / 测的是旧包"这类误判。
  */
-export const TEST_BUILD_NO = "3.4";
+export const TEST_BUILD_NO = "4.3";
 
 /** 状态栏显示的版本标签。 */
 export const BUILD_LABEL = `版本号${TEST_BUILD_NO}`;

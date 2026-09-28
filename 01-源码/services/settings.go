@@ -3,11 +3,9 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 )
 
 const (
@@ -19,11 +17,6 @@ const (
 	ThemeDark                = "dark"
 	ThemeLight               = "light"
 	ThemeSystem              = "system"
-
-	// DefaultTextEditLimitMB 是「文本编辑上限」的默认值（MB）。
-	// 0（TextEditLimitUnlimited）表示不限制——用户自行承担超大文件的内存与卡顿代价。
-	DefaultTextEditLimitMB = 8
-	TextEditLimitUnlimited = 0
 
 	// 更新通道：stable = 正式更新源（默认）；dev = 开发人员专用测试源。
 	// 供「设置 → 系统维护 → 更新通道」切换，用于测试自动更新流程。
@@ -38,10 +31,6 @@ const (
 	AIProviderOllama   = "ollama"
 	AIProviderCustom   = "custom"
 )
-
-// editableByteLimit 是「文本编辑上限」的进程内副本（字节），由设置服务在启动与保存时
-// 同步。与字符串表写保护开关同一套路：编辑器打开文件时不必每次读盘。
-var editableByteLimit atomic.Int64
 
 // AIAssistantSettings 是「AI 助手」配置（方案见 AI镶嵌.md §四）。
 // 不预设模型：用户选服务商（或自定义 OpenAI 兼容地址）+ 填模型与 key 即可接入。
@@ -83,15 +72,6 @@ func DefaultAIAssistantSettings() AIAssistantSettings {
 	}
 }
 
-// setEditableByteLimitMB 写入生效上限；<=0 表示不限（用 MaxInt64 表示）。
-func setEditableByteLimitMB(limitMB int) {
-	if limitMB <= TextEditLimitUnlimited {
-		editableByteLimit.Store(math.MaxInt64)
-		return
-	}
-	editableByteLimit.Store(int64(limitMB) << 20)
-}
-
 type AppSettings struct {
 	AnnotationTagPlacement string `json:"annotationTagPlacement"`
 	ExplorerOpenMode       string `json:"explorerOpenMode"`
@@ -102,9 +82,6 @@ type AppSettings struct {
 	// ProtectedStringTableGuard 是「字符串表写保护」总开关：
 	// 开启后拦截对客户端汉化禁动字符串表的写入，关闭时不做任何拦截。
 	ProtectedStringTableGuard bool `json:"protectedStringTableGuard"`
-	// TextEditLimitMB 是允许载入文本编辑器的单文件上限（MB）；0 表示不限制。
-	// 超过该上限的文件只读占位；在上限之内但超过 8MB 的文件按「大文件降级」处理。
-	TextEditLimitMB int `json:"textEditLimitMB"`
 	// AI 是「AI 助手」配置（模型接入 + AI 写保护开关），见 AI镶嵌.md。
 	AI AIAssistantSettings `json:"ai"`
 	// UpdateChannel 是「更新通道」：stable 走正式更新源，dev 走开发人员专用测试源。
@@ -114,6 +91,11 @@ type AppSettings struct {
 	// 以 MCP（Model Context Protocol）协议向外部 AI 客户端提供只读归档工具。
 	// 与更新通道同理，监听在启动时绑定，切换后需重启应用生效。
 	MCPEnabled bool `json:"mcpEnabled"`
+	// MCPWriteEnabled 是「MCP 写能力」开关（默认关闭）：只有显式打开，外部 AI 客户端
+	// 才可能调用写工具（edit_file / apply_replace）。调用时还要过「AI 写保护」这道
+	// 人类门禁（WriteProtection 必须为 false），两道都放行才真正写入内存覆盖层；
+	// save_archive 永远拒绝。该开关可在运行时切换，无需重启。
+	MCPWriteEnabled bool `json:"mcpWriteEnabled"`
 }
 
 func DefaultAppSettings() AppSettings {
@@ -129,10 +111,10 @@ func DefaultAppSettings() AppSettings {
 		// 2026-09-24 用户要求：字符串表写保护**默认关闭**（默认不限制写入），
 		// 需要拦截时到「设置 → 交互与文件 → 字符串表写保护」打开开关。
 		ProtectedStringTableGuard: false,
-		TextEditLimitMB:            DefaultTextEditLimitMB,
 		AI:                         DefaultAIAssistantSettings(),
 		UpdateChannel:              UpdateChannelStable,
 		MCPEnabled:                 false,
+		MCPWriteEnabled:            false,
 	}
 }
 
@@ -150,8 +132,6 @@ func NewSettingsService() *SettingsService {
 	service := newSettingsService(filepath.Join(configDir, "pvfine", "settings.json"))
 	// 启动即同步写保护总开关，避免"设置尚未被界面读过，保护却按默认值放行"的窗口期。
 	service.applyStringTableGuardSetting()
-	// 同理，文本编辑上限也要在界面读到之前就生效。
-	service.applyTextEditLimitSetting()
 	return service
 }
 
@@ -169,18 +149,6 @@ func (s *SettingsService) applyStringTableGuardSetting() {
 		return
 	}
 	setStringTableGuardEnabled(settings.ProtectedStringTableGuard)
-}
-
-// applyTextEditLimitSetting 把设置里的文本编辑上限同步到进程内副本。
-// 读盘失败时保持当前值（默认 8MB），不影响应用启动。
-func (s *SettingsService) applyTextEditLimitSetting() {
-	s.mu.Lock()
-	settings, err := s.getSettingsLocked()
-	s.mu.Unlock()
-	if err != nil {
-		return
-	}
-	setEditableByteLimitMB(settings.TextEditLimitMB)
 }
 
 func (s *SettingsService) GetSettings() (AppSettings, error) {
@@ -218,8 +186,6 @@ func (s *SettingsService) SaveSettings(settings AppSettings) error {
 	}
 	// 开关立即生效：写保护是进程内状态，不必等下次读设置。
 	setStringTableGuardEnabled(settings.ProtectedStringTableGuard)
-	// 上限同样立即生效，改完设置不必重启即可重新打开大文件。
-	setEditableByteLimitMB(settings.TextEditLimitMB)
 	return nil
 }
 
@@ -298,9 +264,6 @@ func validateSettings(settings AppSettings) error {
 	case ThemeDark, ThemeLight, ThemeSystem:
 	default:
 		return fmt.Errorf("无效的主题: %q", settings.Theme)
-	}
-	if settings.TextEditLimitMB < 0 {
-		return fmt.Errorf("无效的文本编辑上限: %d", settings.TextEditLimitMB)
 	}
 	switch settings.UpdateChannel {
 	case UpdateChannelStable, UpdateChannelDev:

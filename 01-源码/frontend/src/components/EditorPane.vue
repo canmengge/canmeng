@@ -26,6 +26,7 @@ import {
   Eye24Regular,
   EyeOff24Regular,
   Save24Regular,
+  Search24Regular,
   TextAddT24Regular,
 } from "@vicons/fluent";
 import {
@@ -41,6 +42,12 @@ import { MAX_CONTEXT_FILES, useAIStore } from "../stores/ai";
 import { useSidebarStore } from "../stores/sidebar";
 import { useAnnotationEditStore } from "../stores/annotationEdit";
 import CodeEditor, { type PlaceholderEditRequest } from "./CodeEditor.vue";
+import ListDuplicatePanel from "./ListDuplicatePanel.vue";
+import {
+  findListDuplicates,
+  parseListEntries,
+  type ListDuplicateIssue,
+} from "../listDuplicate";
 import { useSettingsStore } from "../stores/settings";
 import ImageThumbnail from "./ImageThumbnail.vue";
 import PreviewHost from "./previews/PreviewHost.vue";
@@ -48,6 +55,7 @@ import { getPreviewProvider } from "../previews/registry";
 import type { PreviewFile } from "../previews/types";
 import type { ResolvedThemeId } from "../theme";
 import type { ListRegistrationTarget } from "../../bindings/pvfine/services/models";
+import { markTrace, traceAsync } from "../diagTrace";
 import {
   AUTO_TARGET,
   defaultTargetTableIndex,
@@ -284,9 +292,23 @@ function isListFile(path: string): boolean {
 
 /** 单击可跳转注释（如 .lst 路径）：打开目标文件并在左侧文件树中定位。 */
 async function onActivateReference(fileIndex: number, paneId: EditorPaneId): Promise<void> {
-  await editor.openFile(fileIndex, paneId);
-  const path = editor.tabs.find((tab) => tab.index === fileIndex)?.path;
-  if (path) void explorer.revealPath(path);
+  // 已打开过的标签可直接算出路径 ⇒ 先发起定位，再打开文件，两者不再串行等待
+  // （对齐「搜索视窗」的体验：定位与打开并行，点完立刻有反馈）。
+  // 整条链路进操作时间线：卡死时面板敲 SCRZ 能看到停在哪一步。
+  markTrace("点击路径链接", {
+    来源列表: activeTab.value?.path ?? "-",
+    目标索引: fileIndex,
+  });
+  const knownPath = editor.tabs.find((tab) => tab.index === fileIndex)?.path;
+  // 先打开文件（主诉求），完成后再定位左树——避免树重建与文件渲染抢主线程，
+  // 否则"点路径打开文件"会卡死。
+  await traceAsync(
+    `打开目标文件 ${knownPath ?? `#${fileIndex}`}`,
+    () => editor.openFile(fileIndex, paneId),
+    { 目标索引: fileIndex },
+  );
+  const path = knownPath ?? editor.tabs.find((tab) => tab.index === fileIndex)?.path;
+  if (path) void traceAsync(`定位左树 ${path}`, () => explorer.revealPath(path));
 }
 
 /** 「插入字符串引用」对话框:新建/更新表项，并把引用插到光标处。 */
@@ -384,6 +406,45 @@ const canRegisterActiveFile = computed(
     !activeHasID.value &&
     !fileRegistration.loading,
 );
+
+/** list 查重（只对当前打开的 .lst 生效），结果显示在独立的查重窗口里。 */
+const listDuplicate = reactive({
+  show: false,
+  fileName: "",
+  issues: [] as ListDuplicateIssue[],
+  /** 本次检测时刻（面板上显示，便于确认结果对应的是当前内容）。 */
+  checkedAt: 0,
+});
+
+const canCheckListDuplicate = computed(
+  () => archive.open && !!activeTab.value && isListFile(activeTab.value.path),
+);
+
+function runListDuplicateCheck(): void {
+  const tab = activeTab.value;
+  if (!tab) {
+    message.warning("请先打开一个 lst 文件");
+    return;
+  }
+  // 每次都按编辑器里的「当前内容」全量重算（未保存的改动同样生效），
+  // 结果整体替换，不会留下上一次检测的条目。
+  const issues = findListDuplicates(parseListEntries(tab.text));
+  listDuplicate.fileName = tab.path;
+  listDuplicate.issues = issues;
+  listDuplicate.checkedAt = Date.now();
+  listDuplicate.show = true;
+  if (issues.length === 0) {
+    message.success("list 查重完成：未发现重复条目");
+  } else {
+    message.warning(`list 查重完成：发现 ${issues.length} 处问题`);
+  }
+}
+
+function onListDuplicateLocate(line: number): void {
+  const tab = activeTab.value;
+  if (!tab) return;
+  void editor.revealFileLine(tab.index, line);
+}
 type FileTagKind = "id" | "name" | "path";
 interface FileTag {
   kind: FileTagKind;
@@ -921,6 +982,21 @@ function onDrop(event: DragEvent): void {
           </div>
 
           <div class="editor-pane-actions" role="group" aria-label="编辑器操作">
+            <NTooltip v-if="activeTab?.index === tab.index && isListFile(tab.path)" trigger="hover">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="tiny"
+                  :disabled="!canCheckListDuplicate"
+                  aria-label="list 查重"
+                  @click="runListDuplicateCheck"
+                >
+                  <template #icon><NIcon><Search24Regular /></NIcon></template>
+                  list查重
+                </NButton>
+              </template>
+              检查当前 lst 里重复的条目（ID 重复 / 路径重复 / 整行重复）
+            </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && !activeHasID" trigger="hover">
               <template #trigger>
                 <NButton
@@ -1037,28 +1113,18 @@ function onDrop(event: DragEvent): void {
 
         <div class="pane-body">
           <div v-if="!tab.editable" class="readonly-hint">
-            <template v-if="tab.largeFile">
-              文件过大({{ sizeText(tab.size) }})，超过文本编辑上限，无法载入编辑器；可到「设置 → 代码编辑器 → 文本编辑上限」调高后重新打开
-            </template>
-            <template v-else>
-              该文件类型(text {{ tab.dataType }},{{ sizeText(tab.size) }})暂不支持编辑
-            </template>
-          </div>
-          <div v-else-if="tab.readOnlyLocked" class="readonly-hint">
-            大文件({{ sizeText(tab.size) }})已按只读打开：已关闭折行与空白高亮以避免卡顿
-            <NButton size="tiny" quaternary @click="editor.unlockLargeEditing(tab.index)">
-              允许编辑
-            </NButton>
+            该文件类型(text {{ tab.dataType }},{{ sizeText(tab.size) }})暂不支持编辑
           </div>
           <NSpin v-if="isOpeningTab(tab.index)" style="margin-top: 120px" />
           <CodeEditor
             v-else
             :ref="(instance: unknown) => setEditorRef(tab.index, instance)"
             :doc="tab.text"
-            :read-only="!tab.editable || tab.readOnlyLocked"
+            :read-only="!tab.editable"
             :large-file="tab.largeFile"
             :annotations="tab.annotations"
             :tag-placement="settings.annotationTagPlacement"
+            :show-reference-tags="settings.showReferenceTags"
             :vim-mode="settings.vimMode"
             :theme-id="props.themeId"
             :reveal="revealFor(tab.index)"
@@ -1098,6 +1164,15 @@ function onDrop(event: DragEvent): void {
       :options="fileContextMenuOptions"
       @select="onFileContextMenuSelect"
       @clickoutside="fileContextMenu.show = false"
+    />
+    <ListDuplicatePanel
+      :show="listDuplicate.show && paneId === editor.activePaneId"
+      :file-name="listDuplicate.fileName"
+      :issues="listDuplicate.issues"
+      :checked-at="listDuplicate.checkedAt"
+      @close="listDuplicate.show = false"
+      @locate="onListDuplicateLocate"
+      @recheck="runListDuplicateCheck"
     />
     <NModal
       v-model:show="fileRegistration.show"
@@ -1481,6 +1556,25 @@ function onDrop(event: DragEvent): void {
   flex: 0 0 auto;
   width: 104px;
   margin-left: 4px;
+}
+
+/*
+ * 用户 2026-09-28：把「保存」按钮与工具条上的全部操作按钮 / 分屏下拉放大 1/4
+ * （tiny 22px/12px → 28px/15px，图标 16px → 20px）。
+ * 「list查重」与旁边的按钮保持同等字号/尺寸。
+ */
+.editor-info-bar :deep(.editor-save-button),
+.editor-pane-actions :deep(.n-button),
+.editor-pane-actions :deep(.editor-split-select) {
+  height: 28px !important;
+  font-size: 15px !important;
+}
+.editor-info-bar :deep(.editor-save-button .n-icon),
+.editor-pane-actions :deep(.n-button .n-icon) {
+  font-size: 20px !important;
+}
+.editor-pane-actions :deep(.editor-split-select) {
+  width: 128px !important;
 }
 
 .pane-body {

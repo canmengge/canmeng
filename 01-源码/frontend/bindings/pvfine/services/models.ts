@@ -113,10 +113,10 @@ export interface AppSettings {
     "npkDirectory": string;
     "theme": string;
     "protectedStringTableGuard": boolean;
-    "textEditLimitMB": number;
     "ai": AIAssistantSettings;
     "updateChannel": string;
     "mcpEnabled": boolean;
+    "mcpWriteEnabled": boolean;
 }
 
 /**

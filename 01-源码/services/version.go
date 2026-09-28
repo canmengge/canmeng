@@ -1665,7 +1665,7 @@ func applyVersionContentPathsLocked(c *core, paths []string, desired pvfversion.
 	}
 	c.editorText = make(map[int32]string)
 	c.editorAnnotation = editorAnnotationCache{}
-	c.annotationRelations = make(map[string]map[string]*relationTarget)
+	c.resetAnnotationCachesLocked()
 	c.invalidateAdvancedSearchLocked()
 	return nil
 }

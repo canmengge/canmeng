@@ -8,7 +8,9 @@ import {
   DocumentText20Regular,
 } from "@vicons/fluent";
 import { NButton, NIcon, NInput, NText, NTooltip, useMessage } from "naive-ui";
+import { Events } from "@wailsio/runtime";
 import { useLogStore, type LogLevelFilter } from "../stores/log";
+import { clearTrace, markTrace, traceLines } from "../diagTrace";
 
 /**
  * 输出日志面板：停靠在编辑区底部，与 HC\logs\pvfine-*.log 完全同源。
@@ -74,6 +76,36 @@ async function copyAll(): Promise<void> {
   }
 }
 
+// 面板自带诊断按钮：点击即把现场写进日志。
+// 注意：若卡死发生在界面渲染线程，这里的按钮同样点不动——届时请改用
+// 程序黑色控制台窗口输入 SCRZ 回车（不依赖界面线程，最可靠）。
+async function runDiag(cmd: string): Promise<void> {
+  const key = cmd.toUpperCase();
+  switch (key) {
+    case "SCRZ": {
+      markTrace("手动 SCRZ", { 面板日志数: log.entries.length });
+      try {
+        await Events.Emit("dev:diag", { cmd: "SCRZ", uiTrace: traceLines() });
+        message.success("已输出诊断现场（进程状态 / 卡住的打开动作 / 慢打开记录 / goroutine 栈）");
+      } catch (error: any) {
+        message.error(`诊断失败：${error?.message ?? error}`);
+      }
+      break;
+    }
+    case "QK": {
+      clearTrace();
+      message.success("已清空操作时间线");
+      break;
+    }
+    case "HELP": {
+      message.info(
+        "诊断 = 输出卡死现场到日志 ｜ 清时间线 = 清空前端操作时间线 ｜ 界面完全卡死时请用程序控制台窗口输入 SCRZ",
+      );
+      break;
+    }
+  }
+}
+
 watch(
   () => log.filtered.length,
   () => {
@@ -92,6 +124,11 @@ onMounted(() => {
   window.addEventListener("mousemove", onResizeMove);
   window.addEventListener("mouseup", onResizeEnd);
   void log.loadHistory().then(() => scrollToBottom());
+  // 原生菜单「诊断 → 清空前端操作时间线」触发。
+  Events.On("dev:diag-qk", () => {
+    clearTrace();
+    markTrace("菜单清空时间线");
+  });
 });
 
 onBeforeUnmount(() => {
@@ -198,6 +235,18 @@ onBeforeUnmount(() => {
           <span class="log-search-hint">搜索</span>
         </template>
       </NInput>
+      <NButton
+        size="tiny"
+        quaternary
+        type="warning"
+        title="界面卡顿/卡死时点击：把现场（卡住的打开动作、操作时间线、goroutine 栈）写进日志"
+        @click="runDiag('SCRZ')"
+      >
+        诊断
+      </NButton>
+      <NButton size="tiny" quaternary title="清空前端操作时间线（SCRZ 的记录来源）" @click="runDiag('QK')">
+        清时间线
+      </NButton>
       <NText depth="3" class="log-search-count">
         命中 {{ log.filtered.length.toLocaleString() }} 行
       </NText>

@@ -6,7 +6,6 @@
 <title>软件更新</title>
 <style>
 :root {
-  /* 深色主题 — 与主程序一致 */
   --bg:        #0f1420;
   --bg-2:      #141d33;
   --surface:   #1b2436;
@@ -41,7 +40,6 @@ body {
   user-select: none;
 }
 
-/* === 布局 === */
 .u { display: flex; flex-direction: column; height: 100%; padding: var(--pad); gap: var(--gap); }
 .u__hero { display: flex; align-items: flex-start; gap: 14px; }
 .u__icon {
@@ -64,7 +62,6 @@ body {
 .u__ver-to { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 .u__size { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 
-/* === 更新说明 === */
 .u__notes {
   flex: 1 1 auto; min-height: 60px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -98,7 +95,6 @@ body {
 .u__notes a { color: var(--accent); text-decoration: none; }
 .u__notes a:hover { text-decoration: underline; }
 
-/* === 下载进度 === */
 .u__progress-box {
   display: flex; flex-direction: column; gap: 8px;
   padding: 13px 15px; background: var(--surface); border: 1px solid var(--border);
@@ -125,7 +121,6 @@ body {
 .u__bar-fill--indet { width: 40% !important; animation: u-slide 1.2s ease-in-out infinite; }
 @keyframes u-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
 
-/* === 加载中 === */
 .u__spinner {
   flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; min-height: 80px; color: var(--fg-dim);
@@ -137,14 +132,12 @@ body {
 }
 @keyframes u-spin { to { transform: rotate(360deg); } }
 
-/* === 错误横幅 === */
 .u__error {
   background: rgba(255,93,108,.1); border: 1px solid rgba(255,93,108,.5); color: var(--error);
   padding: 11px 14px; border-radius: var(--radius); font-size: 12.5px; flex: 0 0 auto;
   line-height: 1.55; user-select: text;
 }
 
-/* === 按钮 === */
 .u__footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex: 0 0 auto; }
 .u__secondary-actions { display: flex; gap: 4px; }
 .u__primary-actions { display: flex; gap: 8px; margin-left: auto; }
@@ -168,7 +161,6 @@ body {
 .u__btn--primary:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 6px 18px rgba(79,209,255,.4); }
 .u__btn--primary:active:not(:disabled) { filter: brightness(.95); }
 
-/* === 状态驱动显示 === */
 .u [data-show] { display: none; }
 .u[data-state="checking"]     [data-show~="checking"]     { display: flex; }
 .u[data-state="available"]    [data-show~="available"]    { display: flex; }
@@ -202,13 +194,10 @@ body {
     </div>
   </header>
 
-  <!-- 检查 / 校验 / 安装共用加载动画 -->
   <div class="u__spinner" data-show="checking verifying installing" id="spinner-text">正在连接更新服务器…</div>
 
-  <!-- 更新说明 -->
   <div class="u__notes" data-show="available ready" id="notes"></div>
 
-  <!-- 下载进度 -->
   <div class="u__progress-box" data-show="downloading">
     <div class="u__progress-row">
       <span class="u__progress-state" id="progress-state">正在准备下载…</span>
@@ -217,7 +206,6 @@ body {
     <div class="u__bar-wrap"><div class="u__bar-fill" id="bar"></div></div>
   </div>
 
-  <!-- 错误横幅 -->
   <div class="u__error" data-show="error" id="error-text">发生未知错误。</div>
 
   <footer class="u__footer">
@@ -235,6 +223,13 @@ body {
 </main>
 
 <script>
+/*
+ * 更新窗口控制器。此页面由框架以内置窗口（BuiltinWindow）方式加载：
+ * 框架构造窗口时设置 AllowSimpleEventEmit=true + InitialHTML，会自动在
+ * 文档顶部注入 `window.wails.Events.On / Emit`（见 inline_event_shim.go），
+ * 因此这里直接使用 `window.wails.Events`。切勿把窗口改成 BYO + URL 加载——
+ * 那样 shim 不会注入，事件全部 no-op，界面会永远停在「正在连接更新服务器…」。
+ */
 (function () {
   var Events = window.wails.Events;
 
@@ -268,7 +263,6 @@ body {
     "error":       "!",
   };
 
-  /* 事件总线可能乱序到达，按阶段排名单调推进，防止旧事件把界面拉回去 */
   var RANK = {
     "":            0,
     "checking":    1,
@@ -285,7 +279,6 @@ body {
   var errored = false;
   var currentRelease = null;
   var currentVersion = null;
-  var skippedVersion = "";
 
   function setState(name) {
     if (errored && name !== "error") return false;
@@ -401,7 +394,6 @@ body {
     }
   }
 
-  /* === 状态处理 === */
   function onCheckStarted() {
     if (!setState("checking")) return;
     els.title.textContent = "正在检查更新…";
@@ -425,7 +417,7 @@ body {
       els.subtitle.appendChild(v);
     }
   }
-  function onDownloadStarted(rel) {
+  function onDownloadStarted() {
     if (!setState("downloading")) return;
     els.title.textContent = "正在下载更新";
     els.progressState.textContent = "正在准备下载…";
@@ -481,21 +473,18 @@ body {
     els.error.textContent = msg;
   }
 
-  /* === 事件接线 === */
   Events.On("wails:updater:meta", function (e) {
     var m = e && (e.data != null ? e.data : e);
     if (m && typeof m.currentVersion === "string") currentVersion = m.currentVersion;
-    if (m && typeof m.skippedVersion === "string") skippedVersion = m.skippedVersion;
   });
   Events.On("wails:updater:check-started",     function () { onCheckStarted(); });
   Events.On("wails:updater:update-available",  function (e) { onUpdateAvailable(e && (e.data != null ? e.data : e)); });
   Events.On("wails:updater:no-update",         function () { onNoUpdate(); });
-  Events.On("wails:updater:download-started",  function (e) { onDownloadStarted(e && (e.data != null ? e.data : e)); });
+  Events.On("wails:updater:download-started",  function () { onDownloadStarted(); });
   Events.On("wails:updater:download-progress", function (e) { onDownloadProgress(e && (e.data != null ? e.data : e)); });
-  Events.On("wails:updater:download-complete", function () {});
   Events.On("wails:updater:verifying",         function () { onVerifying(); });
   Events.On("wails:updater:installing",        function () { onInstalling(); });
-  Events.On("wails:updater:update-ready",      function (e) { onUpdateReady(); });
+  Events.On("wails:updater:update-ready",      function () { onUpdateReady(); });
   Events.On("wails:updater:error",             function (e) { onError(e && (e.data != null ? e.data : e)); });
 
   if (els.btnInstall) els.btnInstall.addEventListener("click", function () { Events.Emit("wails:updater:user:install"); });
@@ -505,7 +494,7 @@ body {
   if (els.btnRestart) els.btnRestart.addEventListener("click", function () { Events.Emit("wails:updater:user:restart"); });
   if (els.btnRetry)   els.btnRetry.addEventListener  ("click", function () { Events.Emit("wails:updater:user:install"); });
 
-  /* 运行时握手：页面就绪后通知框架冲刷积压事件（照抄默认模板，勿删） */
+  /* 页面就绪后通知框架冲刷积压事件（照抄官方模板，勿删） */
   (function announce() {
     if (window._wails && typeof window._wails.invoke === "function") {
       window._wails.invoke("wails:runtime:ready");

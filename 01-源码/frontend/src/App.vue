@@ -18,6 +18,7 @@ import BatchProcessModal from "./components/BatchProcessModal.vue";
 import ImportModal from "./components/ImportModal.vue";
 import VersionPanel from "./components/VersionPanel.vue";
 import SettingsModal from "./components/SettingsModal.vue";
+import UpdatePrompt from "./components/UpdatePrompt.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import CloseGuard from "./components/CloseGuard.vue";
 import EditorCloseGuard from "./components/EditorCloseGuard.vue";
@@ -124,6 +125,12 @@ function onSystemThemeChange(event: MediaQueryListEvent): void {
 }
 
 async function onKeydown(e: KeyboardEvent) {
+  // Alt+Q：显示 / 隐藏编辑器里的「绿色关联框」（ID 关联标签）。
+  if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyQ") {
+    e.preventDefault();
+    settings.toggleReferenceTags();
+    return;
+  }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   if (e.code === "Backslash") {
@@ -213,6 +220,7 @@ async function onKeydown(e: KeyboardEvent) {
           <ImportModal />
           <VersionPanel />
           <SettingsModal />
+          <UpdatePrompt />
           <CommandPalette ref="palette" />
           <div class="app-body">
             <div class="explorer-pane" :style="{ width: explorerWidth + 'px' }">

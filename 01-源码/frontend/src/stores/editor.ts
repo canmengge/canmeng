@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { ArchiveService, EditorService } from "../../bindings/pvfine/services";
+import { markTrace, traceAsync } from "../diagTrace";
 import type { EditorAnnotation, FileMeta, TreeTag, ImageReference } from "../../bindings/pvfine/services/models";
 import {
   RewritePlaceholderToSafeTable as callRewritePlaceholderToSafeTable,
@@ -22,10 +23,8 @@ export interface EditorTab {
   size: number;
   tags: TreeTag[];
   editable: boolean;
-  /** 大文件（超过 8MB）：以只读降级打开，需要编辑时手动解锁。 */
+  /** 大文件：只做渲染降级（关闭折行/空白高亮），不影响读写。 */
   largeFile: boolean;
-  /** 大文件只读锁：true 时编辑器只读且不参与保存，解锁后才能编辑。 */
-  readOnlyLocked: boolean;
   original: string; // 打开时的文本(脏判定基准)
   text: string; // 当前编辑器内容
   modified: boolean; // 后端 overlay 状态
@@ -183,8 +182,19 @@ export const useEditorStore = defineStore("editor", () => {
 
     openingPaneId.value = targetPaneId;
     try {
-      const meta: FileMeta | null = await EditorService.GetFile(index);
+      // 每次打开都进操作时间线（含 IPC 耗时与返回体规模），卡死时用 SCRZ 导出。
+      const meta: FileMeta | null = await traceAsync(
+        `GetFile(IPC) #${index}`,
+        () => EditorService.GetFile(index),
+      );
       if (!meta) return;
+      markTrace("GetFile 返回", {
+        路径: meta.path,
+        字节: meta.size,
+        标注数: meta.annotations?.length ?? 0,
+        文本长度: meta.text?.length ?? 0,
+        大文件: meta.largeFile === true,
+      });
       // 标签上限,防误开大量文件；同一文件在多个窗格中的引用不重复计数。
       if (tabs.value.length >= 20) {
         throw new Error("打开的标签过多,请先关闭一些(上限 20)");
@@ -198,9 +208,8 @@ export const useEditorStore = defineStore("editor", () => {
         size: meta.size,
         tags: cleanTreeTags(meta.tags),
         editable: meta.editable,
-        // 大文件先只读打开（编辑器侧同时关闭折行/空白高亮），确认要改再解锁。
+        // 大文件只做渲染降级（关闭折行/空白高亮），不改读写权限。
         largeFile: meta.largeFile === true,
-        readOnlyLocked: meta.largeFile === true && meta.editable,
         original: meta.text,
         text: meta.text,
         modified: meta.modified,
@@ -525,15 +534,8 @@ export const useEditorStore = defineStore("editor", () => {
   /** 编辑器内容变化:只更新本地文本,写入 overlay 由保存动作显式触发。 */
   function updateContent(index: number, text: string) {
     const tab = tabs.value.find((item) => item.index === index);
-    if (!tab || !tab.editable || tab.readOnlyLocked) return;
+    if (!tab || !tab.editable) return;
     tab.text = text;
-  }
-
-  /** 解除大文件的只读锁:由编辑器上的「允许编辑」按钮触发(已经过二次确认)。 */
-  function unlockLargeEditing(index: number): void {
-    const tab = tabs.value.find((item) => item.index === index);
-    if (!tab || !tab.readOnlyLocked) return;
-    tab.readOnlyLocked = false;
   }
 
   function isDirty(tab: EditorTab): boolean {
@@ -977,7 +979,6 @@ export const useEditorStore = defineStore("editor", () => {
     closeSplit,
     setSplitRatio,
     updateContent,
-    unlockLargeEditing,
     setPlaceholderText,
     rewritePlaceholderToSafeTable,
     saveTab,
