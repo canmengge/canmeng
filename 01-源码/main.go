@@ -589,14 +589,6 @@ func mcpEnabledFromSettings(settings *services.SettingsService) bool {
 
 func configureUpdater(app *application.App, settings *services.SettingsService) bool {
 	version := strings.TrimPrefix(appVersion, "v")
-	// 开发版（appVersion 为 "" / 0.0.0 / dev）**保留手动「检查更新」能力**：
-	// 用它验证更新通道能不能连上服务器、清单能不能读到（2026-09-29 用户要求）。
-	// 但这类包不参与后台自动检查与「提示更新」弹窗（见 startBackgroundUpdateCheck），
-	// 否则每次启动都会提示"有新版本"（0.0.0 永远小于线上版本）。
-	manualOnly := version == "" || version == "0.0.0" || version == "dev"
-	if manualOnly {
-		version = "0.0.0"
-	}
 
 	// 更新通道：正式（默认）走官方清单，开发人员专用走测试清单，两者互不影响。
 	manifestURL := updateManifestURL
@@ -609,12 +601,24 @@ func configureUpdater(app *application.App, settings *services.SettingsService) 
 			channelName = "开发人员专用（测试通道）"
 		}
 	}
-	if manualOnly {
-		logging.For("updater").Info("更新器已启用（开发版：仅手动检查，不自动提示）",
-			"通道", channelName, "清单", manifestURL, "当前版本", version)
-	} else {
-		logging.For("updater").Info("自动更新已启用", "通道", channelName, "清单", manifestURL)
+
+	// 无论是否启用自动更新，都把「当前版本 + 清单地址 + 通道」注入更新服务：
+	// 开发者面板的「测试更新通道」用它直接拉清单验证连通性（2026-09-29 用户要求）。
+	// 注意这里**不创建框架更新器**、也不改变设置里「检查更新」的原有行为。
+	if updaterSvc != nil {
+		updaterSvc.SetCurrentVersion(version)
+		updaterSvc.SetManifestSource(manifestURL, channel)
 	}
+
+	// 开发版（appVersion 为 "" / 0.0.0 / dev）：与以往一致 —— 不初始化更新器。
+	// 设置里的「检查更新」仍会提示"更新功能未初始化"；要验证更新通道请用开发者面板。
+	if version == "" || version == "0.0.0" || version == "dev" {
+		logging.For("updater").Info("开发版：未启用自动更新（可在开发者面板测试更新通道）",
+			"通道", channelName, "清单", manifestURL)
+		return false
+	}
+
+	logging.For("updater").Info("自动更新已启用", "通道", channelName, "清单", manifestURL)
 
 	provider, err := endpointupdater.New(endpointupdater.Config{
 		URL:     manifestURL,

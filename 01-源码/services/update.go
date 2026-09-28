@@ -2,9 +2,15 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -35,7 +41,12 @@ type UpdateService struct {
 	presentWindow func()
 	// version 是编译期注入的 appVersion（去掉前缀 v），用于界面显示「当前版本」。
 	version string
-	mu      sync.Mutex
+	// manifestURL / channel 是当前更新通道的清单地址与通道名，由 main 注入。
+	// 开发版不会创建框架更新器，但这两个值照常注入 —— 开发者面板的连通性测试
+	// 直接拿它们去拉清单（2026-09-29 用户要求：更新测试只在开发者面板做）。
+	manifestURL string
+	channel     string
+	mu          sync.Mutex
 }
 
 func NewUpdateService(app *application.App) *UpdateService {
@@ -73,6 +84,137 @@ func (s *UpdateService) PresentWindow() {
 	if present != nil {
 		present()
 	}
+}
+
+// SetManifestSource 注入当前更新通道的清单地址与通道名。main 在初始化更新器时调用；
+// **开发版照常调用**（即便不创建框架更新器），好让开发者面板能直接测连通性。
+func (s *UpdateService) SetManifestSource(manifestURL string, channel string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.manifestURL = strings.TrimSpace(manifestURL)
+	s.channel = strings.TrimSpace(channel)
+	s.mu.Unlock()
+}
+
+// updateManifest 是更新清单（stable.json）里本服务关心的字段。
+type updateManifest struct {
+	Version string `json:"version"`
+	Channel string `json:"channel"`
+	Name    string `json:"name"`
+}
+
+// compareVersions 比较两段版本号（形如 4.3.10）：a > b 返回 1，a < b 返回 -1，相等返回 0。
+// 段数不同时缺失段按 0 处理（"4.3" 与 "4.3.0" 视为相等）；非数字段退化为字符串比较。
+func compareVersions(a, b string) int {
+	pa := strings.Split(strings.TrimPrefix(strings.TrimSpace(a), "v"), ".")
+	pb := strings.Split(strings.TrimPrefix(strings.TrimSpace(b), "v"), ".")
+	n := len(pa)
+	if len(pb) > n {
+		n = len(pb)
+	}
+	for i := 0; i < n; i++ {
+		va, vb := "0", "0"
+		if i < len(pa) {
+			va = pa[i]
+		}
+		if i < len(pb) {
+			vb = pb[i]
+		}
+		na, ea := strconv.Atoi(va)
+		nb, eb := strconv.Atoi(vb)
+		if ea == nil && eb == nil {
+			if na != nb {
+				if na > nb {
+					return 1
+				}
+				return -1
+			}
+			continue
+		}
+		if cmp := strings.Compare(va, vb); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+// TestCheckUpdateNow 供**开发者面板**使用：不依赖框架更新器，直接请求当前通道的
+// 更新清单并比较版本；发现新版本时发 `app:update-available` 事件，界面据此弹出
+// 「提示更新」窗口 —— 效果与真实的「检查更新」一致。
+//
+// 为什么单独实现：开发版不创建框架更新器（设置里的「检查更新」仍提示"更新功能
+// 未初始化"，该行为保持不变），但开发期需要一个能验证「服务器是否可达、清单是否
+// 可读」的入口（2026-09-29 用户要求：更新测试只在开发者面板做）。
+func (s *UpdateService) TestCheckUpdateNow() (*UpdateInfo, error) {
+	if s == nil {
+		return nil, errors.New("更新服务不可用")
+	}
+	s.mu.Lock()
+	url := s.manifestURL
+	current := s.version
+	s.mu.Unlock()
+	if url == "" {
+		return nil, errors.New("更新清单地址未注入")
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("请求更新清单失败：%w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("更新清单返回 HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("读取更新清单失败：%w", err)
+	}
+	var m updateManifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("解析更新清单失败：%w", err)
+	}
+	if strings.TrimSpace(m.Version) == "" {
+		return nil, errors.New("更新清单里没有 version 字段")
+	}
+
+	if current == "" {
+		current = "0.0.0"
+	}
+	info := &UpdateInfo{
+		CurrentVersion: current,
+		LatestVersion:  m.Version,
+		HasUpdate:      compareVersions(m.Version, current) > 0,
+		DownloadURL:    UpdateDownloadPage,
+	}
+	if info.HasUpdate {
+		emitEvent("app:update-available", info)
+	}
+	return info, nil
+}
+
+// SimulateUpdateAvailable 供**开发者面板**使用：模拟"发布了新版本"，走与真实检查
+// 完全相同的事件链路，让界面弹出「提示更新」窗口（不发任何网络请求，用于界面自测）。
+func (s *UpdateService) SimulateUpdateAvailable() (*UpdateInfo, error) {
+	if s == nil {
+		return nil, errors.New("更新服务不可用")
+	}
+	s.mu.Lock()
+	current := s.version
+	s.mu.Unlock()
+	if current == "" {
+		current = "0.0.0"
+	}
+	info := &UpdateInfo{
+		CurrentVersion: current,
+		LatestVersion:  "9.9.9（模拟）",
+		HasUpdate:      true,
+		DownloadURL:    UpdateDownloadPage,
+	}
+	emitEvent("app:update-available", info)
+	return info, nil
 }
 
 // CheckForUpdates 检查更新源并把结果交给界面；发现新版本时**不做任何自动安装**。

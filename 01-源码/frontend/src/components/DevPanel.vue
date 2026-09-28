@@ -10,6 +10,7 @@ import {
   useMessage,
 } from "naive-ui";
 import {
+  Alert20Regular,
   ArrowSync20Regular,
   CheckmarkCircle20Regular,
   Copy20Regular,
@@ -22,6 +23,7 @@ import { useEditorStore } from "../stores/editor";
 import { useLogStore } from "../stores/log";
 import { useSettingsStore } from "../stores/settings";
 import { BUILD_LABEL, TEST_BUILD_NO } from "../buildInfo";
+import { SimulateUpdateAvailable, TestCheckUpdateNow } from "../services/updateTestApi";
 
 /**
  * 开发者面板（仅「开发人员专用」构建提供）。
@@ -43,6 +45,10 @@ const message = useMessage();
 const rebuildingIndex = ref(false);
 const runningDoctor = ref(false);
 const savingChannel = ref(false);
+/** 更新通道测试：两个按钮各自的忙碌态 + 最近一次结果提示。 */
+const testingUpdate = ref(false);
+const simulatingUpdate = ref(false);
+const updateTestHint = ref("");
 
 /** 启动日志里记录的路径：前端没有单独的接口，从「进程启动」这条日志取。 */
 const startupPaths = computed(() => {
@@ -154,6 +160,48 @@ async function onSwitchChannel(channel: "stable" | "dev"): Promise<void> {
     message.error(`保存更新通道失败：${error?.message ?? error}`);
   } finally {
     savingChannel.value = false;
+  }
+}
+
+/**
+ * 「测试手动检查更新」：真实请求当前更新通道的清单并比较版本 —— 效果等同于设置里的
+ * 「检查更新」（发现新版本会弹「提示更新」窗）。区别是本入口不依赖框架更新器，
+ * 所以开发版也能用；设置里那个保持原样（开发版仍提示"更新功能未初始化"）。
+ */
+async function onTestCheckUpdate(): Promise<void> {
+  if (testingUpdate.value) return;
+  testingUpdate.value = true;
+  updateTestHint.value = "";
+  try {
+    const info = await TestCheckUpdateNow();
+    updateTestHint.value = info.hasUpdate
+      ? `通道连通，当前 ${info.currentVersion || "(未注入)"} → 清单最新 ${info.latestVersion}`
+      : `通道连通，已是最新版本（${info.latestVersion || info.currentVersion}）`;
+    if (info.hasUpdate) message.warning(`发现新版本 ${info.latestVersion}`);
+    else message.success("已是最新版本");
+  } catch (error: any) {
+    updateTestHint.value = `请求失败：${error?.message ?? error}`;
+    message.error(`测试检查更新失败：${error?.message ?? error}`);
+  } finally {
+    testingUpdate.value = false;
+  }
+}
+
+/**
+ * 「测试自动弹窗更新」：模拟"发布了新版本"，走与真实检查**完全相同的事件链路**，
+ * 让界面弹出顾客打开编辑器时会看到的那扇「提示更新」窗口（不发任何网络请求）。
+ */
+async function onSimulateUpdate(): Promise<void> {
+  if (simulatingUpdate.value) return;
+  simulatingUpdate.value = true;
+  try {
+    const info = await SimulateUpdateAvailable();
+    updateTestHint.value = `已模拟发现新版本 ${info.latestVersion}，应弹出「提示更新」窗口`;
+  } catch (error: any) {
+    updateTestHint.value = `模拟失败：${error?.message ?? error}`;
+    message.error(`模拟更新弹窗失败：${error?.message ?? error}`);
+  } finally {
+    simulatingUpdate.value = false;
   }
 }
 
@@ -286,6 +334,23 @@ const diagnostics = computed(() =>
             </NButton>
             <NText depth="3">切换后需重启应用生效</NText>
           </div>
+        </div>
+        <div class="dev-row">
+          <span class="dev-key">更新测试</span>
+          <div class="dev-val dev-val--inline">
+            <NButton size="tiny" :loading="testingUpdate" @click="onTestCheckUpdate">
+              <template #icon><NIcon><ArrowSync20Regular /></NIcon></template>
+              测试手动检查更新
+            </NButton>
+            <NButton size="tiny" :loading="simulatingUpdate" @click="onSimulateUpdate">
+              <template #icon><NIcon><Alert20Regular /></NIcon></template>
+              测试自动弹窗更新
+            </NButton>
+          </div>
+        </div>
+        <div v-if="updateTestHint" class="dev-row">
+          <span class="dev-key">上次结果</span>
+          <span class="dev-val">{{ updateTestHint }}</span>
         </div>
         <div class="dev-row">
           <span class="dev-key">日志文件</span>
