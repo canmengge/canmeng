@@ -30,14 +30,16 @@ echo  日志目录:     %CLIENT%\日志
 if /i not "%ROOT%"=="d:\110AI" echo  [警告] 当前不是 d:\110AI 工作台，请确认是否双击了旧目录的脚本
 echo ------------------------------------------------------------
 
-REM ---- 自愈（2026-09-28 加）--------------------------------------------------
-REM 关闭窗口时 node 常不随之退出，残留进程会占住 %PORT%，使开发服务器窗口报
-REM "Port 9255 is already in use"。这里先清掉所有占用者，再启动干净的新实例，
-REM 保证每次双击都能起来、且窗口可见（旧实例的窗口此时已找不回来）。
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /c:"127.0.0.1:%PORT%" ^| findstr /i "LISTENING"') do (
-  echo [自愈] 清理占用 %PORT% 的残留进程 PID %%a
-  taskkill /F /PID %%a >nul 2>&1
-)
+REM ---- 自愈（2026-09-28 加，2026-09-29 扩展）----------------------------------
+REM 两类残留都要清掉：
+REM   ① 关闭窗口时 node 常不随之退出，残留进程占住 %PORT% ? 新 dev server 报
+REM      "Port 9255 is already in use"。
+REM   ② 上一次的 dev server 已退出、它的 cmd 窗口却卡在 pause 上，成了「僵尸窗口」
+REM      —— 用户会看到两个窗口，其中一个写着「开发服务器已退出 / 请按任意键继续」。
+REM 清理逻辑统一放在 kill-stale-devserver.ps1（独立成文件，避免 cmd 里的转义问题）。
+set "KILLED="
+for /f "delims=" %%T in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%kill-stale-devserver.ps1"') do set "KILLED=%%T"
+if defined KILLED echo [自愈] 残留清理: %KILLED%
 timeout /t 1 /nobreak >nul
 
 REM ---- Go 源码 / exe 一致性自检（2026-09-29 加）-------------------------------
