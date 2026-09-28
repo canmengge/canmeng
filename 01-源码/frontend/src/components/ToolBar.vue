@@ -180,12 +180,75 @@ function onImport(): void {
   importer.open("");
 }
 
+/**
+ * 封包成功提示：弹窗 + 2 秒倒计时自动关闭，也可点「关闭」立刻关。
+ * 2026-09-29 用户要求——原来只发一条轻提示（message），不够醒目。
+ */
+function showSaveSuccessDialog(): void {
+  const remain = ref(2);
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stop = () => {
+    if (timer !== undefined) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+  };
+  const dlg = dialog.success({
+    title: "封包成功",
+    content: () =>
+      h("div", { style: "line-height:1.8" }, [
+        h("div", "已保存到源文件。"),
+        h(
+          "div",
+          { style: "margin-top:6px; color:#9aa4b2; font-size:12px" },
+          `${remain.value} 秒后自动关闭（也可点「关闭」立即关闭）`
+        ),
+      ]),
+    positiveText: "关闭",
+    closable: true,
+    maskClosable: true,
+    onAfterLeave: stop,
+  });
+  timer = setInterval(() => {
+    remain.value -= 1;
+    if (remain.value <= 0) {
+      stop();
+      dlg.destroy();
+    }
+  }, 1000);
+}
+
+/**
+ * 封包失败提示：弹窗（「确认」+「关闭」两个按钮，**必须用户手动关闭**，不自动消失）。
+ * 2026-09-29 用户要求——保存被拒（例如页密钥不足）这类错误此前只落在日志里，不够醒目。
+ */
+function showSaveFailedDialog(err: unknown): void {
+  const text = (err as { message?: string } | null)?.message ?? String(err);
+  dialog.error({
+    title: "封包失败 · 源文件未被修改",
+    content: () =>
+      h("div", { style: "line-height:1.8" }, [
+        h("div", { style: "white-space:pre-wrap; word-break:break-all" }, text),
+        h(
+          "div",
+          { style: "margin-top:8px; color:#9aa4b2; font-size:12px" },
+          "源文件保持原样，没有任何改动被写入；请按提示处理后重新封包。"
+        ),
+      ]),
+    positiveText: "确认",
+    negativeText: "关闭",
+    closable: false,
+    maskClosable: false,
+    closeOnEsc: false,
+  });
+}
+
 async function saveToSource() {
   try {
     await editor.save();
-    message.success("已保存到源文件");
+    showSaveSuccessDialog();
   } catch (e: any) {
-    if (!isCancel(e)) message.error(`保存失败: ${e?.message ?? e}`);
+    if (!isCancel(e)) showSaveFailedDialog(e);
   }
 }
 
