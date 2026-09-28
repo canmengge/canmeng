@@ -6,7 +6,8 @@
  * `AGENTS.md` 规定 `frontend/bindings/` 由 `wails3 generate bindings` 生成、禁手工修改。
  * 但本机**无法构建 wails3 CLI**：模块缓存里 `internal/commands/build_assets/windows/msix`
  * 与 `.../nsis` 是空目录，`//go:embed build_assets/windows/msix/*` 直接编译失败
- * （见 pvf-dev-project/work/fnv-probe/ 与 P-0004 补丁说明的"已知局限"）。
+ * （见旧工作台 `work/fnv-probe/` 与 P-0004 补丁说明的"已知局限"，已归档到
+ * `07-归档资料\项目旧文档\`，原路径 `pvf-dev-project/...` 不再使用）。
  * 因此这里放一个独立适配层，**不碰** `bindings/`。
  *
  * ## 方法 ID 不是猜的
@@ -18,7 +19,7 @@
  *
  * 并用**仓库内已有 bindings 的真实 ID 回归验证 7/7 全部吻合**
  * （BookmarkService ×4、ArchiveService ×2、EditorService ×1，覆盖大小写混合的方法名）。
- * 复算探针：`pvf-dev-project/work/fnv-probe/`（纯标准库，`go run .`）。
+ * 复算探针：旧工作台 `work/fnv-probe/`（纯标准库，`go run .`），已归档到 `07-归档资料\项目旧文档\`。
  *
  * ## 何时删除本文件
  *

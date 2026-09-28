@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	pvfPath := `D:\115us\PVF Ai Agent\Script.pvf`
-	outPath := `D:\115us\PVF Ai Agent\Script_modified.pvf`
+	pvfPath := `D:\AA110pvf修改\Script.pvf`
+	outPath := `D:\AA110pvf修改\Script_modified.pvf`
 
 	fmt.Println("正在打开 PVF...")
 	archive, err := pvf.Open(pvfPath)

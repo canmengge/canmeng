@@ -159,6 +159,8 @@ func RunDiagnostics(input DiagInput) {
 	log.Warn("进程状态",
 		"goroutine", runtime.NumGoroutine(),
 		"堆内存MB", stats.HeapAlloc>>20,
+		"堆占用MB", stats.HeapInuse>>20,
+		"已归还MB", stats.HeapReleased>>20,
 		"系统内存MB", stats.Sys>>20,
 		"GC次数", stats.NumGC)
 

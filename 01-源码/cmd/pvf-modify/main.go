@@ -95,8 +95,8 @@ type fileItem struct {
 }
 
 func main() {
-	pvfPath := `D:\115us\PVF Ai Agent\Script.pvf`
-	skPath := `D:\115us\PVF Ai Agent\sk.dat`
+	pvfPath := `D:\AA110pvf修改\Script.pvf`
+	skPath := `D:\AA110pvf修改\sk.dat`
 
 	// 读取 PVF 和 sk.dat
 	fmt.Println("1. 读取文件...")
@@ -221,7 +221,7 @@ func main() {
 	fmt.Printf("   总共找到 %d 处匹配\n", foundCount)
 
 	// 保存解密后的第一页，方便后续分析
-	os.WriteFile(`D:\115us\PVF Ai Agent\decrypted_page1.bin`, buf[:paged110PageGuardSize], 0644)
+	os.WriteFile(`D:\AA110pvf修改\decrypted_page1.bin`, buf[:paged110PageGuardSize], 0644)
 	fmt.Println("\n✓ 第一页解密后的数据已保存到 decrypted_page1.bin")
 	fmt.Println("  解密逻辑验证成功！")
 }

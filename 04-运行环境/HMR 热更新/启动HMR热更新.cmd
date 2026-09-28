@@ -1,13 +1,14 @@
 @echo off
 setlocal
 REM ============================================================================
-REM  PVF工坊 - HMR 热更新模式（日常改前端/UI 用这个，双击即测）
-REM   1) 起前端开发服务器（另开一个窗口，别关它）
+REM  PVF工坊 - HMR 热更新模式（唯一日常启动入口，2026-09-28 用户规定）
+REM  - 以后更新一律只用本脚本；其它启动脚本仅在 HMR 不可用时作为回退
+REM  - 只改前端源码：保存即热更新（约 1 秒），不构建、不生成 exe
+REM  - 只有改了 Go（main.go / services / internal）才需要重新构建 exe
+REM   1) 起前端开发服务器（另开一个窗口，别关它）；端口已在监听则直接复用
 REM   2) 以「外部开发服务器」模式启动程序：界面资源实时取源码，不走内嵌资源
 REM   3) 之后凡是改前端源码 → 保存 → 程序界面约 1 秒自动更新
-REM  - 本模式不需要构建前端、不需要重新打包 exe
 REM  - 后端接口（打开 PVF / 保存 / 索引 / 注释 / AI）仍由程序自身处理，不受影响
-REM  - 正式测试仍用同目录上级的「启动开发版.cmd」（内嵌资源模式）
 REM ============================================================================
 set "HERE=%~dp0"
 for %%I in ("%HERE%..") do set "CLIENT=%%~fI"
@@ -22,8 +23,23 @@ if not exist "%FE%\package.json" (
   exit /b 1
 )
 
-echo === 1/3 启动前端开发服务器（另开窗口，请勿关闭）===
-start "PVF工坊-前端开发服务器(勿关)" "%HERE%_前端开发服务器.cmd"
+echo ------------------------------------------------------------
+echo  工作台根目录: %ROOT%
+echo  前端源码目录: %FE%
+echo  日志目录:     %CLIENT%\日志
+if /i not "%ROOT%"=="d:\110AI" echo  [警告] 当前不是 d:\110AI 工作台，请确认是否双击了旧目录的脚本
+echo ------------------------------------------------------------
+
+REM 端口已在监听则直接复用，不再新开窗口（否则会报 "Port 9255 is already in use"）。
+set "REUSE="
+for /f "tokens=*" %%L in ('netstat -ano ^| findstr /c:"127.0.0.1:%PORT%" ^| findstr /i "LISTENING"') do set "REUSE=1"
+
+if defined REUSE (
+  echo === 1/3 检测到 %PORT% 已有前端开发服务器，直接复用（不再新开窗口）===
+) else (
+  echo === 1/3 启动前端开发服务器（另开窗口，请勿关闭）===
+  start "PVF工坊-前端开发服务器(勿关)" "%HERE%_前端开发服务器.cmd"
+)
 
 echo === 2/3 等待开发服务器就绪 127.0.0.1:%PORT% ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$end=(Get-Date).AddSeconds(180); while((Get-Date) -lt $end){ try { $c=New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1',%PORT%); $c.Close(); exit 0 } catch { Start-Sleep -Milliseconds 400 } }; exit 1"
@@ -38,6 +54,9 @@ set "FRONTEND_DEVSERVER_URL=http://localhost:%PORT%"
 set "PVFINE_ANNOTATION_DIR=%CLIENT%\注释数据"
 set "PVFINE_CACHE_DIR=%CLIENT%\pvfine-main\HC"
 set "PVFINE_KNOWLEDGE_DIR=%CLIENT%\知识库"
+REM 日志固定落在 04-运行环境\日志（与缓存/索引目录分离，便于直接查看）
+set "PVFINE_LOG_DIR=%CLIENT%\日志"
+if not exist "%CLIENT%\日志" mkdir "%CLIENT%\日志"
 
 set "EXE="
 for /f "delims=" %%F in ('dir /b /o-d "%CLIENT%\PVF工坊-开发人员专用*.exe" 2^>nul') do (

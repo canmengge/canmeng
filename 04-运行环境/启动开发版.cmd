@@ -1,8 +1,9 @@
 @echo off
 setlocal
 REM ===========================================================================
-REM  启动开发版（磁盘资源模式）
-REM  - 界面资源不读 exe 内嵌，而是实时读 v2\frontend\dist
+REM  启动开发版（磁盘资源模式）—— 仅作为 HMR 不可用时的回退
+REM  - 日常请用「HMR 热更新\启动HMR热更新.cmd」（唯一日常启动入口，2026-09-28 规定）
+REM  - 界面资源不读 exe 内嵌，而是实时读 frontend\dist-dev
 REM  - 因此前端改动只要重新 vite build，不必再 go build 打包 exe
 REM  - Go 侧代码改动才需要重新构建这个程序
 REM ===========================================================================
@@ -38,7 +39,11 @@ REM 注释数据 / 缓存 / 知识库都读同一份，避免换 exe 位置后左树注释丢失。
 set "PVFINE_ANNOTATION_DIR=%ROOT%注释数据"
 set "PVFINE_CACHE_DIR=%ROOT%pvfine-main\HC"
 set "PVFINE_KNOWLEDGE_DIR=%ROOT%知识库"
+REM 日志固定落在 04-运行环境\日志（与缓存/索引目录分离，便于直接查看）
+set "PVFINE_LOG_DIR=%ROOT%日志"
+if not exist "%ROOT%日志" mkdir "%ROOT%日志"
 echo 资源目录: %DIST%
+echo 日志目录: %ROOT%日志
 echo 启动程序: %EXE%
 start "" "%EXE%"
 endlocal

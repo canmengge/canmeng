@@ -493,7 +493,8 @@ func (c *core) buildAnnotationRelationFromListLocked(relation annotationrules.Re
 	if !ok {
 		return result
 	}
-	text, err := c.archive.Text(listIndex)
+	// 走解码缓存：同一份清单可能被多个关系引用，不用每次都重新反编译 27MB。
+	text, err := c.cachedDecodedText(listIndex, c.archive)
 	if err != nil {
 		return result
 	}

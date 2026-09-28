@@ -64,8 +64,19 @@ type Archive struct {
 	strAIdx, strWIdx map[string]int32
 	poolsDirty       bool // pools gained appended strings since parse
 
-	resolveCache    map[int32]string
-	chunkCache      map[int32][]byte
+	// 读缓存采用「两段滚动」：新条目进 current 段；current 段写满阈值就把 old 段
+	// 整体丢弃（一次性释放，O(1)，无需排序），再把 current 变成 old。命中 old 段
+	// 的条目会被搬回 current（只搬引用，不复制数据），于是热数据自动留在常驻段。
+	//
+	// 这样既能保留随机读（打开文件 / 预览）的命中率，又不会让索引构建、保存这类
+	// 顺序扫描把整包解压后的内容（可达数 GB）永久堆在内存里 —— 顺序扫描本来就不
+	// 复用缓存，淘汰它对速度没有影响。
+	resolveCache    map[int32]string // current 段
+	resolveCacheOld map[int32]string // 上一批，滚动时整体丢弃
+	resolveCount    int              // current 段条数
+	chunkCache      map[int32][]byte // current 段
+	chunkCacheOld   map[int32][]byte // 上一批，滚动时整体丢弃
+	chunkCacheBytes int64            // current 段字节数
 	overlay         map[int32][]byte // index -> replacement payload
 	pathIndex       map[string]int32
 	structuralDirty bool // file entries were added or removed since the last save
@@ -427,11 +438,23 @@ func pathExt(name string) string {
 	return ""
 }
 
-// Chunk returns decompressed chunk ci, caching the result.
+// 读缓存上限。current 段达到上限的一半即滚动，故常驻峰值 ≈ 上限值。
+const (
+	chunkReadCacheLimit = 512 << 20 // 解压块：512 MB
+	resolveReadCacheMax = 2_500_000 // 字符串解析：250 万条
+)
+
+// Chunk returns decompressed chunk ci, caching the result. The cache is bounded
+// (two-segment rolling eviction); see the Archive field docs.
 func (a *Archive) Chunk(ci int32) ([]byte, error) {
 	a.cacheMu.Lock()
 	defer a.cacheMu.Unlock()
 	if ch, ok := a.chunkCache[ci]; ok {
+		return ch, nil
+	}
+	if ch, ok := a.chunkCacheOld[ci]; ok {
+		delete(a.chunkCacheOld, ci)
+		a.chunkStore(ci, ch)
 		return ch, nil
 	}
 	raw, err := a.decompressChunk(ci)
@@ -441,8 +464,63 @@ func (a *Archive) Chunk(ci int32) ([]byte, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	a.chunkCache[ci] = raw
+	a.chunkStore(ci, raw)
 	return raw, nil
+}
+
+// chunkStore 写入 current 段并在超阈值时滚动。调用前必须持有 cacheMu。
+func (a *Archive) chunkStore(ci int32, raw []byte) {
+	if a.chunkCache == nil {
+		a.chunkCache = make(map[int32][]byte)
+	}
+	a.chunkCache[ci] = raw
+	a.chunkCacheBytes += int64(len(raw))
+	if a.chunkCacheBytes < chunkReadCacheLimit/2 {
+		return
+	}
+	a.chunkCacheOld = a.chunkCache
+	a.chunkCacheBytes = 0
+	a.chunkCache = make(map[int32][]byte, len(a.chunkCacheOld)/2+1)
+}
+
+// resolveStore 写入字符串解析缓存的 current 段并按条数滚动。持有 cacheMu 时调用。
+func (a *Archive) resolveStore(off int32, s string) {
+	if a.resolveCache == nil {
+		a.resolveCache = make(map[int32]string)
+	}
+	a.resolveCache[off] = s
+	a.resolveCount++
+	if a.resolveCount < resolveReadCacheMax/2 {
+		return
+	}
+	a.resolveCacheOld = a.resolveCache
+	a.resolveCount = 0
+	a.resolveCache = make(map[int32]string, len(a.resolveCacheOld)/2+1)
+}
+
+// ReleaseReadCaches 丢弃所有解压块与字符串解析缓存（纯缓存，丢弃不影响正确性）。
+// 在「索引构建完成」「关闭归档」这些一次性节点调用，把峰值内存还回系统。
+func (a *Archive) ReleaseReadCaches() {
+	a.cacheMu.Lock()
+	a.chunkCache = make(map[int32][]byte)
+	a.chunkCacheOld = nil
+	a.chunkCacheBytes = 0
+	a.resolveCache = make(map[int32]string)
+	a.resolveCacheOld = nil
+	a.resolveCount = 0
+	a.cacheMu.Unlock()
+}
+
+// ReadCacheStats 返回读缓存当前的规模（诊断用）。
+func (a *Archive) ReadCacheStats() (chunkBytes int64, chunkEntries, resolveEntries int) {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	chunkBytes = a.chunkCacheBytes
+	for _, raw := range a.chunkCacheOld {
+		chunkBytes += int64(len(raw))
+	}
+	return chunkBytes, len(a.chunkCache) + len(a.chunkCacheOld),
+		len(a.resolveCache) + len(a.resolveCacheOld)
 }
 
 // chunkSpan returns the raw (still encrypted) body byte range of chunk ci.

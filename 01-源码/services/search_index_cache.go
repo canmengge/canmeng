@@ -132,7 +132,7 @@ func searchIndexCachePath(sourcePath, override string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 2026-09-24：搜索索引统一落在集中缓存目录（默认 …\pvf编辑器新版本\pvfine-main\HC\search-index），
+	// 2026-09-24：搜索索引统一落在集中缓存目录（默认 04-运行环境\pvfine-main\HC\search-index），
 	// 用户想清理时删掉整个 HC 即可，不影响配置与版本数据。
 	cacheDir, err := apppaths.SubDir("search-index")
 	if err != nil {

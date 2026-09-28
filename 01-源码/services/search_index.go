@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -102,6 +104,49 @@ const (
 	indexYieldEvery = 64
 	indexYieldMax   = 50 * time.Millisecond
 )
+
+// indexHandoffWait 是新索引构建等待上一个构建退出的上限：旧构建一旦被取消，
+// 通常几毫秒内就退出；等它退出再开始，就不会出现两份 438 万条索引并存的峰值。
+// 超时则照旧开始（不引入新的阻塞）。等待发生在后台 goroutine，前台无感。
+const indexHandoffWait = 1500 * time.Millisecond
+
+// claimIndexSlot 等上一个索引构建退出后登记本次构建。返回 false 表示本次构建已被
+// 取消，调用方应直接结束。
+func (c *core) claimIndexSlot(ctx context.Context, maxWait time.Duration) bool {
+	deadline := time.Now().Add(maxWait)
+	for c.indexRunning.Load() > 0 {
+		if ctx.Err() != nil {
+			return false
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	c.indexRunning.Add(1)
+	return true
+}
+
+// releaseArchiveMemory 在一次性的节点（索引构建完成 / 关闭归档）丢弃归档的读缓存，
+// 并把 Go 堆的高水位真正还给操作系统 —— Go 默认只把内存标记为可复用，任务管理器
+// 里看到的占用不会自己降下来。
+//
+// 只丢纯缓存（解压块 / 字符串解析结果），不动 pathIndex / items 等结构数据；
+// 后续随机读会重新解压一次（单个数据块毫秒级），功能与结果完全等价。
+func releaseArchiveMemory(a *pvf.Archive, tag string) {
+	if a == nil {
+		return
+	}
+	a.ReleaseReadCaches()
+	go func() {
+		debug.FreeOSMemory()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		logging.For("index").Info("内存已归还系统", "触发", tag,
+			"堆分配MB", m.HeapAlloc>>20, "堆占用MB", m.HeapInuse>>20,
+			"已归还MB", m.HeapReleased>>20, "系统内存MB", m.Sys>>20)
+	}()
+}
 
 // beginFront / endFront 标记一次前台交互请求（界面点击引发的服务调用）。
 // 后台索引构建据此让路，避免"点一下卡 20 秒"。
@@ -303,6 +348,10 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive, startedAt time.Time, force, cacheEligible bool) {
 	indexLog := logging.For("index")
 	indexLog.Debug("开始构建搜索索引", "强制", force, "可缓存", cacheEligible)
+	if !c.claimIndexSlot(ctx, indexHandoffWait) {
+		return
+	}
+	defer c.indexRunning.Add(-1)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			indexLog.Error("搜索索引构建 panic", "错误", fmt.Sprintf("%v", recovered))
@@ -337,7 +386,9 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 			if c.publishSearchCandidate(a, gen, ctx, startedAt, records, recordsByFile, metadata, treeTagsByFile, visuals, cached.Total, cached.Skipped, cached.SpecsFingerprint, false, true) {
 				indexLog.Info("搜索索引直接命中磁盘缓存",
 					"条目", cached.Total, "跳过", cached.Skipped,
+					"记录", len(records), "记录表键", len(recordsByFile),
 					"耗时", logging.FormatDuration(time.Since(startedAt)))
+				releaseArchiveMemory(a, "索引命中缓存")
 				return
 			}
 			return
@@ -466,7 +517,10 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 	}
 	indexLog.Info("搜索索引构建完成",
 		"条目", len(refs), "元数据", len(metadata), "跳过", skipped, "记录", len(records),
+		"记录表键", len(recordsByFile),
 		"耗时", logging.FormatDuration(time.Since(startedAt)))
+	// 构建期顺序读遍全库，读缓存里堆的是一次性的解压数据：丢掉并归还高水位。
+	releaseArchiveMemory(a, "索引构建完成")
 }
 
 // startSearchIndexForList schedules a local semantic refresh for one archive
@@ -487,6 +541,10 @@ func (c *core) startSearchIndexForList(listIndex int32) {
 }
 
 func (c *core) buildSearchIndexDelta(ctx context.Context, gen uint64, a *pvf.Archive, startedAt time.Time, listIndexes []int32) {
+	if !c.claimIndexSlot(ctx, indexHandoffWait) {
+		return
+	}
+	defer c.indexRunning.Add(-1)
 	paths, ok := c.snapshotPaths(a, gen, ctx)
 	if !ok {
 		return
@@ -1390,19 +1448,28 @@ func buildSearchRecords(paths []pathEntry, metadata []indexedMetadata, metadataB
 	}
 
 	records := make([]searchRecord, 0, len(paths)+len(metadata))
+	// recordsByFile 只登记清单记录：它的全部三个读取点
+	// （refreshIndexedRecordsLocked / indexedFileNameLocked / treeTagsForRecords）
+	// 对 Category==file 的记录都不产生任何效果，438 万条普通文件的登记项纯属浪费
+	// （一个 438 万键的 map + 438 万个切片，约 1GB）。
 	recordsByFile := make(map[int32][]int)
 	for _, p := range paths {
 		metadataIndexes := metadataByFile[p.idx]
 		if len(metadataIndexes) == 0 {
+			name := pathBase(p.path)
+			lowerPath := p.lower
+			if lowerPath == "" {
+				lowerPath = strings.ToLower(p.path)
+			}
 			appendSearchRecord(&records, &recordsByFile, SearchHit{
-				Name:       pathBase(p.path),
+				Name:       name,
 				Path:       p.path,
 				Category:   SearchCategoryFile,
 				Size:       p.size,
 				DataType:   p.typ,
 				FileIndex:  p.idx,
 				ChangeKind: p.changeKind,
-			})
+			}, lowerNameFromPath(name, lowerPath), lowerPath)
 			continue
 		}
 		for _, metadataIndex := range metadataIndexes {
@@ -1418,22 +1485,41 @@ func buildSearchRecords(paths []pathEntry, metadata []indexedMetadata, metadataB
 				ChangeKind: p.changeKind,
 				Icon:       cloneImageReference(entry.icon),
 				FieldImage: cloneImageReference(entry.fieldImage),
-			})
+			}, strings.ToLower(entry.name), strings.ToLower(entry.path))
 		}
 	}
 	return records, recordsByFile
 }
 
-func appendSearchRecord(records *[]searchRecord, recordsByFile *map[int32][]int, hit SearchHit) {
+// appendSearchRecord 追加一条搜索记录。lowerName / lowerPath 由调用方传入，
+// 便于复用已经算好的小写串（普通文件记录可复用 sortedPaths 的 lower，名称可再
+// 从它末尾切出），省掉 438 万次 ToLower 分配。
+func appendSearchRecord(records *[]searchRecord, recordsByFile *map[int32][]int, hit SearchHit, lowerName, lowerPath string) {
 	record := searchRecord{
 		hit:       hit,
-		lowerName: strings.ToLower(hit.Name),
+		lowerName: lowerName,
 		lowerID:   strings.ToLower(hit.ID),
-		lowerPath: strings.ToLower(hit.Path),
+		lowerPath: lowerPath,
 	}
 	*records = append(*records, record)
+	if hit.Category == SearchCategoryFile {
+		return
+	}
 	index := len(*records) - 1
 	(*recordsByFile)[hit.FileIndex] = append((*recordsByFile)[hit.FileIndex], index)
+}
+
+// lowerNameFromPath 在 name 是 lowerPath 的末段时，直接切出末段（与 lowerPath 共享
+// 底层字节，零分配）；否则退回 strings.ToLower。
+func lowerNameFromPath(name, lowerPath string) string {
+	if name == "" || lowerPath == "" || len(name) > len(lowerPath) {
+		return strings.ToLower(name)
+	}
+	start := len(lowerPath) - len(name)
+	if start < 0 || !strings.EqualFold(name, lowerPath[start:]) {
+		return strings.ToLower(name)
+	}
+	return lowerPath[start:]
 }
 
 func buildTreeTags(records []searchRecord, recordsByFile map[int32][]int) map[int32][]TreeTag {

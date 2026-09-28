@@ -28,7 +28,7 @@ const paged110RSADER = "3082025d02010002818100b3120bba28e9db7a87bf61ea60fdd28141
 const paged110EmbeddedMetadataHex = "21ad8ff286bd11687520212e5dfd064bd9a7ec798f7f78a706b0486e77634489"
 
 func main() {
-	skPath := `D:\115us\PVF Ai Agent\sk.dat`
+	skPath := `D:\AA110pvf修改\sk.dat`
 
 	// 1. 加载 RSA 私钥
 	fmt.Println("1. 加载 RSA 私钥...")

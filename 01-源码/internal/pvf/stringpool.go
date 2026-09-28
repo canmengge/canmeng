@@ -81,13 +81,18 @@ func (a *Archive) ResolveString(magicOff int32) string {
 	if s, ok := a.resolveCache[magicOff]; ok {
 		return s
 	}
+	if s, ok := a.resolveCacheOld[magicOff]; ok {
+		delete(a.resolveCacheOld, magicOff)
+		a.resolveStore(magicOff, s)
+		return s
+	}
 	var s string
 	if magicOff&1 != 0 {
 		s = readUTF16(a.strW, int(magicOff>>1)*2)
 	} else {
 		s = readUTF8(a.strA, int(magicOff>>1))
 	}
-	a.resolveCache[magicOff] = s
+	a.resolveStore(magicOff, s)
 	return s
 }
 

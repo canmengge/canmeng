@@ -82,6 +82,10 @@ type core struct {
 	// 后台的搜索索引构建（438 万条目、约 70 秒）每处理若干条会看一眼它：有人在用界面
 	// 就让出几十毫秒，界面点击立刻响应；没人用就全速构建 —— 既不留卡顿，也不拖慢索引。
 	frontWaiters atomic.Int32
+	// indexRunning 统计在途的索引构建数量。新构建开始前会短暂等待上一个构建退出
+	// （上限 indexHandoffWait），避免两份 438 万条的索引同时驻留 —— 这正是内存
+	// 冲到 8GB 的直接原因。等待发生在后台 goroutine，前台调用不受影响。
+	indexRunning atomic.Int32
 	// listNameCache 缓存「清单行 → 目标名」的解析结果（键见 listNameCacheKey）。
 	// 解析一次要把目标文件整体解码再取字段（O(目标文件大小)）；几十万行的
 	// list/*.lst 会触发同等次数的解码，是打开大清单时界面冻结的主因之一。
@@ -106,6 +110,12 @@ type core struct {
 	// （前端可见行）按需查询并复用结果。独立锁：解析是重操作，不能占用主 mu。
 	fileNameCache   map[int32]string
 	fileNameCacheMu sync.RWMutex
+
+	// textCache 缓存「未被修改的文件」的反编译结果：大清单（4MB → 27MB）解码要几百
+	// 毫秒，反复打开/预览同一文件时这笔开销会重复出现。改过的内容走 editorText，
+	// 不进这里；总量超过 textCacheLimit 就整表丢弃（纯缓存，丢了不影响正确性）。
+	textCache      map[int32]string
+	textCacheBytes int64
 
 	// 用户自定义路径注释（右键「编辑注释」写入，存 %AppConfig%\pvfine\path-annotations.json）。
 	// 命中时**整体替换**内置规则结果（用户优先）；见 pathannotations.go。
@@ -474,6 +484,7 @@ func (c *core) installArchiveIndexesLockedWithSearch(a *pvf.Archive, children ma
 	c.editorAnnotation = editorAnnotationCache{}
 	c.resetPathAnnotationsLocked()
 	c.resetFileNameCacheLocked()
+	c.resetTextCacheLocked()
 	c.dirChildren = children
 	c.directories = directories
 	c.sortedPaths = paths
@@ -506,6 +517,39 @@ func (c *core) installArchiveIndexesLockedWithSearch(a *pvf.Archive, children ma
 	c.unpackRunning.Store(false)
 }
 
+// textCacheLimit 是反编译文本缓存的总字节上限；超过即整表丢弃（纯缓存）。
+const textCacheLimit = 256 << 20
+
+// cachedDecodedText 返回文件的反编译文本，命中缓存时免去解码。调用方须持有 c.mu。
+func (c *core) cachedDecodedText(index int32, a *pvf.Archive) (string, error) {
+	if text, ok := c.textCache[index]; ok && !a.IsModified(index) {
+		return text, nil
+	}
+	text, err := a.Text(index)
+	if err != nil {
+		return "", err
+	}
+	if a.IsModified(index) {
+		return text, nil
+	}
+	if c.textCache == nil {
+		c.textCache = make(map[int32]string)
+	}
+	c.textCache[index] = text
+	c.textCacheBytes += int64(len(text))
+	if c.textCacheBytes > textCacheLimit {
+		c.textCache = make(map[int32]string)
+		c.textCacheBytes = 0
+	}
+	return text, nil
+}
+
+// resetTextCacheLocked 丢弃反编译文本缓存（换归档 / 关闭归档时调用）。
+func (c *core) resetTextCacheLocked() {
+	c.textCache = nil
+	c.textCacheBytes = 0
+}
+
 // bindRenderingEngineLocked applies the current user-facing renderer to an
 // archive that is about to become active. The caller must hold c.mu.
 func (c *core) bindRenderingEngineLocked(a *pvf.Archive) {
@@ -517,6 +561,7 @@ func (c *core) bindRenderingEngineLocked(a *pvf.Archive) {
 
 func (c *core) closeArchive() {
 	c.mu.Lock()
+	previous := c.archive
 	c.detachVersionLocked()
 	if c.indexCancel != nil {
 		c.indexCancel()
@@ -536,6 +581,8 @@ func (c *core) closeArchive() {
 	c.editorText = nil
 	c.editorAnnotation = editorAnnotationCache{}
 	c.resetPathAnnotationsLocked()
+	c.resetFileNameCacheLocked()
+	c.resetTextCacheLocked()
 	c.dirChildren = nil
 	c.directories = nil
 	c.sortedPaths = nil
@@ -560,6 +607,9 @@ func (c *core) closeArchive() {
 	c.unpackCancel.Store(false)
 	c.unpackRunning.Store(false)
 	c.mu.Unlock()
+	if previous != nil {
+		releaseArchiveMemory(previous, "关闭归档")
+	}
 }
 
 // withArchive runs fn with the loaded archive under read lock.

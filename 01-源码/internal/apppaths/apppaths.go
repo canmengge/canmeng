@@ -6,8 +6,8 @@
 //
 // 解析优先级（2026-09-24 按用户要求：集中到 pvfine-main\HC）：
 //  1. 环境变量 PVFINE_CACHE_DIR（显式指定，最高优先）
-//  2. <exe 同目录>\pvfine-main\HC   —— 当前部署形态（exe 在 pvf编辑器新版本\，
-//     源码在同级 pvfine-main\），便于「要删就删 HC」
+//  2. <exe 同目录>\pvfine-main\HC   —— 当前部署形态（exe 在 04-运行环境\，
+//     数据在同级 pvfine-main\），便于「要删就删 HC」
 //  3. <exe 同目录>\HC               —— exe 被单独拷走时的退化位置
 //  4. os.UserCacheDir()\pvfine       —— 兜底（前两者都不可写时）
 //

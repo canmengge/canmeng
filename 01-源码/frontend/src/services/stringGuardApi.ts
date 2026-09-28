@@ -4,7 +4,8 @@
  * 为什么不在 `frontend/bindings/`：官方 `wails3 generate bindings` 在本机不可用
  * （模块缓存缺 `internal/commands/build_assets/windows/{msix,nsis}`，`//go:embed` 编译失败），
  * 而 `AGENTS.md` 规定 `bindings/` 禁手工修改。详见
- * `pvf-dev-project/modules/editor-dev/patches/P-0004-object-view/README.md` §7.2。
+ * 旧工作台补丁说明 `P-0004-object-view/README.md` §7.2（已随工作台迁移归档到
+ * `07-归档资料\项目旧文档\`，原路径 `pvf-dev-project/...` 不再使用）。
  *
  * 方法 ID 由 wails v3.0.0-beta.12 的算法复刻：
  *   methodID = FNV-1a-32("<PkgPath>.<TypeName>.<MethodName>")

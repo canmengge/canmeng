@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	pvfPath := `D:\115us\PVF Ai Agent\Script.pvf`
-	outPath := `D:\115us\PVF Ai Agent\Script_std.pvf`
+	pvfPath := `D:\AA110pvf修改\Script.pvf`
+	outPath := `D:\AA110pvf修改\Script_std.pvf`
 
 	fmt.Println("正在打开 Paged110 格式 PVF...")
 	archive, err := pvf.Open(pvfPath)
@@ -45,7 +45,7 @@ func main() {
 func rebuildStandard(a *pvf.Archive) ([]byte, error) {
 	// 我们用 SaveAs 但需要绕过 paged110 检查
 	// 先尝试直接保存
-	err := a.SaveAs(`D:\115us\PVF Ai Agent\Script_std_paged.pvf`)
+	err := a.SaveAs(`D:\AA110pvf修改\Script_std_paged.pvf`)
 	if err != nil {
 		return nil, fmt.Errorf("保存 Paged110 失败: %w", err)
 	}

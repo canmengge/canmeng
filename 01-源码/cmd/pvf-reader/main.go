@@ -114,8 +114,8 @@ func zlibDecompress(data []byte) ([]byte, error) {
 }
 
 func main() {
-	pvfPath := `D:\115us\PVF Ai Agent\Script.pvf`
-	skPath := `D:\115us\PVF Ai Agent\sk.dat`
+	pvfPath := `D:\AA110pvf修改\Script.pvf`
+	skPath := `D:\AA110pvf修改\sk.dat`
 
 	// 读取并解密 PVF
 	data, _ := os.ReadFile(pvfPath)

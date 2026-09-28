@@ -91,31 +91,33 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 		if f.DataSize > bigFileBytes {
 			meta.LargeFile = true
 		}
+		// 追踪必须从解码之前开始：反编译（4MB → 27MB）是最贵的一步，若计时起点在
+		// 它之后，日志里的「读取文本」会永远显示 0s（2026-09-28 修复的计时陷阱）。
+		stage := traceBegin(index, meta.Path)
+		steps := map[string]string{}
+		readStart := time.Now()
 		text, ok := s.c.editorText[index]
 		if !ok {
 			var err error
-			text, err = a.Text(index)
+			// 未修改文件的解码结果可复用：大清单解码要几百毫秒，反复打开/预览
+			// 不必每次重做（改过的内容走 editorText，不进这个缓存）。
+			text, err = s.c.cachedDecodedText(index, a)
 			if err != nil {
+				traceStep(stage, "failed")
 				return nil, err
 			}
 		}
+		steps["读取文本"] = logging.FormatDuration(time.Since(readStart))
 		meta.Editable = true
 		meta.Text = text
 		// 反编译文本可能远大于归档内原始体积（stackable.lst 原始 1.4MB → 展开后
 		// 719 万字符、14 万行）：LargeFile 只按 DataSize 判会漏掉这类文件，前端就会
 		// 带着几百万字符去跑语法解析 → 打开即卡死。按展开后的体积/行数补判一次。
-		if !meta.LargeFile && (int64(len(text)) > bigTextBytes || strings.Count(text, "\n") > bigTextLines) {
+		rows := strings.Count(text, "\n") + 1
+		if !meta.LargeFile && (int64(len(text)) > bigTextBytes || rows > bigTextLines) {
 			meta.LargeFile = true
 		}
 		if f.DataType == pvf.TypeScript {
-			// 追踪：打开耗时与卡死现场（见 editortrace.go）。
-			stage := traceBegin(index, meta.Path)
-			steps := map[string]string{}
-			readMs := time.Duration(0)
-			if stage != nil {
-				readMs = time.Since(stage.Start)
-			}
-			steps["读取文本"] = logging.FormatDuration(readMs)
 			traceStep(stage, "annotations")
 			annotStart := time.Now()
 			annotations, err := s.c.editorAnnotationsLocked(index, text)
@@ -124,7 +126,6 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 				return nil, err
 			}
 			steps["标注解析"] = logging.FormatDuration(time.Since(annotStart))
-			rows := strings.Count(text, "\n") + 1
 			skipped := ""
 			if rows > annotationRowLimit {
 				skipped = fmt.Sprintf("行数>%d", annotationRowLimit)
@@ -134,6 +135,12 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 			traceDone(stage, OpenTrace{
 				Index: index, Path: meta.Path, Bytes: int64(f.DataSize), Lines: rows,
 				StepMs: steps, Annotations: len(annotations), Skipped: skipped,
+			})
+		} else {
+			traceStep(stage, "done")
+			traceDone(stage, OpenTrace{
+				Index: index, Path: meta.Path, Bytes: int64(f.DataSize), Lines: rows,
+				StepMs: steps,
 			})
 		}
 	default:
