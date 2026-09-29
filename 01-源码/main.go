@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -328,6 +329,8 @@ func main() {
 	// MCP 服务：默认关闭；环境变量 PVFINE_MCP=1 或设置里的「MCP 只读服务」开关开启时，
 	// 以 HTTP 方式开放（仅本机回环、只暴露只读工具）。用于让外部 AI 客户端读取归档
 	// 信息，不开放任何写能力。监听在启动时绑定，运行时切换设置需重启应用生效。
+	// 监听地址可以是一个或多个，见 mcpListenAddrs（PVFINE_MCP_ADDR 支持逗号列表与
+	// 「host:起始端口-结束端口」区间写法）。
 	if mcp.Exposed() || mcp.WriteExposed() || mcpEnabledFromSettings(settingsService) {
 		toolSource := services.NewAIToolSource(core, settingsService)
 		// 写工具门禁：写通道已授权（UI 开关或 PVFINE_MCP_WRITE=1）且「AI 写保护」已关闭。
@@ -338,13 +341,18 @@ func main() {
 			}
 			return (cfg.MCPWriteEnabled || mcp.WriteExposed()) && !cfg.AI.WriteProtection
 		}
-		go func() {
-			addr := mcp.Addr()
-			logging.For("mcp").Info("MCP 服务已启动", "地址", addr)
-			if err := http.ListenAndServe(addr, mcp.New(toolSource, writeGate)); err != nil {
-				logging.For("mcp").Error("MCP 服务停止", "错误", err.Error())
-			}
-		}()
+		// 同一份 handler 挂到全部监听地址：所有端口都是「同一个 MCP 服务」的入口，
+		// 工具注册表与写门禁只有一份，因此不存在按端口隔离——谁连哪个端口权限都一样。
+		handler := mcp.New(toolSource, writeGate)
+		for _, addr := range mcpListenAddrs() {
+			go func(a string) {
+				logging.For("mcp").Info("MCP 服务已启动", "地址", a)
+				if err := http.ListenAndServe(a, handler); err != nil {
+					// 单个地址失败（端口被占 / 地址非法）只记日志，不影响其它端口。
+					logging.For("mcp").Error("MCP 监听失败", "地址", a, "错误", err.Error())
+				}
+			}(addr)
+		}
 	}
 
 	// 把日志推给前端「输出日志」面板：与文件日志同源同格式，避免"界面说一套、
@@ -586,6 +594,106 @@ func mcpEnabledFromSettings(settings *services.SettingsService) bool {
 	}
 	return cfg.MCPEnabled
 }
+
+// mcpAddrEnvName 是 MCP 监听地址的环境变量名，与 internal/mcp.Addr() 读的是同一个。
+// 监听地址列表属于应用装配逻辑（不改内核），所以这里独立声明、不依赖内核常量。
+const mcpAddrEnvName = "PVFINE_MCP_ADDR"
+
+// mcpAddrSeparator 分隔多个监听地址。
+const mcpAddrSeparator = ","
+
+// mcpRangeMaxPorts 限制一次端口区间能展开出的地址数量：误填 "8000-65535" 会瞬间占满
+// 大量端口，超过上限的区间整项丢弃并记日志。
+const mcpRangeMaxPorts = 32
+
+// mcpListenAddrs 返回本次要监听的 MCP 地址列表。
+//
+// 来源优先级：环境变量 PVFINE_MCP_ADDR → 内核默认（internal/mcp.Addr()，127.0.0.1:17650）。
+// 取值支持以下写法，可用逗号混用：
+//
+//	127.0.0.1:17650                 单个地址
+//	127.0.0.1:8000-8004             host:起始端口-结束端口（含首尾，展开成 5 个）
+//	127.0.0.1:8000,127.0.0.1:9000   多个地址
+//
+// 非法项与非法区间只跳过并记日志，绝不让整个 MCP 起不来；全部非法时退回内核默认。
+func mcpListenAddrs() []string {
+	raw := strings.TrimSpace(os.Getenv(mcpAddrEnvName))
+	if raw == "" {
+		return []string{mcp.Addr()}
+	}
+	addrs, rejected := parseMCPAddrs(raw)
+	for _, item := range rejected {
+		logging.For("mcp").Warn("忽略非法的 MCP 监听地址", "取值", item)
+	}
+	if len(addrs) == 0 {
+		logging.For("mcp").Warn("MCP 监听地址全部非法，退回默认", "默认", mcp.Addr())
+		return []string{mcp.Addr()}
+	}
+	return addrs
+}
+
+// parseMCPAddrs 把 PVFINE_MCP_ADDR 的取值解析成逐个可监听地址，
+// 返回（按出现顺序去重后的地址, 被忽略的非法项）。
+func parseMCPAddrs(raw string) ([]string, []string) {
+	var addrs []string
+	var rejected []string
+	seen := make(map[string]struct{}, 4)
+	add := func(addr string) {
+		if _, exists := seen[addr]; exists {
+			return
+		}
+		seen[addr] = struct{}{}
+		addrs = append(addrs, addr)
+	}
+	for _, token := range strings.Split(raw, mcpAddrSeparator) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		host, portText, ok := splitMCPHostPort(token)
+		if !ok {
+			rejected = append(rejected, token)
+			continue
+		}
+		startText, endText, isRange := strings.Cut(portText, "-")
+		start, err := strconv.Atoi(strings.TrimSpace(startText))
+		if err != nil || !validMCPPort(start) {
+			rejected = append(rejected, token)
+			continue
+		}
+		if !isRange {
+			add(host + ":" + strconv.Itoa(start))
+			continue
+		}
+		end, err := strconv.Atoi(strings.TrimSpace(endText))
+		if err != nil || !validMCPPort(end) || end < start || end-start+1 > mcpRangeMaxPorts {
+			rejected = append(rejected, token)
+			continue
+		}
+		for port := start; port <= end; port++ {
+			add(host + ":" + strconv.Itoa(port))
+		}
+	}
+	return addrs, rejected
+}
+
+// splitMCPHostPort 按最后一个冒号切出 host 与「端口或端口区间」文本。
+// 必须显式写 host（不接受 ":8000"）；IPv6 写成 "[::1]:8000"。
+func splitMCPHostPort(token string) (host, portText string, ok bool) {
+	index := strings.LastIndex(token, ":")
+	if index <= 0 || index == len(token)-1 {
+		return "", "", false
+	}
+	host = strings.TrimSpace(token[:index])
+	portText = strings.TrimSpace(token[index+1:])
+	if host == "" || portText == "" {
+		return "", "", false
+	}
+	return host, portText, true
+}
+
+// validMCPPort 判断端口号是否落在 TCP 合法范围内。
+func validMCPPort(port int) bool { return port >= 1 && port <= 65535 }
 
 func configureUpdater(app *application.App, settings *services.SettingsService) bool {
 	version := strings.TrimPrefix(appVersion, "v")
