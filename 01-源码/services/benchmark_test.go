@@ -15,7 +15,9 @@ func BenchmarkRealResources(b *testing.B) {
 	pvfPath := resolveBenchmarkPath(b, "PVF_TESTFILE", "Script.pvf")
 	npkDirectory := resolveBenchmarkPath(b, "NPK_TESTDIR", "ImagePacks2")
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	// b.Loop()（Go 1.24+）：自动处理计时器与"循环体被编译器优化掉"的问题，
+	// 语义与原来的 for i := 0; i < b.N; i++ 一致（脚本用 -benchtime=1x 跑一轮）。
+	for b.Loop() {
 		core := NewCore()
 		archiveService := NewArchiveService(core)
 		openStartedAt := time.Now()

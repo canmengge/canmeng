@@ -212,6 +212,12 @@ const contextMenuOptions = computed(() => [
       !archive.open ||
       contextMenu.value.items.length !== 1,
   },
+  {
+    // 与工具栏「折叠所有目录」同一动作：把树恢复到刚打开归档时的全折叠状态。
+    label: "全部折叠",
+    key: "collapse-all",
+    disabled: !archive.open,
+  },
 ]);
 
 watch(
@@ -694,6 +700,11 @@ async function onAIIntroduce(): Promise<void> {
 }
 
 async function onContextMenuSelect(key: string | number): Promise<void> {
+  if (key === "collapse-all") {
+    hideContextMenu();
+    collapseAllDirectories();
+    return;
+  }
   if (key === "edit-annotation") {
     const item = contextMenu.value.anchor;
     hideContextMenu();

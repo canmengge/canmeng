@@ -808,6 +808,39 @@ export const useEditorStore = defineStore("editor", () => {
     );
   }
 
+  /**
+   * 从归档重新读取单个标签，并**替换**编辑器内容（丢弃本地未保存修改）。
+   *
+   * 与 refreshBatchFiles / refreshRenderedText 的区别：那两个有意保留脏标签的本地草稿
+   * （用于「刷新后继续编辑」）；本函数服务于用户明确要求「刷新成归档里的内容」，
+   * 因此无论脏否都替换文本，并把脏基线一起重置（与 saveTab 成功后重置基线同一口径）。
+   * 返回刷新前该标签是否脏，供调用方决定要不要先提示。
+   */
+  async function reloadFileFromArchive(index: number): Promise<boolean> {
+    const before = tabs.value.find((tab) => tab.index === index);
+    if (!before) return false;
+    const wasDirty = isDirty(before);
+    const meta = await EditorService.GetFile(index);
+    // 等待期间标签可能被关闭或换绑：按索引重新取一次，取不到就不动。
+    const current = tabs.value.find((tab) => tab.index === index);
+    if (!meta || !current) return wasDirty;
+    current.path = meta.path;
+    current.title = meta.path.split("/").pop() ?? meta.path;
+    current.dataType = meta.dataType;
+    current.size = meta.size;
+    current.editable = meta.editable;
+    current.modified = meta.modified;
+    current.tags = cleanTreeTags(meta.tags);
+    current.icon = meta.icon ?? null;
+    current.fieldImage = meta.fieldImage ?? null;
+    current.annotations = (meta.annotations ?? []).filter(
+      (annotation): annotation is EditorAnnotation => !!annotation
+    );
+    current.text = meta.text;
+    current.original = meta.text;
+    return wasDirty;
+  }
+
   /** 文件表变化后按路径重新绑定标签，并刷新被自动修改的 lst 标签。 */
   async function refreshAfterArchiveChange(
     refreshPaths: string[] = [],
@@ -989,6 +1022,7 @@ export const useEditorStore = defineStore("editor", () => {
     refreshAnnotations,
     refreshRenderedText,
     refreshBatchFiles,
+    reloadFileFromArchive,
     refreshAfterArchiveChange,
   };
 });

@@ -99,7 +99,8 @@ const tabContextMenu = ref({
 /** 编辑区右键菜单：刷新当前文件内容 + 编辑路径注释。 */
 const fileContextMenu = ref({ show: false, x: 0, y: 0 });
 const fileContextMenuOptions = [
-  { label: "刷新文件内容", key: "refresh-file" },
+  // 从归档重读当前文件并把编辑器内容替换掉；有未保存修改时会先确认（见 onRefreshActiveFile）。
+  { label: "刷新", key: "refresh-file" },
   { label: "编辑注释…", key: "edit-annotation" },
 ];
 
@@ -111,12 +112,26 @@ function onEditorContextMenu(event: MouseEvent): void {
 async function onRefreshActiveFile(): Promise<void> {
   const tab = editor.activeTab;
   if (!tab) return;
-  const dirty = tab.text !== tab.original;
+  // 无未保存修改：直接从归档重读并替换，无副作用。
+  if (tab.text === tab.original) {
+    await refreshActiveFileNow(tab.index);
+    return;
+  }
+  // 有未保存修改：刷新会丢弃本地草稿，必须先确认，避免误点丢内容。
+  dialog.warning({
+    title: "刷新文件内容",
+    content: "该文件有未保存的修改，刷新会丢弃这些修改并从归档重新读取。继续吗？",
+    positiveText: "刷新并丢弃修改",
+    negativeText: "取消",
+    onPositiveClick: () => refreshActiveFileNow(tab.index),
+  });
+}
+
+/** 执行「刷新」：从归档重读该标签并替换编辑器内容（与旧行为不同：不再保留本地草稿）。 */
+async function refreshActiveFileNow(index: number): Promise<void> {
   try {
-    await editor.refreshBatchFiles([tab.index]);
-    message.success(
-      dirty ? "已刷新（检测到未保存修改，已保留本地内容）" : "已刷新文件内容"
-    );
+    const discarded = await editor.reloadFileFromArchive(index);
+    message.success(discarded ? "已刷新文件内容（本地修改已丢弃）" : "已刷新文件内容");
   } catch (e: any) {
     message.error(`刷新失败: ${e?.message ?? e}`);
   }

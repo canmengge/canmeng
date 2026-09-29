@@ -137,6 +137,9 @@ function selectItem(item: TreeItem): void {
   explorer.selectedKey = item.key;
 }
 
+/** 搜索结果树实例：「全部折叠」用它调用 FileTree 暴露的 collapseAll。 */
+const treeRef = ref<{ collapseAll: () => void } | null>(null);
+
 // ---- 右键菜单（与左侧文件树一致的文件操作子集）----
 const contextMenu = ref<{
   show: boolean;
@@ -222,6 +225,11 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     label: "AI 引入",
     key: "ai-introduce",
     disabled: contextMenu.value.items.length === 0,
+  },
+  {
+    // 只折叠搜索视窗内的树，与左侧资源管理器互不影响。
+    label: "全部折叠",
+    key: "collapse-all",
   },
 ]);
 
@@ -374,6 +382,11 @@ function onAIIntroduce(items: TreeItem[]): void {
 function onContextMenuSelect(key: string | number): void {
   const items = [...contextMenu.value.items];
   const anchor = contextMenu.value.anchor;
+  if (key === "collapse-all") {
+    hideContextMenu();
+    treeRef.value?.collapseAll();
+    return;
+  }
   if (key === "open") {
     hideContextMenu();
     if (anchor && !anchor.isDir) void openItem(anchor);
@@ -464,6 +477,7 @@ function onContextMenuSelect(key: string | number): void {
     />
     <div v-else class="sw-body">
       <FileTree
+        ref="treeRef"
         :items="treeItems"
         :selected-keys="explorer.selectedKeys"
         @open="openItem"

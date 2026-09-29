@@ -447,6 +447,11 @@ func main() {
 				fmt.Println(`未知命令（可用：SCRZ / HELP）`)
 			}
 		}
+		// 读 stdin 失败（管道提前关闭 / 句柄无效）时记录原因再结束该读线程：
+		// 它只是控制台命令入口，结束不应影响 GUI，所以这里不能 Fatal。
+		if err := scanner.Err(); err != nil {
+			logging.For("console").Warn("控制台命令读取结束", "错误", err.Error())
+		}
 	}()
 
 	// 自动更新：走自建服务器（与网页下载同一版本源）；通道由设置决定。
@@ -550,7 +555,7 @@ func main() {
 	})
 
 	if updaterEnabled {
-		startBackgroundUpdateCheck(app)
+		startBackgroundUpdateCheck()
 	}
 
 	appStage.Done("窗口", mainWindowName)
@@ -772,7 +777,7 @@ func configureUpdater(app *application.App, settings *services.SettingsService) 
 	return true
 }
 
-func startBackgroundUpdateCheck(app *application.App) {
+func startBackgroundUpdateCheck() {
 	version := strings.TrimPrefix(appVersion, "v")
 	if version == "" || version == "dev" || version == "0.0.0" {
 		return
