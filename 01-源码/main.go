@@ -447,10 +447,12 @@ func main() {
 				fmt.Println(`未知命令（可用：SCRZ / HELP）`)
 			}
 		}
-		// 读 stdin 失败（管道提前关闭 / 句柄无效）时记录原因再结束该读线程：
-		// 它只是控制台命令入口，结束不应影响 GUI，所以这里不能 Fatal。
+		// 读 stdin 失败时记录原因再结束该读线程：它只是控制台命令入口，
+		// 结束不应影响 GUI，所以这里不能 Fatal。
+		// 用 Debug 而非 Warn：正式包是 `-H windowsgui`（无控制台），stdin 句柄无效属预期情况，
+		// 若用 Warn 会让每个客户机的日志都出现一条看起来很严重的报错。
 		if err := scanner.Err(); err != nil {
-			logging.For("console").Warn("控制台命令读取结束", "错误", err.Error())
+			logging.For("console").Debug("控制台命令读取结束", "错误", err.Error())
 		}
 	}()
 
