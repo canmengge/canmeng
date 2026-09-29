@@ -635,7 +635,11 @@ function makeExtensions(themeId: ResolvedThemeId) {
           (item) =>
             item.targetFileIndex >= 0 &&
             // ID 关联（reference）不拦截正文点击：原文照旧可编辑，关联只走绿色标签。
-            item.type !== "reference" &&
+            // 例外：.lst 清单里 reference 就是这一行的目标文件，正文点击应当跳转
+            // （2026-09-29 修复：skill/*.lst 的条目是「相对清单目录 + 混合大小写」写法，
+            //  如 skill/swordmanskill.lst 里的 `Swordman/X.skl`；前端兜底 ResolveFiles
+            //  只认归档根精确路径，解析不了，所以这类清单只能靠 reference 跳转）。
+            (props.listNames || item.type !== "reference") &&
             item.start <= position &&
             position < item.end
         );
