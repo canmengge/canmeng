@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
+	"strings"
 	"unsafe"
 	"strconv"
 	"testing"
@@ -126,6 +127,56 @@ func mb(bytes uint64) float64 { return float64(bytes) / (1 << 20) }
 // unsafeSizeOfPathEntry 只用于估算条目结构本身的体积（pathEntry 含 2 个字符串头
 // 与 4 个 int32/string，按 64 位对齐粗算），不参与任何产品逻辑。
 func unsafeSizeOfPathEntry() int { return int(unsafe.Sizeof(pathEntry{})) }
+
+// TestPerfIndexSplit 把「构建目录索引」这一步拆开，用于判断 P1（启动耗时）
+// 该从哪儿下刀：纯遍历 Path(i) 多少、加小写多少、完整 buildIndex 多少。
+//
+// 用法：
+//   set PVF_BENCH_FILE=<Script.pvf>
+//   go test -run TestPerfIndexSplit -v -count=1 -timeout 20m ./services/
+func TestPerfIndexSplit(t *testing.T) {
+	path := os.Getenv("PVF_BENCH_FILE")
+	if path == "" {
+		t.Skip("PVF_BENCH_FILE 未设置")
+	}
+	a, err := pvf.Open(path)
+	if err != nil {
+		t.Fatalf("打开失败: %v", err)
+	}
+	defer runtime.KeepAlive(a)
+	n := a.FileCount()
+
+	// ① 只遍历 Path(i)
+	start := time.Now()
+	var sink int
+	for i := int32(0); i < n; i++ {
+		sink += len(a.Path(i))
+	}
+	walkCost := time.Since(start)
+
+	// ② 遍历 + 小写副本（等价于现在的 lower 字段）
+	start = time.Now()
+	for i := int32(0); i < n; i++ {
+		sink += len(strings.ToLower(a.Path(i)))
+	}
+	lowerCost := time.Since(start)
+
+	// ③ 完整 buildIndex
+	start = time.Now()
+	dirs, paths, err := buildIndex(a)
+	if err != nil {
+		t.Fatalf("建索引失败: %v", err)
+	}
+	fullCost := time.Since(start)
+	runtime.KeepAlive(dirs)
+	runtime.KeepAlive(paths)
+
+	t.Logf("只遍历 Path(i)      = %v", walkCost)
+	t.Logf("遍历 + 小写副本     = %v（小写增量 %v）", lowerCost, lowerCost-walkCost)
+	t.Logf("完整 buildIndex     = %v（其余增量 %v：目录树 + 排序）",
+		fullCost, fullCost-lowerCost)
+	t.Logf("（参考）条目数=%d  校验和=%d", n, sink)
+}
 
 // TestPerfIndexFootprint 量化 P2-b 的可行性：services 层这份索引（438 万条路径）
 // 到底占多少内存、以及"不物化路径、按需现算"要付多少时间代价。
