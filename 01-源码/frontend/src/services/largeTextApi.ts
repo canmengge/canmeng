@@ -38,3 +38,40 @@ export function SetFilePage(
 ): $CancellablePromise<LargeTextPage | null> {
   return $Call.ByName("pvfine/services.EditorService.SetFilePage", index, page, text);
 }
+
+/** 行区间切片（1 基行号）：连续滚动视图每次只取视口附近的行。 */
+export interface LargeTextChunk {
+  index: number;
+  path: string;
+  start: number;
+  count: number;
+  lines: number;
+  editable: boolean;
+  dirty: boolean;
+  text: string;
+}
+
+/** 取 [startLine, startLine+count) 行。 */
+export function GetFileLines(
+  index: number,
+  startLine: number,
+  count: number
+): $CancellablePromise<LargeTextChunk | null> {
+  return $Call.ByName("pvfine/services.EditorService.GetFileLines", index, startLine, count);
+}
+
+/** 用 text 替换 [startLine, startLine+lineCount) 行并写回归档内存。 */
+export function SetFileLines(
+  index: number,
+  startLine: number,
+  lineCount: number,
+  text: string
+): $CancellablePromise<LargeTextChunk | null> {
+  return $Call.ByName(
+    "pvfine/services.EditorService.SetFileLines",
+    index,
+    startLine,
+    lineCount,
+    text
+  );
+}
