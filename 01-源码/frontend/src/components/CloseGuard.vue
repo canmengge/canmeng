@@ -18,15 +18,21 @@ function eventData(event: any): any {
   return event?.data ?? event;
 }
 
-function requestClose(action: CloseAction): void {
-  // 关窗确认是数据安全路径：收到请求与最终判定都进操作时间线（控制台 SCRZ 可查），
-  // 否则"内核拦下了但对话框没起"这种故障只能靠猜。
+async function requestClose(action: CloseAction): Promise<void> {
+  if (pendingAction.value || closing.value) return;
+  pendingAction.value = action;
+
+  // 先把大文件 TXT 视图里未提交的段写回归档内存，再判定"有没有未保存修改"。
+  // 这样判定只依赖归档计数（久经验证的路径），不依赖前端标记的时序 ——
+  // 点 X 会先让文本框失焦触发自动提交，中间那几十毫秒的空档曾导致静默关窗丢改动。
+  const flushed = await editor.flushLargeEditors();
+
+  // 关窗确认是数据安全路径：收到请求与最终判定都进操作时间线（控制台 SCRZ 可查）。
   markTrace(`收到关闭请求(${action})`, {
+    段已冲刷: flushed,
     未保存判定: hasUnsavedChanges.value,
     大文件段未提交: editor.pendingLargeEditCount,
   });
-  if (pendingAction.value || closing.value) return;
-  pendingAction.value = action;
 
   if (!hasUnsavedChanges.value) {
     void confirmClose(action);

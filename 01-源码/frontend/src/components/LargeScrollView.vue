@@ -175,9 +175,13 @@ watch(
 
 onMounted(() => {
   void loadWindow(1);
+  // 关窗确认前由 CloseGuard 调用：先把未提交的段写回归档内存，
+  // 这样"是否有未保存修改"就落到归档计数那条已验证的路径上。
+  editor.registerLargeFlusher(props.index, commit);
 });
 
 onBeforeUnmount(() => {
+  editor.registerLargeFlusher(props.index, null);
   void commit();
 });
 </script>

@@ -127,6 +127,34 @@ export const useEditorStore = defineStore("editor", () => {
     else next.delete(index);
     pendingLargeEdits.value = next;
   }
+
+  /**
+   * 大文件 TXT 视图注册的「立即写回归档内存」回调。
+   *
+   * 关窗确认前必须先冲刷它们：冲刷完"是否有未保存修改"就只需看归档计数
+   * （`archive.modifiedCount`，这条路径久经验证），不再依赖前端标记的时序 ——
+   * 2026-09-30 实测踩过：点 X 会先让文本框失焦触发自动提交，标记与归档计数
+   * 之间有几十毫秒空档，正好被关窗判定读到 false，导致静默关窗丢改动。
+   */
+  const largeFlushers = new Map<number, () => Promise<boolean>>();
+
+  function registerLargeFlusher(index: number, flush: (() => Promise<boolean>) | null): void {
+    if (flush) largeFlushers.set(index, flush);
+    else largeFlushers.delete(index);
+  }
+
+  /** 把全部大文件的未提交段写回归档内存；返回是否全部成功。 */
+  async function flushLargeEditors(): Promise<boolean> {
+    let ok = true;
+    for (const flush of [...largeFlushers.values()]) {
+      try {
+        if (!(await flush())) ok = false;
+      } catch {
+        ok = false;
+      }
+    }
+    return ok;
+  }
   const pendingClose = ref<PendingTabClose | null>(null);
   /** 待定位的搜索命中:文件打开后由编辑器滚动到命中处并高亮。 */
   const pendingReveal = ref<{ index: number; needles: string[]; seq: number; line?: number } | null>(null);
@@ -1001,6 +1029,8 @@ export const useEditorStore = defineStore("editor", () => {
     dirtyCount,
     pendingLargeEditCount,
     notePendingLargeEdit,
+    registerLargeFlusher,
+    flushLargeEditors,
     activePaneId,
     draggingTab,
     isSplit,
