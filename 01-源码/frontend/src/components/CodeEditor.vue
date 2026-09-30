@@ -20,6 +20,7 @@ import {
   Compartment,
   StateEffect,
   StateField,
+  Transaction,
   type Extension,
   type Range,
 } from "@codemirror/state";
@@ -805,16 +806,55 @@ function insertText(text: string): boolean {
 
 defineExpose({ revealPosition, insertText });
 
+/**
+ * 超大文档「延迟填充」阈值：超过它的文档先用空文本挂载视图，再一次性写入。
+ *
+ * 起因（2026-09-30 实测）：list/equipment.lst（2740 万字符 / 41 万行）在真实运行环境
+ * （WebView2）里 `new EditorView` 花 **24.4 秒**，而同一份数据、同一份扩展、同一份 CSS
+ * 在 Chromium 里只要 **5 毫秒**（见操作时间线「编辑器建视图」）。也就是说贵的是
+ * 「首挂载」这条路径本身。改为空文档挂载 + 增量写入后，走的是普通事务更新路径。
+ * 功能不受影响：写入后编辑器内容与直接挂载完全一致。
+ */
+const LARGE_DOC_DEFER_BYTES = 8 << 20;
+
 onMounted(() => {
-  // 打开大文件卡死的定位：这三条会进前端操作时间线（看门狗 / 控制台 SCRZ 可见），
-  // 一眼看出时间花在「建状态（文档+扩展）」「建视图（DOM）」还是「首帧布局」。
+  // 打开大文件卡死的定位：这几条会进前端操作时间线（看门狗 / 控制台 SCRZ 可见），
+  // 一眼看出时间花在「建状态（文档+扩展）」「建视图（DOM）」「填文本」还是「首帧布局」。
   const started = performance.now();
-  const state = EditorState.create({ doc: props.doc, extensions: makeExtensions(props.themeId) });
+  const deferLargeDoc = props.doc.length > LARGE_DOC_DEFER_BYTES;
+  const state = EditorState.create({
+    doc: deferLargeDoc ? "" : props.doc,
+    extensions: makeExtensions(props.themeId),
+  });
   const stateBuilt = performance.now();
   view = new EditorView({ state, parent: host.value! });
   const viewBuilt = performance.now();
+  if (deferLargeDoc) {
+    view.dispatch({
+      changes: { from: 0, insert: props.doc },
+      // 不能进撤销栈：否则一次 Ctrl+Z 就把整篇 41 万行删空了。
+      annotations: Transaction.addToHistory.of(false),
+    });
+    // 这次改文档是挂载补写、不是用户编辑：撤掉防抖回传，免得把几十兆文本原样回传父组件。
+    if (changeTimer !== undefined) {
+      window.clearTimeout(changeTimer);
+      changeTimer = undefined;
+    }
+  }
+  const filled = performance.now();
   markTrace("编辑器建状态", { 字符: props.doc.length, 毫秒: Math.round(stateBuilt - started) });
-  markTrace("编辑器建视图", { 毫秒: Math.round(viewBuilt - stateBuilt) });
+  markTrace("编辑器建视图", { 毫秒: Math.round(viewBuilt - stateBuilt), 延迟填充: deferLargeDoc });
+  if (deferLargeDoc) {
+    markTrace("编辑器填文本", { 字符: props.doc.length, 毫秒: Math.round(filled - viewBuilt) });
+  }
+  // 详情：真实渲染了多少行、滚动区多高 —— 用来判断「是不是整篇都进了 DOM」。
+  const scroller = view.dom.querySelector(".cm-scroller");
+  markTrace("编辑器详情", {
+    渲染行数: view.dom.querySelectorAll(".cm-line").length,
+    文档行数: view.state.doc.lines,
+    滚动区高: scroller ? scroller.clientHeight : -1,
+    宿主高: host.value ? host.value.clientHeight : -1,
+  });
   requestAnimationFrame(() => {
     markTrace("编辑器首帧", { 毫秒: Math.round(performance.now() - started) });
   });
