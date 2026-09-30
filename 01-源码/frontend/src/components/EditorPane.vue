@@ -443,6 +443,12 @@ function runListDuplicateCheck(): void {
     message.warning("请先打开一个 lst 文件");
     return;
   }
+  // 大文件的文本没有载入窗口（走 TXT 页模式，见 services/large_text.go）：
+  // 这里必须明确拒绝，否则会拿空串去查重、报「未发现重复条目」——错得看不出错。
+  if (tab.largeFile) {
+    message.warning("大文件走 TXT 页模式（文本未载入窗口），list 查重暂不支持；可改用「用外部编辑器打开」后在本机查重");
+    return;
+  }
   // 每次都按编辑器里的「当前内容」全量重算（未保存的改动同样生效），
   // 结果整体替换，不会留下上一次检测的条目。
   const issues = findListDuplicates(parseListEntries(tab.text));
@@ -515,6 +521,9 @@ function previewFile(tab: EditorTab): PreviewFile {
 }
 
 function previewProviderFor(tab: EditorTab) {
+  // 大文件的文本没进窗口（TXT 页模式）：预览拿不到内容，直接不给入口，
+  // 免得点开是空白让人以为文件是空的。
+  if (tab.largeFile) return undefined;
   return getPreviewProvider(previewFile(tab));
 }
 
@@ -1021,7 +1030,7 @@ function onDrop(event: DragEvent): void {
                 <NButton
                   quaternary
                   size="tiny"
-                  :disabled="!canCheckListDuplicate"
+                  :disabled="!canCheckListDuplicate || tab.largeFile"
                   aria-label="list 查重"
                   @click="runListDuplicateCheck"
                 >
@@ -1029,7 +1038,9 @@ function onDrop(event: DragEvent): void {
                   list查重
                 </NButton>
               </template>
-              检查当前 lst 里重复的条目（ID 重复 / 路径重复 / 整行重复）
+              {{ tab.largeFile
+                ? "大文件走 TXT 页模式（文本未载入窗口），暂不支持查重"
+                : "检查当前 lst 里重复的条目（ID 重复 / 路径重复 / 整行重复）" }}
             </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && !activeHasID" trigger="hover">
               <template #trigger>
