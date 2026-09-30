@@ -105,21 +105,21 @@ export interface WindowAnnotation {
 }
 
 /**
- * 只解析 [startLine, startLine+lineCount) 这段的注解。
+ * 解析**窗口当前显示的那段文本**的注解。
  *
- * 大文件整份文本不进窗口（秒开前提），注解必须按需取：成本只与视口大小有关，
- * 与文件多大无关。滚动换窗后调一次即可，段内打字不重算。
+ * text 必须是窗口此刻的内容（含未写回归档的改动）——拿归档文本去算的话，
+ * 用户插一行就会让标注位置整体错开一行、绿色标签与虚线错位。
+ *
+ * 成本只与这一段的大小有关（约 130KB），与文件多大无关。
  */
 export function GetWindowAnnotations(
   index: number,
-  startLine: number,
-  lineCount: number
+  text: string
 ): $CancellablePromise<WindowAnnotation[] | null> {
   return $Call.ByName(
     "pvfine/services.EditorService.GetWindowAnnotations",
     index,
-    startLine,
-    lineCount
+    text
   );
 }
 

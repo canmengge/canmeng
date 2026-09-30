@@ -20,13 +20,16 @@ type WindowAnnotation struct {
 	TargetFileIndex int32  `json:"targetFileIndex"`
 }
 
-// GetWindowAnnotations 解析第 [startLine, startLine+lineCount) 行这段的注解。
+// GetWindowAnnotations 解析**当前窗口里那段文本**的注解。
 //
-// 只在滚动换窗后调用一次（前端负责），段内编辑期间不重算，避免每敲一个键都解析。
+// text 必须是前端窗口此刻显示的内容（含尚未写回归档的改动）——不能拿归档文本去算：
+// 只要用户插了一行，按归档算出来的位置就会整体错开一行，绿色标签与虚线下划线会错位
+// （2026-10-01 用户实测发现）。
+//
+// 仍然只解析这一段（约 130KB），成本只与视口大小有关，与文件多大无关。
 func (s *EditorService) GetWindowAnnotations(
 	index int32,
-	startLine int32,
-	lineCount int32,
+	text string,
 ) ([]WindowAnnotation, error) {
 	s.c.mu.Lock()
 	a := s.c.archive
@@ -38,37 +41,17 @@ func (s *EditorService) GetWindowAnnotations(
 		s.c.mu.Unlock()
 		return nil, err
 	}
-	text, err := s.currentLargeTextLocked(index)
-	if err != nil {
+	if text == "" {
 		s.c.mu.Unlock()
-		return nil, err
+		return nil, nil
 	}
-
-	// 与 GetFileLines 同一套行偏移表（带缓存，定位 O(1)）。
-	offsets := lineOffsetsFor(index, text)
-	total := int32(len(offsets)) - 1
-	if startLine < 1 {
-		startLine = 1
-	}
-	if startLine-1 > total {
-		startLine = total + 1
-	}
-	if lineCount <= 0 {
-		lineCount = largeTextScrollChunk
-	}
-	endIdx := startLine - 1 + lineCount
-	if endIdx > total {
-		endIdx = total
-	}
-	slice := text[offsets[startLine-1]:offsets[endIdx]]
-
-	annotations, err := s.c.editorAnnotationsLocked(index, slice)
+	annotations, err := s.c.editorAnnotationsLocked(index, text)
 	s.c.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 
-	limit := int32(len(slice))
+	limit := int32(len(text))
 	out := make([]WindowAnnotation, 0, len(annotations))
 	for _, item := range annotations {
 		if item.Start < 0 || item.End > limit || item.End <= item.Start {

@@ -238,6 +238,8 @@ function makeExtensions(): Extension[] {
       winCount.value = countLines(text);
       // 只记在前端；用户没点保存之前绝不写回归档（本组件铁律）。
       editor.setPendingLargeSegment(props.index, winStart.value, winCount.value, text);
+      // 改动后标注要跟着重算（否则插一行会让绿色标签/虚线整体错开一行）。
+      scheduleAnnotationRefresh();
     }),
     editableCompartment.of(EditorView.editable.of(editable.value)),
   ];
@@ -254,16 +256,35 @@ function applyCmDoc(text: string): void {
 }
 
 /**
- * 换窗后取一次段内注解（中文名 / 关联标记）。
- * 只按视口大小算（约 130KB），与文件多大无关；失败也不影响正文与编辑。
+ * 取一次段内注解（中文名 / 关联标记）。
+ *
+ * **必须传窗口当前显示的文本**：按归档文本算的话，用户插一行就会让标注位置整体
+ * 错开一行（绿色标签与虚线下划线错位）。只算这一段（约 130KB），与文件多大无关。
  */
+let annotationSeq = 0;
 async function loadAnnotations(): Promise<void> {
+  if (!cmView) return;
+  const seq = ++annotationSeq;
+  const text = cmView.state.doc.toString();
   try {
-    const list = await GetWindowAnnotations(props.index, winStart.value, winCount.value);
-    cmView?.dispatch({ effects: setWindowAnnotations.of(list ?? []) });
+    const list = await GetWindowAnnotations(props.index, text);
+    if (seq !== annotationSeq) return;
+    // 期间用户又改了：等下一次刷新，别把过期位置画上去。
+    if (cmView.state.doc.toString() !== text) return;
+    cmView.dispatch({ effects: setWindowAnnotations.of(list ?? []) });
   } catch {
     // 注解取不到就当作没有：正文照常可用，不弹错误打扰用户。
   }
+}
+
+/** 打字停顿后重算注解：新加的行也要有自己的标注（400ms 合并连续输入）。 */
+let annotationTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleAnnotationRefresh(): void {
+  if (annotationTimer !== undefined) clearTimeout(annotationTimer);
+  annotationTimer = setTimeout(() => {
+    annotationTimer = undefined;
+    void loadAnnotations();
+  }, 400);
 }
 
 // 窗口内容 / 可编辑态变化 → 同步进 CodeMirror（用户打字走 updateListener，不会绕回来）
@@ -417,6 +438,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // 销毁视图即可；未写回的段留在 store 里（切标签不丢），
   // 关标签 / 关窗口会由确认框提示（见 editor.hasPendingLargeEdits / useUnsavedChanges）。
+  if (annotationTimer !== undefined) {
+    clearTimeout(annotationTimer);
+    annotationTimer = undefined;
+  }
   cmView?.destroy();
   cmView = null;
 });
