@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
@@ -64,6 +64,12 @@ const cmHost = ref<HTMLDivElement | null>(null);
 let cmView: EditorView | null = null;
 /** 只读开关走 compartment：归档只读（editable=false）时热切换，不重建视图。 */
 const editableCompartment = new Compartment();
+/**
+ * 「这段内容是程序换进来的（滚动换窗 / 首屏加载），不是用户打的字」标记。
+ * updateListener 靠它把换窗排除掉——否则**每次打开文件都会把归档自己的内容
+ * 记成一段"未保存改动"**（2026-10-01 用户实测发现的 bug：关了再开还提示）。
+ */
+const remoteWindowChange = Annotation.define<boolean>();
 
 const largeWindowTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "13px", backgroundColor: "transparent" },
@@ -93,6 +99,8 @@ function makeExtensions(): Extension[] {
     // 绝不折行：折行会破坏「行号 × 20px」的虚拟定位
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
+      // 程序换窗（带 remoteWindowChange 标记）不是用户编辑：跳过，不记待写回段。
+      if (update.transactions.some((tr) => tr.annotation(remoteWindowChange) === true)) return;
       const text = update.state.doc.toString();
       winText.value = text;
       winCount.value = countLines(text);
@@ -103,11 +111,14 @@ function makeExtensions(): Extension[] {
   ];
 }
 
-/** 把窗口内容整体换成语义（滚动换窗 / 叠加未写回段后调用）。 */
+/** 把窗口内容整体换成语义（滚动换窗 / 叠加未写回段后调用）。带「程序换窗」注解。 */
 function applyCmDoc(text: string): void {
   if (!cmView) return;
   if (cmView.state.doc.toString() === text) return;
-  cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: text } });
+  cmView.dispatch({
+    changes: { from: 0, to: cmView.state.doc.length, insert: text },
+    annotations: remoteWindowChange.of(true),
+  });
 }
 
 // 窗口内容 / 可编辑态变化 → 同步进 CodeMirror（用户打字走 updateListener，不会绕回来）
