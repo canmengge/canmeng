@@ -286,9 +286,17 @@ func readEquipmentIcon(document *EquipmentPreviewDocument, occurrence annotation
 }
 
 func enumValue(field annotationrules.FieldDefinition, raw string, document *EquipmentPreviewDocument, text string, start int) string {
-	value := strings.TrimSpace(raw)
+	// 取值在脚本里有多种书写习惯（`` `[trade]` `` / `[trade]` / `HA WAIST`）：
+	// 先去反引号精确匹配，再退一步做「忽略反引号与大小写」的兜底匹配，
+	// 否则预览会把本该翻译成一等中文的词条原样显示成 `[trade]`、`ha waist`。
+	value := strings.Trim(strings.TrimSpace(raw), "`")
 	if label, ok := field.Annotation.Values[value]; ok {
 		return label
+	}
+	for key, label := range field.Annotation.Values {
+		if strings.EqualFold(strings.Trim(key, "`"), value) {
+			return label
+		}
 	}
 	if len(field.Annotation.Values) > 0 && value != "" {
 		addPreviewIssue(&document.Issues, text, start, "warning", field.Annotation.Title, "未知枚举值: "+value)
