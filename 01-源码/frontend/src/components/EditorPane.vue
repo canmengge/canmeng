@@ -43,6 +43,7 @@ import { MAX_CONTEXT_FILES, useAIStore } from "../stores/ai";
 import { useSidebarStore } from "../stores/sidebar";
 import { useAnnotationEditStore } from "../stores/annotationEdit";
 import CodeEditor, { type PlaceholderEditRequest } from "./CodeEditor.vue";
+import PlainTextView from "./PlainTextView.vue";
 import ListDuplicatePanel from "./ListDuplicatePanel.vue";
 import {
   findListDuplicates,
@@ -1149,6 +1150,18 @@ function onDrop(event: DragEvent): void {
             该文件类型(text {{ tab.dataType }},{{ sizeText(tab.size) }})暂不支持编辑
           </div>
           <NSpin v-if="isOpeningTab(tab.index)" style="margin-top: 120px" />
+          <!--
+            大文件（tab.largeFile：归档内 >8MB / 展开后 >4MB / >10 万行）走内置 TXT 通道：
+            完全不挂 CodeMirror。原因见 PlainTextView.vue 顶部注释（实测空文档挂载也要 30 秒）。
+          -->
+          <PlainTextView
+            v-else-if="tab.largeFile"
+            :ref="(instance: unknown) => setEditorRef(tab.index, instance)"
+            :doc="tab.text"
+            :read-only="!tab.editable"
+            :reveal="revealFor(tab.index)"
+            @change="(text: string) => editor.updateContent(tab.index, text)"
+          />
           <CodeEditor
             v-else
             :ref="(instance: unknown) => setEditorRef(tab.index, instance)"
