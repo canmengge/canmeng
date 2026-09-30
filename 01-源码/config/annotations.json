@@ -300,6 +300,30 @@
       }
     },
     {
+      "id": "equ.grade",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "token",
+        "section": "grade",
+        "index": 0
+      },
+      "annotation": {
+        "title": "装备实际等级",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "grade",
+        "group": "summary",
+        "order": 5,
+        "format": "text"
+      }
+    },
+    {
       "id": "equ.minimum-level",
       "match": {
         "extensions": [

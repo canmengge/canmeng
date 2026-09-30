@@ -38,6 +38,8 @@ type EquipmentPreviewDocument struct {
 	ItemGroupName    string                      `json:"itemGroupName"`
 	AttachType       string                      `json:"attachType"`
 	MinimumLevelText string                      `json:"minimumLevelText"`
+	// GradeText 是 [grade]（装备实际等级）：卡片顶部按用户要求显示「等级 N」。
+	GradeText string `json:"gradeText"`
 	UsableJobs       []string                    `json:"usableJobs"`
 	BaseAttributes   []EquipmentPreviewAttribute `json:"baseAttributes"`
 	FourDimensions   []EquipmentPreviewAttribute `json:"fourDimensions"`
@@ -187,6 +189,10 @@ func buildEquipmentPreview(filePath, text string, engine *annotationrules.Engine
 	}
 	if value, ok := first("minimum-level"); ok {
 		document.MinimumLevelText = formatMinimumLevel(value, text, &document.Issues)
+	}
+	// [grade]：装备实际等级（用户 2026-10-01 要求显示在卡片顶部，取代稀有度数字）
+	if value, ok := first("grade"); ok {
+		document.GradeText = strings.TrimSpace(firstValue(value.Values))
 	}
 	if values := roleValues["usable-jobs"]; len(values) > 0 {
 		for _, occurrence := range values {

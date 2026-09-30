@@ -32,6 +32,11 @@ const rarityClass = computed(() => {
   const rarity = document.value?.rarity ?? 0;
   return ["normal", "magic", "rare", "artifact", "epic", "brave", "legendary"][rarity] ?? "unknown";
 });
+/**
+ * [grade]（装备实际等级）。Go 侧新增了 gradeText 字段，而 `frontend/bindings/` 是本机
+ * 无法重新生成的产物，所以这里按本地扩展类型读取（与 importApi/saveApi 同源做法）。
+ */
+const gradeText = computed(() => (document.value as { gradeText?: string } | null)?.gradeText ?? "");
 const explanation = computed(() => {
   if (detailMode.value && document.value?.detailExplain) return document.value.detailExplain;
   return document.value?.baseExplain ?? "";
@@ -194,11 +199,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="equ-summary">
-        <div v-if="document.qualityText || document.rarityLabel" class="equ-summary-top">
+        <div v-if="document.qualityText || gradeText" class="equ-summary-top">
           <span v-if="document.qualityText" class="equ-quality">
             <span class="equ-quality-label">{{ qualityParts.label }}</span><span v-if="qualityParts.detail" class="equ-quality-detail">{{ qualityParts.detail }}</span>
           </span>
-          <span v-if="document.rarityLabel" class="equ-rarity" :class="`equ-rarity--${rarityClass}`">{{ document.rarityLabel }}</span>
+          <!-- 用户 2026-10-01 要求：这里显示 [grade]（装备实际等级），不再显示稀有度数字 -->
+          <span v-if="gradeText" class="equ-grade">等级 {{ gradeText }}</span>
         </div>
         <div
           v-if="baseAttributes.length || document.equipmentType || document.itemGroupName || document.attachType"
@@ -387,6 +393,11 @@ onBeforeUnmount(() => {
 }
 .equ-rarity {
   font-weight: 700;
+}
+/* [grade] 装备实际等级：与游戏内一样用醒目色显示在右上角 */
+.equ-grade {
+  font-weight: 700;
+  color: #ffd438;
 }
 .equ-attribute {
   min-height: 17px;
