@@ -66,6 +66,31 @@ export function CheckListDuplicates(
   return $Call.ByName("pvfine/services.EditorService.CheckListDuplicates", index);
 }
 
+/** TXT 视图里「改了但还没写回归档」的一段（1 基起始行 + 行数 + 该段内容）。 */
+export interface OverlaySegment {
+  start: number;
+  count: number;
+  text: string;
+}
+
+/**
+ * 带「未写回段」的查重：后端在**内存里**按段替换后扫描，归档一个字节都不动。
+ *
+ * 为什么要这样：只有用户显式保存才允许写回归档（用户红线），所以查重不能顺手把
+ * 改动写回去；但直接把归档文本扫一遍又会把用户未保存的修改当成不存在。
+ * 把段传上去、在 Go 侧内存里替换，既看得到最新内容，又不改归档。
+ */
+export function CheckListDuplicatesWithOverlay(
+  index: number,
+  segments: OverlaySegment[]
+): $CancellablePromise<ListDuplicateReport | null> {
+  return $Call.ByName(
+    "pvfine/services.EditorService.CheckListDuplicatesWithOverlay",
+    index,
+    segments
+  );
+}
+
 /**
  * 大文件当前视口那一段的注解（中文名 / 绿色关联框回归用）。
  * start / end 是**相对段首**的字符偏移 —— 窗口里的文本就是这一段的全部内容。

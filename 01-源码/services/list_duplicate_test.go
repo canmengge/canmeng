@@ -74,6 +74,46 @@ func TestParseListLineQuotes(t *testing.T) {
 	}
 }
 
+// TestApplyOverlaySegments 覆盖「未写回段」在内存里的替换：
+// 行数变化、多段从后往前替换、基线文本不被改动。
+func TestApplyOverlaySegments(t *testing.T) {
+	base := joinLines(
+		"10001\t`a.equ`", // 行 1
+		"10002\t`b.equ`", // 行 2
+		"10003\t`c.equ`", // 行 3
+		"10004\t`d.equ`", // 行 4
+	)
+
+	// 段①（行 2-3）替换成一行；段②（行 4）替换成两行。
+	segments := []OverlaySegment{
+		{Start: 2, Count: 2, Text: "10001\t`z.equ`\n"},
+		{Start: 4, Count: 1, Text: "10005\t`e.equ`\n10006\t`f.equ`\n"},
+	}
+	out := applyOverlaySegments(0, base, segments)
+	want := joinLines(
+		"10001\t`a.equ`",
+		"10001\t`z.equ`",
+		"10005\t`e.equ`",
+		"10006\t`f.equ`",
+	)
+	if out != want {
+		t.Fatalf("替换结果 = %q, 期望 %q", out, want)
+	}
+	if base != joinLines("10001\t`a.equ`", "10002\t`b.equ`", "10003\t`c.equ`", "10004\t`d.equ`") {
+		t.Fatal("基线文本被改动了（必须一个字节都不动）")
+	}
+
+	// 替换后的内容应当能被查重看见：行 1 与行 2 ID 相同、路径不同 → id 问题。
+	report := scanListDuplicates(0, out)
+	kinds := map[string]int{}
+	for _, issue := range report.Issues {
+		kinds[issue.Kind]++
+	}
+	if kinds["id"] != 1 {
+		t.Fatalf("替换后 id 问题 = %d, 期望 1（未保存的改动必须参与查重）", kinds["id"])
+	}
+}
+
 func joinLines(lines ...string) string {
 	out := ""
 	for _, line := range lines {

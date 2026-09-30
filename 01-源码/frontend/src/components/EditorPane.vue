@@ -65,7 +65,7 @@ import {
   loadStringTableGuard,
   type SafeTableTarget,
 } from "../services/stringGuardApi";
-import { CheckListDuplicates } from "../services/largeTextApi";
+import { CheckListDuplicatesWithOverlay } from "../services/largeTextApi";
 
 const props = defineProps<{
   paneId: EditorPaneId;
@@ -450,13 +450,21 @@ async function runListDuplicateCheck(): Promise<void> {
   if (tab.largeFile) {
     listDuplicateChecking.value = true;
     try {
-      const report = await CheckListDuplicates(tab.index);
+      // 未写回的段一并带上：后端在内存里替换后再扫，归档不受影响
+      // （只有用户显式保存才允许写回归档）。
+      const segments = editor.pendingSegmentsOf(tab.index).map((segment) => ({
+        start: segment.start,
+        count: segment.count,
+        text: segment.text,
+      }));
+      const report = await CheckListDuplicatesWithOverlay(tab.index, segments);
       const issues = report?.issues ?? [];
       listDuplicate.fileName = tab.path;
       listDuplicate.issues = issues;
       listDuplicate.checkedAt = Date.now();
       listDuplicate.show = true;
-      const base = `list 查重完成（${report?.entries ?? 0} 个条目）`;
+      const pendingHint = segments.length > 0 ? `，含 ${segments.length} 段未保存改动` : "";
+      const base = `list 查重完成（${report?.entries ?? 0} 个条目${pendingHint}）`;
       if (issues.length === 0) {
         message.success(`${base}：未发现重复条目`);
       } else {

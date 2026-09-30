@@ -58,6 +58,31 @@ var listDuplicateMessages = map[string]string{
 
 // CheckListDuplicates 对指定 .lst 做整份查重（文本留在后端）。
 func (s *EditorService) CheckListDuplicates(index int32) (ListDuplicateReport, error) {
+	return s.CheckListDuplicatesWithOverlay(index, nil)
+}
+
+// OverlaySegment 是前端「TXT 视图里改了但还没写回归档」的一段。
+//
+// 为什么需要它：大文件的文本不进窗口（秒开前提），查重在后端扫；而前端未写回的
+// 改动不在归档里，直接扫归档会把用户的修改当成不存在。把段传上来、在后端**内存里**
+// 按段替换后扫描即可 —— 归档与编辑器状态一个字节都不动（用户红线：只有显式保存才写回）。
+//
+// Start 是 1 基起始行，Count 是行数，Text 是这一段的完整内容（可增删行）。
+type OverlaySegment struct {
+	Start int32  `json:"start"`
+	Count int32  `json:"count"`
+	Text  string `json:"text"`
+}
+
+// CheckListDuplicatesWithOverlay 与 CheckListDuplicates 相同，只是先按 overlay 段
+// 在内存里替换文本（**不写回归档**）。
+//
+// 段按起始行**从后往前**替换：所有段的行号都以同一份基线文本为准，
+// 从后往前替换才不会让前面的段行号失效。
+func (s *EditorService) CheckListDuplicatesWithOverlay(
+	index int32,
+	segments []OverlaySegment,
+) (ListDuplicateReport, error) {
 	startedAt := time.Now()
 	s.c.mu.Lock()
 	a := s.c.archive
@@ -79,11 +104,53 @@ func (s *EditorService) CheckListDuplicates(index int32) (ListDuplicateReport, e
 		return ListDuplicateReport{}, errors.New("清单过大，已放弃查重（超过 1GB）")
 	}
 
+	applied := 0
+	if len(segments) > 0 {
+		text = applyOverlaySegments(index, text, segments)
+		applied = len(segments)
+	}
+
 	report := scanListDuplicates(index, text)
 	logging.For("listdup").Info("list 查重完成",
 		"文件", a.Path(index), "条目", report.Entries, "问题", report.Total,
-		"截断", report.Truncated, "耗时", logging.FormatDuration(time.Since(startedAt)))
+		"截断", report.Truncated, "未写回段", applied,
+		"耗时", logging.FormatDuration(time.Since(startedAt)))
 	return report, nil
+}
+
+// applyOverlaySegments 在内存里把若干行区间替换成前端传来的内容。
+func applyOverlaySegments(index int32, text string, segments []OverlaySegment) string {
+	offsets := lineOffsetsFor(index, text)
+	total := int32(len(offsets)) - 1
+
+	ordered := make([]OverlaySegment, len(segments))
+	copy(ordered, segments)
+	sort.Slice(ordered, func(x, y int) bool { return ordered[x].Start > ordered[y].Start })
+
+	out := text
+	for _, segment := range ordered {
+		startLine := segment.Start
+		if startLine < 1 {
+			startLine = 1
+		}
+		if startLine-1 > total {
+			startLine = total + 1
+		}
+		endLine := startLine + segment.Count
+		if endLine-1 > total {
+			endLine = total + 1
+		}
+		from := offsets[startLine-1]
+		to := offsets[endLine-1]
+		if from > to {
+			continue
+		}
+		out = out[:from] + segment.Text + out[to:]
+		// 段已替换：偏移表随之失效，重新算（只在前一段替换后发生，成本 O(n) 一次）。
+		offsets = lineOffsetsFor(index, out)
+		total = int32(len(offsets)) - 1
+	}
+	return out
 }
 
 // hashLine 是「哈希 + 行号」，用来代替「键 → 条目」的大 map：
