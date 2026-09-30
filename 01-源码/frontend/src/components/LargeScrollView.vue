@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { GetFileLines } from "../services/largeTextApi";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
@@ -44,6 +48,73 @@ const saving = ref(false);
 const winStart = ref(1);
 const winCount = ref(0);
 const winText = ref("");
+
+// ---------------------------------------------------------------------------
+// 视口窗口的编辑器：CodeMirror（P3，2026-10-01 实测通过后落地）
+//
+// 开发者面板探针实测（真实 WebView2 + 开着大归档）：空文档挂载 2–6ms、
+// 20KB 挂载 3–5ms、130KB 挂载 1–3ms、首帧 8–13ms —— 挂载不是墙
+// （当年"空文档也 30 秒"的前提是 27MB 大文本已在同一页面，如今大文本不进窗口）。
+//
+// 因此把窗口从裸 textarea 换成**每视口一个 CodeMirror**（同一时刻只有一个实例、
+// 只装当前视口那约 130KB），拿回 PVF 语法着色；不变的是虚拟定位铁律——
+// 每行必须严格 20px、不折行，否则 spacer 定位会漂移。
+// ---------------------------------------------------------------------------
+const cmHost = ref<HTMLDivElement | null>(null);
+let cmView: EditorView | null = null;
+/** 只读开关走 compartment：归档只读（editable=false）时热切换，不重建视图。 */
+const editableCompartment = new Compartment();
+
+const largeWindowTheme = EditorView.theme({
+  "&": { height: "100%", fontSize: "13px", backgroundColor: "transparent" },
+  ".cm-scroller": {
+    overflow: "hidden",
+    fontFamily: "'SF Mono', Menlo, Consolas, 'Courier New', monospace",
+    lineHeight: "20px",
+  },
+  ".cm-content": { padding: "0", lineHeight: "20px", caretColor: "var(--pvf-text-primary)" },
+  ".cm-line": { padding: "0", lineHeight: "20px" },
+  ".cm-cursor": { borderLeftWidth: "1px" },
+  "&.cm-focused": { outline: "none" },
+});
+
+function makeExtensions(): Extension[] {
+  return [
+    largeWindowTheme,
+    // PVF 语法着色（与普通编辑器同一套语言与高亮规则）
+    pvfLanguage.extension,
+    pvfHighlighting,
+    history(),
+    keymap.of([
+      { key: "Mod-s", run: () => (void saveNow(), true) },
+      ...defaultKeymap,
+      ...historyKeymap,
+    ]),
+    // 绝不折行：折行会破坏「行号 × 20px」的虚拟定位
+    EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      const text = update.state.doc.toString();
+      winText.value = text;
+      winCount.value = countLines(text);
+      // 只记在前端；用户没点保存之前绝不写回归档（本组件铁律）。
+      editor.setPendingLargeSegment(props.index, winStart.value, winCount.value, text);
+    }),
+    editableCompartment.of(EditorView.editable.of(editable.value)),
+  ];
+}
+
+/** 把窗口内容整体换成语义（滚动换窗 / 叠加未写回段后调用）。 */
+function applyCmDoc(text: string): void {
+  if (!cmView) return;
+  if (cmView.state.doc.toString() === text) return;
+  cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: text } });
+}
+
+// 窗口内容 / 可编辑态变化 → 同步进 CodeMirror（用户打字走 updateListener，不会绕回来）
+watch([winText, editable], ([text]) => applyCmDoc(text));
+watch(editable, (value) => {
+  cmView?.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(value)) });
+});
 
 /**
  * 本标签「改了但还没写回归档」的段数。
@@ -152,23 +223,6 @@ function onScroll(): void {
   });
 }
 
-function onInput(event: Event): void {
-  winText.value = (event.target as HTMLTextAreaElement).value;
-  winCount.value = countLines(winText.value);
-  // 只记在前端；用户没点保存之前绝不写回归档。
-  editor.setPendingLargeSegment(props.index, winStart.value, winCount.value, winText.value);
-}
-
-/** 段内 Ctrl/Cmd+S = 与普通文件一致：写回归档内存（不再是单独的"保存本段"）。 */
-function onKeydown(event: KeyboardEvent): void {
-  if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
-    event.preventDefault();
-    void saveNow();
-  }
-}
-
-
-
 /** 供搜索定位使用：跳到指定行（只换窗口，不写归档）。 */
 async function gotoLine(line: number): Promise<void> {
   enqueue(async () => {
@@ -190,12 +244,22 @@ watch(
 );
 
 onMounted(() => {
+  // 挂载视口编辑器（实测毫秒级，见文件顶部说明），再加载首屏。
+  if (cmHost.value && !cmView) {
+    cmView = new EditorView({
+      state: EditorState.create({ doc: "", extensions: makeExtensions() }),
+      parent: cmHost.value,
+    });
+    applyCmDoc(winText.value);
+  }
   void loadWindow(1);
 });
 
 onBeforeUnmount(() => {
-  // 刻意什么都不做：未写回的段留在 store 里（切标签不丢），
+  // 销毁视图即可；未写回的段留在 store 里（切标签不丢），
   // 关标签 / 关窗口会由确认框提示（见 editor.hasPendingLargeEdits / useUnsavedChanges）。
+  cmView?.destroy();
+  cmView = null;
 });
 </script>
 
@@ -216,15 +280,10 @@ onBeforeUnmount(() => {
 
     <div ref="viewport" class="lsc-viewport" @scroll="onScroll">
       <div class="lsc-spacer" :style="{ height: spacerHeight }">
-        <textarea
+        <div
+          ref="cmHost"
           class="lsc-window"
           :style="{ top: winTop, height: winHeight }"
-          wrap="off"
-          spellcheck="false"
-          :readonly="!editable"
-          :value="winText"
-          @input="onInput"
-          @keydown="onKeydown"
         />
       </div>
     </div>
@@ -271,26 +330,39 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-/* 视口窗口：只有这几百行真的在 DOM 里 */
+/* 视口窗口：只有这几百行真的在 DOM 里（现在是每视口一个 CodeMirror） */
 .lsc-window {
   position: absolute;
   left: 0;
   right: 0;
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 0 10px;
-  border: 0;
-  outline: none;
-  resize: none;
   overflow: hidden;
-  white-space: pre;
-  tab-size: 4;
-  color: var(--pvf-text-primary);
   background: transparent;
+}
+/* CodeMirror 的行必须严格等于 ROW_HEIGHT（20px）、不折行，否则虚拟定位会漂移 */
+.lsc-window :deep(.cm-editor) {
+  height: 100%;
+  background: transparent;
+  color: var(--pvf-text-primary);
   font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace;
   font-size: 13px;
-  /* 必须等于脚本里的 ROW_HEIGHT，否则虚拟定位会漂移 */
+}
+.lsc-window :deep(.cm-scroller) {
+  overflow: hidden;
   line-height: 20px;
+}
+.lsc-window :deep(.cm-content) {
+  padding: 0;
+  white-space: pre;
+  tab-size: 4;
+}
+.lsc-window :deep(.cm-line) {
+  padding: 0 10px;
+  line-height: 20px;
+}
+.lsc-window :deep(.cm-cursor) {
+  border-left-color: var(--pvf-text-primary);
+}
+.lsc-window :deep(.cm-selectionBackground) {
+  background: rgba(90, 140, 220, 0.35) !important;
 }
 </style>
