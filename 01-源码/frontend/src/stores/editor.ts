@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { ArchiveService, EditorService } from "../../bindings/pvfine/services";
@@ -1092,3 +1092,12 @@ export const useEditorStore = defineStore("editor", () => {
 function cleanTreeTags(tags: (TreeTag | null)[] | null | undefined): TreeTag[] {
   return (tags ?? []).filter((tag): tag is TreeTag => !!tag);
 }
+
+// Pinia store 的改动**不进**组件热更新：不注册 acceptHMRUpdate 时，热更新后页面里
+// 可能是「新组件 + 旧 store」—— 组件调用 store 上新增的方法会直接抛错
+// （2026-09-30 实测：`editor.pendingSegmentsOf is not a function`，
+//  表现为大文件编辑区空白、看着像卡死，且关窗判定永远读到 undefined）。
+// 注册后 store 改动会就地热替换，不再需要每次改 store 都重启工具。
+type HotContext = { accept: (callback: unknown) => void };
+const hot = (import.meta as unknown as { hot?: HotContext }).hot;
+if (hot) hot.accept(acceptHMRUpdate(useEditorStore, hot as never));

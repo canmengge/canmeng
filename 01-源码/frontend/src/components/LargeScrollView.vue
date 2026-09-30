@@ -77,12 +77,21 @@ async function loadWindow(startLine: number): Promise<void> {
     totalLines.value = chunk.lines;
     editable.value = chunk.editable;
     winStart.value = chunk.start;
+    // 先把归档内容显示出来：即使下面"叠加未写回段"这一步出问题，也不至于整块空白。
+    winCount.value = chunk.count;
+    winText.value = chunk.text;
     // 这一段若用户改过、还没写回归档，就显示用户自己的内容（滚走再滚回来也还在）。
-    const pending = editor
-      .pendingSegmentsOf(props.index)
-      .find((segment) => segment.start === chunk.start);
-    winCount.value = pending ? pending.count : chunk.count;
-    winText.value = pending ? pending.text : chunk.text;
+    try {
+      const pending = editor
+        .pendingSegmentsOf(props.index)
+        .find((segment) => segment.start === chunk.start);
+      if (pending) {
+        winCount.value = pending.count;
+        winText.value = pending.text;
+      }
+    } catch {
+      // store 版本落后（热更新只换了组件）等情况：忽略叠加，保持可用。
+    }
   } catch (error: any) {
     message.error(`读取第 ${startLine} 行起的内容失败：${error?.message ?? error}`);
   } finally {
