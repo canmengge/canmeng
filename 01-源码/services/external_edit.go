@@ -81,8 +81,14 @@ func (s *EditorService) ExternalEditStart(path string) (*ExternalEditSession, er
 		return nil, fmt.Errorf("未指定要外部编辑的文件")
 	}
 	if !externalEditAllowed(path) {
-		return nil, fmt.Errorf("该文件类型暂不支持外部编辑（目前支持：%s）",
-			strings.Join(externalEditAllowedExts, " "))
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == "" {
+			ext = "(无扩展名)"
+		}
+		logging.For("external-edit").Warn("拒绝外部编辑：类型不在白名单",
+			"路径", path, "扩展名", ext)
+		return nil, fmt.Errorf("「%s」的类型 %s 暂不支持外部编辑（目前支持：%s）",
+			path, ext, strings.Join(externalEditAllowedExts, " "))
 	}
 
 	s.c.mu.RLock()
@@ -94,11 +100,13 @@ func (s *EditorService) ExternalEditStart(path string) (*ExternalEditSession, er
 	index, ok := a.Find(path)
 	if !ok {
 		s.c.mu.RUnlock()
-		return nil, fmt.Errorf("归档里找不到「%s」", path)
+		logging.For("external-edit").Warn("拒绝外部编辑：归档里找不到该路径", "路径", path)
+		return nil, fmt.Errorf("归档里找不到「%s」（请确认路径大小写与是否在当前归档里）", path)
 	}
 	text, err := a.Text(index)
 	s.c.mu.RUnlock()
 	if err != nil {
+		logging.For("external-edit").Warn("拒绝外部编辑：渲染失败", "路径", path, "错误", err)
 		return nil, fmt.Errorf("渲染「%s」失败: %w", path, err)
 	}
 
@@ -211,6 +219,7 @@ func (s *EditorService) ExternalEditApply(path string) (*ExternalEditResult, err
 	}
 	if a.IsModified(index) {
 		s.c.mu.Unlock()
+		logging.For("external-edit").Warn("拒绝回填：归档里该文件已有未保存修改", "路径", path)
 		result.Reason = "归档里该文件已有未保存的修改，请先在编辑器里保存或刷新后再回填"
 		return result, nil
 	}
