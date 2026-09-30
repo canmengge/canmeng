@@ -92,6 +92,7 @@ type closeCoordinator struct {
 func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWindowService) *closeCoordinator {
 	coordinator := &closeCoordinator{app: app, scriptWindow: scriptWindow}
 	app.Event.On(closeConfirmedEvent, func(*application.CustomEvent) {
+		logging.For("window").Warn("收到关闭确认：放行关闭")
 		coordinator.allowWindowClosing.Store(true)
 		// Close the window that started this handshake; falling back to the
 		// focused window would close the wrong one when two windows are open.
@@ -116,6 +117,7 @@ func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWind
 		}
 	})
 	app.Event.On(quitConfirmedEvent, func(*application.CustomEvent) {
+		logging.For("window").Warn("收到退出确认：放行退出")
 		// The detached script window keeps its own close confirmation and its own
 		// Pinia store; release it first so quitting cannot stall on it.
 		if coordinator.scriptWindow != nil {
@@ -139,10 +141,15 @@ func (c *closeCoordinator) handlerFor(window application.Window) func(*applicati
 		if c.allowWindowClosing.CompareAndSwap(true, false) {
 			return
 		}
+		name := ""
 		if window != nil {
+			name = window.Name()
 			c.pendingClose.Store(uint64(window.ID()))
 		}
 		event.Cancel()
+		// 关窗确认这条链是"数据安全"路径：拦下与放行都留痕，出问题时能一眼看出
+		// 断在"内核没拦"、"前端没收到"还是"前端没弹框"。
+		logging.For("window").Warn("窗口关闭请求：已拦下，等待前端确认", "窗口", name)
 		_ = c.app.Event.Emit(closeRequestedEvent)
 	}
 }

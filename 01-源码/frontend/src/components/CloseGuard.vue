@@ -3,11 +3,14 @@ import { onUnmounted, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { useDialog } from "naive-ui";
 import { useUnsavedChanges } from "../composables/unsavedChanges";
+import { useEditorStore } from "../stores/editor";
+import { markTrace } from "../diagTrace";
 
 type CloseAction = "close" | "quit";
 
 const dialog = useDialog();
 const hasUnsavedChanges = useUnsavedChanges();
+const editor = useEditorStore();
 const pendingAction = ref<CloseAction | null>(null);
 const closing = ref(false);
 
@@ -16,6 +19,12 @@ function eventData(event: any): any {
 }
 
 function requestClose(action: CloseAction): void {
+  // 关窗确认是数据安全路径：收到请求与最终判定都进操作时间线（控制台 SCRZ 可查），
+  // 否则"内核拦下了但对话框没起"这种故障只能靠猜。
+  markTrace(`收到关闭请求(${action})`, {
+    未保存判定: hasUnsavedChanges.value,
+    大文件段未提交: editor.pendingLargeEditCount,
+  });
   if (pendingAction.value || closing.value) return;
   pendingAction.value = action;
 
@@ -39,6 +48,7 @@ async function confirmClose(action: CloseAction): Promise<void> {
   if (pendingAction.value !== action || closing.value) return;
   closing.value = true;
   const eventName = action === "quit" ? "app:quit-confirmed" : "app:close-confirmed";
+  markTrace(`关闭已确认(${action})`);
   try {
     await Events.Emit(eventName);
   } catch (error) {
