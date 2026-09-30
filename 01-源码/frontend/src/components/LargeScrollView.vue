@@ -1,20 +1,31 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
-import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
+  Annotation,
+  Compartment,
+  EditorState,
+  type Extension,
+  StateEffect,
+  StateField,
+  type Range,
+} from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
   drawSelection,
   EditorView,
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
+  WidgetType,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { listLinkAt, resolveListLinkIndex } from "../listNames";
-import { GetFileLines } from "../services/largeTextApi";
+import { GetFileLines, GetWindowAnnotations, type WindowAnnotation } from "../services/largeTextApi";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
 
@@ -88,6 +99,66 @@ const editableCompartment = new Compartment();
  */
 const remoteWindowChange = Annotation.define<boolean>();
 
+// ---------------------------------------------------------------------------
+// 段内注解装饰：中文名标签（widget）+ 关联标记（mark）
+//
+// 注解由后端**按视口**算出（GetWindowAnnotations），位置是相对段首的字符偏移，
+// 正好等于 CodeMirror 文档内的位置，直接装饰即可。
+// ---------------------------------------------------------------------------
+class AnnotationTagWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+  eq(other: AnnotationTagWidget): boolean {
+    return other.text === this.text;
+  }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "lsc-ann-tag";
+    span.textContent = this.text;
+    return span;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+const setWindowAnnotations = StateEffect.define<WindowAnnotation[]>();
+
+function buildAnnotationDecorations(list: WindowAnnotation[], docLength: number): DecorationSet {
+  const ranges: Range<Decoration>[] = [];
+  for (const item of list) {
+    if (item.start < 0 || item.end > docLength || item.end <= item.start) continue;
+    const label = item.title || item.content || "";
+    ranges.push(
+      Decoration.mark({
+        class: "lsc-ann",
+        attributes: label ? { title: label } : undefined,
+      }).range(item.start, item.end)
+    );
+    if (label) {
+      ranges.push(
+        Decoration.widget({ widget: new AnnotationTagWidget(label), side: 1 }).range(item.end)
+      );
+    }
+  }
+  return Decoration.set(ranges, true);
+}
+
+const windowAnnotationField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(setWindowAnnotations)) {
+        deco = buildAnnotationDecorations(effect.value, tr.state.doc.length);
+      }
+    }
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 const largeWindowTheme = EditorView.theme({
   // 高度交给内容自己撑开：搜索面板出现时不会把正文顶掉（窗口是顶部锚定的，
   // 向下长出去不会让行号与 spacer 错位）。
@@ -124,6 +195,7 @@ function makeExtensions(): Extension[] {
     highlightSelectionMatches(),
     // 段内搜索（Ctrl+F）：只在当前视口这几千行里找，不碰后端、不影响秒开
     search(),
+    windowAnnotationField,
     // PVF 语法着色（与普通编辑器同一套语言与高亮规则）
     pvfLanguage.extension,
     pvfHighlighting,
@@ -181,8 +253,24 @@ function applyCmDoc(text: string): void {
   });
 }
 
+/**
+ * 换窗后取一次段内注解（中文名 / 关联标记）。
+ * 只按视口大小算（约 130KB），与文件多大无关；失败也不影响正文与编辑。
+ */
+async function loadAnnotations(): Promise<void> {
+  try {
+    const list = await GetWindowAnnotations(props.index, winStart.value, winCount.value);
+    cmView?.dispatch({ effects: setWindowAnnotations.of(list ?? []) });
+  } catch {
+    // 注解取不到就当作没有：正文照常可用，不弹错误打扰用户。
+  }
+}
+
 // 窗口内容 / 可编辑态变化 → 同步进 CodeMirror（用户打字走 updateListener，不会绕回来）
-watch([winText, editable], ([text]) => applyCmDoc(text));
+watch([winText, editable], ([text]) => {
+  applyCmDoc(text);
+  void loadAnnotations();
+});
 watch(editable, (value) => {
   cmView?.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(value)) });
 });
@@ -435,5 +523,18 @@ onBeforeUnmount(() => {
 }
 .lsc-window :deep(.cm-selectionBackground) {
   background: rgba(90, 140, 220, 0.35) !important;
+}
+/* 段内注解：关联标记 + 中文名标签（与普通编辑器的绿色标签同一观感） */
+.lsc-window :deep(.lsc-ann) {
+  border-bottom: 1px dashed rgba(122, 200, 140, 0.75);
+  background: rgba(122, 200, 140, 0.08);
+}
+.lsc-window :deep(.lsc-ann-tag) {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--pvf-text-secondary);
+  background: rgba(122, 200, 140, 0.14);
 }
 </style>
