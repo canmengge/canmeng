@@ -16,18 +16,68 @@ import (
 // ErrCancelled is returned by ExtractTo when the cancel callback fires.
 var ErrCancelled = errors.New("pvf: unpack cancelled")
 
+// ErrSaveCancelled is returned when a save was aborted through SaveHooks.Cancel.
+// It only ever fires before the temp file is renamed over the source, so the
+// source archive is always left untouched.
+var ErrSaveCancelled = errors.New("pvf: save cancelled")
+
+// SaveHooks 保存过程的可选回调（全部可留空；留空时行为与 Save / SaveAs 完全一致）。
+//
+// 只用于「进度上报 + 取消」，不参与写回算法：回调只在原有的安全点上被调用，
+// 取消也不会留下半成品——临时文件会被删除、rename 不会执行，源文件保持原样。
+type SaveHooks struct {
+	// Phase 在阶段切换时回调：prepare / rebuild / write / sync / rename。
+	Phase func(phase string)
+	// Progress 在重建与写盘阶段周期性回调（已处理单位, 总单位）。
+	Progress func(done, total int)
+	// Cancel 返回 true 时在下一个安全点中止保存（返回 ErrSaveCancelled）。
+	Cancel func() bool
+}
+
+func (h SaveHooks) phase(name string) {
+	if h.Phase != nil {
+		h.Phase(name)
+	}
+}
+
+func (h SaveHooks) progress(done, total int) {
+	if h.Progress != nil {
+		h.Progress(done, total)
+	}
+}
+
+func (h SaveHooks) cancelled() bool {
+	if h.Cancel == nil {
+		return false
+	}
+	return h.Cancel()
+}
+
 // SaveAs writes the archive (with pending edits applied) to path.
 // The write is atomic: data lands in a temp file that is renamed over path,
 // so a failed write never destroys an existing archive.
 func (a *Archive) SaveAs(path string) error {
+	return a.SaveAsHooked(path, SaveHooks{})
+}
+
+// SaveAsHooked 同 SaveAs，只是每到一个阶段/安全点回调一次 SaveHooks。
+//
+// 取消点全部位于 rename 之前：一旦请求取消，临时文件会被删除、源文件保持原样。
+func (a *Archive) SaveAsHooked(path string, h SaveHooks) error {
+	if h.cancelled() {
+		return ErrSaveCancelled
+	}
+	h.phase("prepare")
 	tmp := path + ".pvftmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	bw := bufio.NewWriterSize(f, 1<<20)
-	err = a.SaveTo(bw)
+	h.phase("write")
+	err = a.SaveToHooked(bw, h)
 	if err == nil {
+		h.phase("sync")
 		err = bw.Flush()
 	}
 	if err == nil {
@@ -40,6 +90,11 @@ func (a *Archive) SaveAs(path string) error {
 		os.Remove(tmp)
 		return err
 	}
+	if h.cancelled() {
+		os.Remove(tmp)
+		return ErrSaveCancelled
+	}
+	h.phase("rename")
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		return err
@@ -153,14 +208,22 @@ func sanitizeName(name string) string {
 // sections. A Paged110 container gets its page guards re-encrypted on the way
 // out, so the result is a file the client accepts.
 func (a *Archive) SaveTo(w io.Writer) error {
+	return a.SaveToHooked(w, SaveHooks{})
+}
+
+// SaveToHooked 同 SaveTo，带进度/取消钩子（钩子留空时行为完全一致）。
+func (a *Archive) SaveToHooked(w io.Writer, h SaveHooks) error {
 	if a.paged110 {
-		return a.savePaged110(w)
+		return a.savePaged110Hooked(w, h)
 	}
 	if !a.Modified() && a.data != nil && int32(len(a.items)) == a.hdr.FileCount {
+		h.phase("write")
+		h.progress(0, len(a.data))
 		_, err := w.Write(a.data)
+		h.progress(len(a.data), len(a.data))
 		return err
 	}
-	out, err := a.rebuild()
+	out, err := a.rebuildHooked(h)
 	if err != nil {
 		return err
 	}
@@ -175,6 +238,11 @@ func (a *Archive) SaveTo(w io.Writer) error {
 // decrypted) are rebuilt as usual and the guards are re-applied page by page
 // with the key table recovered when the archive was opened.
 func (a *Archive) savePaged110(w io.Writer) error {
+	return a.savePaged110Hooked(w, SaveHooks{})
+}
+
+// savePaged110Hooked 同 savePaged110，带进度/取消钩子。
+func (a *Archive) savePaged110Hooked(w io.Writer, h SaveHooks) error {
 	if len(a.pageKeys) == 0 {
 		return ErrPaged110ReadOnly
 	}
@@ -185,7 +253,7 @@ func (a *Archive) savePaged110(w io.Writer) error {
 	}
 	logical := a.data
 	if !a.Modified() && logical != nil && int32(len(a.items)) == a.hdr.FileCount {
-		return writePageGuarded(w, logical, a.pageKeys)
+		return writePageGuardedHooked(w, logical, a.pageKeys, h)
 	}
 
 	// rebuild() 会就地改写 a.hdr（FileCount / BodySize / GroupCount / …）以及新增
@@ -201,12 +269,12 @@ func (a *Archive) savePaged110(w io.Writer) error {
 		a.items = savedItems
 	}
 
-	out, err := a.rebuild()
+	out, err := a.rebuildHooked(h)
 	if err != nil {
 		restore()
 		return err
 	}
-	if err := writePageGuarded(w, out, a.pageKeys); err != nil {
+	if err := writePageGuardedHooked(w, out, a.pageKeys, h); err != nil {
 		restore()
 		return err
 	}
@@ -221,8 +289,17 @@ type chunkOut struct {
 	compSize int32 // cumulative, as stored in GRPI
 }
 
+// rebuildProgressStep 控制重建阶段的进度上报频率（按 chunk 数），避免大归档刷屏。
+const rebuildProgressStep = 256
+
 // rebuild produces the complete archive bytes with edits applied.
 func (a *Archive) rebuild() ([]byte, error) {
+	return a.rebuildHooked(SaveHooks{})
+}
+
+// rebuildHooked 同 rebuild，带进度/取消钩子（钩子留空时行为完全一致）。
+func (a *Archive) rebuildHooked(h SaveHooks) ([]byte, error) {
+	h.phase("rebuild")
 	// Classify edits.
 	modifiedChunks := map[int32]bool{}
 	var newFiles []int32
@@ -242,9 +319,16 @@ func (a *Archive) rebuild() ([]byte, error) {
 
 	// Pass 1: per-chunk output. Untouched chunks are copied as raw encrypted
 	// bytes; modified chunks are rebuilt, re-compressed and re-encrypted.
-	outs := make([]chunkOut, 0, len(a.groups)+1)
+	groups := len(a.groups)
+	outs := make([]chunkOut, 0, groups+1)
 	var cumulative int32
-	for ci := int32(0); ci < int32(len(a.groups)); ci++ {
+	for ci := int32(0); ci < int32(groups); ci++ {
+		if h.cancelled() {
+			return nil, ErrSaveCancelled
+		}
+		if ci%rebuildProgressStep == 0 {
+			h.progress(int(ci), groups)
+		}
 		if !modifiedChunks[ci] {
 			raw, ok := a.chunkSpan(ci)
 			if !ok {
@@ -265,6 +349,11 @@ func (a *Archive) rebuild() ([]byte, error) {
 		cryptSeed(a.keys.body.seed, a.keys.body.magic, enc)
 		cumulative += int32(len(enc))
 		outs = append(outs, chunkOut{enc: enc, origSize: int32(len(rebuilt)), compSize: cumulative})
+	}
+
+	h.progress(groups, groups)
+	if h.cancelled() {
+		return nil, ErrSaveCancelled
 	}
 
 	// New files land in one appended chunk.

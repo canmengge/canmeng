@@ -2,6 +2,7 @@
 import { computed, h, ref, watch, type Component } from "vue";
 import { useMessage } from "naive-ui";
 import {
+  NButton,
   NDropdown,
   NIcon,
   NTooltip,
@@ -26,6 +27,8 @@ import DevPanel from "./DevPanel.vue";
 import { useDevStore } from "../stores/dev";
 import { DEV_TOOLS } from "../buildInfo";
 import { ArchiveService } from "../../bindings/pvfine/services";
+import { Events } from "@wailsio/runtime";
+import { CancelSave } from "../services/saveApi";
 import { ExportFilesTo } from "../services/exportApi";
 import ExportDialog from "./ExportDialog.vue";
 import { useUnsavedChanges } from "../composables/unsavedChanges";
@@ -49,6 +52,63 @@ const bookmarkBtnRef = ref<HTMLElement | null>(null);
 const exportingModified = ref(false);
 const exportPickVisible = ref(false);
 const exportPickPaths = ref<string[]>([]);
+
+// ---------------------------------------------------------------------------
+// 封包进度（事件 `save:progress`）
+//
+// 整包写回实测可达十几秒（543MB / 11.4s），期间必须给得出进度、也允许取消；
+// 取消只在 rename 之前生效，源文件一定保持原样（后端语义见 services/save_job.go）。
+// ---------------------------------------------------------------------------
+const saveProgress = ref<{ phase: string; done: number; total: number } | null>(null);
+const saveCancelRequested = ref(false);
+
+const SAVE_PHASE_TEXT: Record<string, string> = {
+  prepare: "准备写入",
+  backup: "备份源文件",
+  rebuild: "重建归档数据",
+  write: "写入磁盘",
+  sync: "刷盘",
+  rename: "替换源文件",
+};
+
+function savePhaseText(phase: string): string {
+  return SAVE_PHASE_TEXT[phase] ?? phase;
+}
+
+function savePercent(): number {
+  const current = saveProgress.value;
+  if (!current || current.total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((current.done / current.total) * 100)));
+}
+
+function eventData(event: any): any {
+  return event?.data ?? event;
+}
+
+Events.On("save:progress", (event: any) => {
+  const data = eventData(event);
+  const phase = String(data?.phase ?? "");
+  if (!phase || phase === "done") {
+    saveProgress.value = null;
+    return;
+  }
+  saveProgress.value = {
+    phase,
+    done: Number(data?.done ?? 0),
+    total: Number(data?.total ?? 0),
+  };
+});
+
+/** 请求取消封包：只发一个开关，真正的中止点由后端在下个安全点执行。 */
+async function cancelSave(): Promise<void> {
+  if (saveCancelRequested.value) return;
+  saveCancelRequested.value = true;
+  try {
+    await CancelSave();
+  } catch {
+    // 后端可能刚好结束（没有在跑的任务），忽略即可。
+  }
+}
 
 const canSave = computed(() => archive.open && !editor.saving);
 const canSaveToSource = computed(() => archive.open && !!archive.info?.path && !editor.saving);
@@ -252,11 +312,14 @@ function showSaveFailedDialog(err: unknown): void {
 }
 
 async function saveToSource() {
+  saveCancelRequested.value = false;
   try {
     await editor.save();
     showSaveSuccessDialog();
   } catch (e: any) {
     if (!isCancel(e)) showSaveFailedDialog(e);
+  } finally {
+    saveProgress.value = null;
   }
 }
 
@@ -270,7 +333,49 @@ function onSave() {
     : "当前未启用源文件备份。";
   const dialogRef = dialog.warning({
     title: "确认保存到源文件",
-    content: `保存会覆盖源文件中的当前内容。${backupHint}确定继续吗？`,
+    // 写成渲染函数（而不是字符串）：封包期间直接把进度条与「取消封包」画在同一个弹窗里。
+    content: () =>
+      h("div", { style: "line-height:1.8" }, [
+        h("div", `保存会覆盖源文件中的当前内容。${backupHint}`),
+        h("div", { style: "margin-top:4px" }, "确定继续吗？"),
+        saveProgress.value
+          ? h("div", { style: "margin-top:12px" }, [
+              h(
+                "div",
+                { style: "font-size:12px; color:#9aa4b2" },
+                saveCancelRequested.value
+                  ? "正在取消…（等当前步骤走到安全点即中止，源文件不会被改动）"
+                  : `${savePhaseText(saveProgress.value.phase)}…`
+              ),
+              h("div", { style: "margin-top:6px" }, [
+                h(NProgress, {
+                  percentage: savePercent(),
+                  processing: !saveCancelRequested.value,
+                  status: saveCancelRequested.value ? "warning" : "default",
+                  height: 8,
+                  showIndicator: false,
+                }),
+              ]),
+              h(
+                "div",
+                { style: "margin-top:4px; font-size:12px; color:#9aa4b2" },
+                `${savePercent()}%`
+              ),
+              h("div", { style: "margin-top:6px" }, [
+                h(
+                  NButton,
+                  {
+                    size: "tiny",
+                    quaternary: true,
+                    disabled: saveCancelRequested.value,
+                    onClick: () => void cancelSave(),
+                  },
+                  { default: () => "取消封包" }
+                ),
+              ]),
+            ])
+          : null,
+      ]),
     positiveText: "确认保存",
     negativeText: "取消",
     // naive-ui 会等待 onPositiveClick 返回的 Promise 结束再关闭弹窗,
@@ -400,7 +505,8 @@ async function onExportModifiedPicked(payload: { dir: string; paths: string[] })
 }
 
 function isCancel(e: any): boolean {
-  return String(e?.message ?? e).includes("cancel");
+  const text = String(e?.message ?? e).toLowerCase();
+  return text.includes("cancel") || text.includes("已取消");
 }
 
 /**

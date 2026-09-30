@@ -1,12 +1,14 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -32,6 +34,10 @@ const bigFileBytes = 8 << 20
 type EditorService struct {
 	c        *core
 	settings *SettingsService
+	// saveMu / saveJob：保存进度与取消（见 save_job.go）。
+	// 保存本身仍持有 c.mu（防并发改归档），取消开关单独一把锁，保证随时可点。
+	saveMu  sync.Mutex
+	saveJob *saveJob
 }
 
 func NewEditorService(c *core, settings ...*SettingsService) *EditorService {
@@ -212,7 +218,17 @@ func (s *EditorService) SetPlaceholderText(index int32, tableIndex int32, key st
 }
 
 // Save 把全部内存修改写回源文件(原子写:临时文件 + rename)。
+//
+// 整包写回可达十几秒（实测 543MB / 11.4s），因此带进度与取消：
+// 进度通过事件 `save:progress` 上抛，取消只会在 rename 之前生效，
+// 被取消时返回 ErrSaveCancelled，源文件保持原样。
 func (s *EditorService) Save() (ArchiveInfo, error) {
+	job, err := s.beginSave()
+	if err != nil {
+		return ArchiveInfo{}, err
+	}
+	defer s.endSave(job)
+
 	s.c.mu.Lock()
 	a := s.c.archive
 	if a == nil {
@@ -228,6 +244,7 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 		return ArchiveInfo{}, fmt.Errorf("归档没有源文件,请使用另存为")
 	}
 	if s.shouldBackupSource() {
+		job.phase("backup")
 		backupStart := time.Now()
 		if err := backupSourceFile(a.SourcePath()); err != nil {
 			logging.For("save").Error("源文件备份失败", "错误", err.Error())
@@ -238,9 +255,14 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 			"耗时", logging.FormatDuration(time.Since(backupStart)))
 	}
 	saveStart := time.Now()
-	if err := a.Save(); err != nil {
-		logging.For("save").Error("保存归档失败", "错误", err.Error())
+	if err := a.SaveAsHooked(a.SourcePath(), job.hooks()); err != nil {
 		s.c.mu.Unlock()
+		if errors.Is(err, pvf.ErrSaveCancelled) {
+			logging.For("save").Info("保存已取消", "耗时",
+				logging.FormatDuration(time.Since(saveStart)), "文件", a.SourcePath())
+			return ArchiveInfo{}, ErrSaveCancelled
+		}
+		logging.For("save").Error("保存归档失败", "错误", err.Error())
 		return ArchiveInfo{}, err
 	}
 	logging.For("save").Info("归档已保存",
@@ -346,8 +368,18 @@ func (s *EditorService) SaveAsDialog() (string, error) {
 		s.c.mu.Unlock()
 		return "", err
 	}
-	if err := a.SaveAs(path); err != nil {
+	// 另存为同样可能是十几秒的整包写回，一并带进度与取消。
+	job, jobErr := s.beginSave()
+	if jobErr != nil {
 		s.c.mu.Unlock()
+		return "", jobErr
+	}
+	defer s.endSave(job)
+	if err := a.SaveAsHooked(path, job.hooks()); err != nil {
+		s.c.mu.Unlock()
+		if errors.Is(err, pvf.ErrSaveCancelled) {
+			return "", ErrSaveCancelled
+		}
 		return "", err
 	}
 	info := a.Info()

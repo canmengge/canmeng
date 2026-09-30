@@ -1,6 +1,9 @@
 package services
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // =============================================================================
 // 大文件「连续全文 TXT」通道（大文件秒开的落地实现）
@@ -59,6 +62,62 @@ func lineStartOffset(text string, line int32) int {
 	return offset
 }
 
+// -----------------------------------------------------------------------------
+// 行偏移缓存（P5）
+//
+// GetFileLines / SetFileLines 原本每次都从文本开头逐行扫到目标行（实测约 20ms/次，
+// 滚动跨段时会连续触发）。改成「一个文件一份行偏移表」后定位降到 O(1)：
+// 只在文本内容变化时重算一次（写回或换文件都会自动失效）。
+// -----------------------------------------------------------------------------
+
+// lineIndexCacheLimit 最多缓存几个文件的行偏移表。
+// 条目按内容精确失效（存着算偏移时那份文本本身），但换文件后旧条目仍持有该文本
+// 引用，因此数量必须封顶（大文件展开后可达几十 MB）。
+const lineIndexCacheLimit = 4
+
+type lineIndex struct {
+	text    string
+	offsets []int32
+}
+
+var (
+	lineIndexMu    sync.Mutex
+	lineIndexCache = make(map[int32]*lineIndex)
+)
+
+// buildLineOffsets 生成行起始偏移表：offsets[L] = 第 L+1 行的起始下标，
+// 末尾再补一个哨兵 len(text)（用作「文末」），于是 len(offsets) = 行数 + 1。
+func buildLineOffsets(text string) []int32 {
+	offsets := make([]int32, 0, countLines(text)+1)
+	offsets = append(offsets, 0)
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			offsets = append(offsets, int32(i+1))
+		}
+	}
+	if offsets[len(offsets)-1] != int32(len(text)) {
+		offsets = append(offsets, int32(len(text)))
+	}
+	return offsets
+}
+
+// lineOffsetsFor 返回 text 的行偏移表（命中缓存则直接复用）。
+// 失效判据是**文本内容完全一致**，因此写回、换归档都不会用到过期数据。
+func lineOffsetsFor(index int32, text string) []int32 {
+	lineIndexMu.Lock()
+	defer lineIndexMu.Unlock()
+	if entry, ok := lineIndexCache[index]; ok && entry.text == text {
+		return entry.offsets
+	}
+	offsets := buildLineOffsets(text)
+	if len(lineIndexCache) >= lineIndexCacheLimit {
+		// 简单淘汰：条目极少、重算一次也只是 O(n)，不做 LRU。
+		lineIndexCache = make(map[int32]*lineIndex)
+	}
+	lineIndexCache[index] = &lineIndex{text: text, offsets: offsets}
+	return offsets
+}
+
 // currentLargeTextLocked 返回该文件当前的全文：编辑器 overlay 优先，否则用解码缓存。
 // 调用方必须已持有 c.mu。
 func (s *EditorService) currentLargeTextLocked(index int32) (string, error) {
@@ -91,7 +150,8 @@ func (s *EditorService) GetFileLines(index int32, startLine int32, count int32) 
 	if err != nil {
 		return nil, err
 	}
-	total := countLines(text)
+	offsets := lineOffsetsFor(index, text)
+	total := int32(len(offsets)) - 1
 	if startLine < 1 {
 		startLine = 1
 	}
@@ -101,12 +161,11 @@ func (s *EditorService) GetFileLines(index int32, startLine int32, count int32) 
 	if count <= 0 {
 		count = largeTextScrollChunk
 	}
-	from := lineStartOffset(text, startLine)
-	to := len(text)
-	if end := startLine + count; total > 0 && end <= total {
-		to = lineStartOffset(text, end)
+	endIdx := startLine - 1 + count
+	if endIdx > total {
+		endIdx = total
 	}
-	chunk := text[from:to]
+	chunk := text[offsets[startLine-1]:offsets[endIdx]]
 	return &LargeTextChunk{
 		Index:    index,
 		Path:     a.Path(index),
@@ -146,12 +205,17 @@ func (s *EditorService) SetFileLines(index int32, startLine int32, lineCount int
 	if lineCount < 0 {
 		lineCount = 0
 	}
-	total := countLines(cur)
-	from := lineStartOffset(cur, startLine)
-	to := len(cur)
-	if end := startLine + lineCount; total > 0 && end <= total {
-		to = lineStartOffset(cur, end)
+	offsets := lineOffsetsFor(index, cur)
+	total := int32(len(offsets)) - 1
+	if startLine-1 > total {
+		startLine = total + 1
 	}
+	from := offsets[startLine-1]
+	endIdx := startLine - 1 + lineCount
+	if endIdx > total {
+		endIdx = total
+	}
+	to := offsets[endIdx]
 	// setText 自己会加锁：必须已放锁再调用。
 	if _, _, err := s.c.setText(index, cur[:from]+text+cur[to:]); err != nil {
 		return nil, err

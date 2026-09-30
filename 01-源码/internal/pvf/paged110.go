@@ -235,6 +235,15 @@ func encryptPageGuards(data, pageKeys []byte) int {
 // to w with the page protection re-applied, streaming page by page so a save
 // never needs a second copy of the whole container in memory.
 func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
+	return writePageGuardedHooked(w, logical, pageKeys, SaveHooks{})
+}
+
+// writePageGuardedHooked 同 writePageGuarded，带进度/取消钩子。
+//
+// 取消点只在「下一页写出之前」：已写出的部分都在临时文件里，由调用方删除，
+// 源文件不会被 rename 覆盖（见 SaveAsHooked）。
+func writePageGuardedHooked(w io.Writer, logical, pageKeys []byte, h SaveHooks) error {
+	total := len(logical)
 	pages := len(pageKeys) / paged110PageKeySize
 	// 页密钥必须覆盖整个归档。客户端读取每一页时都会用密钥表解密它：若某页以
 	// 明文写出，客户端会拿密钥去"解密"这段明文，得到垃圾数据，该页内所有文件
@@ -248,6 +257,9 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 	}
 	guard := make([]byte, paged110PageGuardSize)
 	for i := 0; ; i++ {
+		if h.cancelled() {
+			return ErrSaveCancelled
+		}
 		off := i * paged110PageSize
 		if off >= len(logical) {
 			return nil
@@ -281,6 +293,7 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 		if _, err := w.Write(logical[head:end]); err != nil {
 			return err
 		}
+		h.progress(end, total)
 	}
 }
 
