@@ -85,10 +85,14 @@ async function commit(): Promise<boolean> {
   saving.value = true;
   try {
     const chunk = await SetFileLines(props.index, start, count, winText.value);
-    dirty.value = false;
-    editor.notePendingLargeEdit(props.index, false);
     if (chunk) totalLines.value = chunk.lines;
     await archive.refreshInfo();
+    // ⚠ 顺序很重要（2026-09-30 实测踩坑）：先把归档信息刷成"有未保存修改"，
+    // 再撤下段内待提交标记。反过来的话，在"标记已撤、归档计数还没刷新"的那几十毫秒里
+    // 点窗口关闭（点 X 会先让文本框失焦、触发本函数），未保存判定会是 false ⇒ 不弹确认框、
+    // 静默关窗，段内改动丢失。
+    dirty.value = false;
+    editor.notePendingLargeEdit(props.index, false);
     return true;
   } catch (error: any) {
     message.error(`保存第 ${start}–${start + count} 行失败：${error?.message ?? error}`);
