@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import {
   NButton,
   NIcon,
@@ -65,6 +67,71 @@ const startupPaths = computed(() => {
 });
 
 const archivePath = computed(() => archive.info?.path ?? "");
+
+// ---------------------------------------------------------------------------
+// P3 可行性探针：CodeMirror 挂载耗时（真实 WebView2 环境）
+//
+// 背景（2026-09-30 排障结论）：大文件卡死的刀口是「把文本交给 WebView 这条通道」，
+// **空文档挂载 CodeMirror 也要 30 秒**。P3 想让大文件拿回注解/着色/跳转，
+// 做法是「每段一个 CodeMirror（每段约 130KB）」——能不能做，取决于**挂载本身贵不贵**，
+// 与文本多大无关。所以先测空文档，再测 130KB，用同一把尺子决定 P3 做不做。
+// ---------------------------------------------------------------------------
+const probeHost = ref<HTMLElement | null>(null);
+const probeBusy = ref(false);
+const probeResults = ref<string[]>([]);
+
+/** 生成指定字节数的纯文本（每行 120 字符左右）。 */
+function makeText(bytes: number): string {
+  if (bytes <= 0) return "";
+  const line = "0123456789abcdef" + "x".repeat(104) + "\n"; // ≈121 字符
+  const lines = Math.max(1, Math.ceil(bytes / line.length));
+  return line.repeat(lines);
+}
+
+/**
+ * 挂一次 CodeMirror 并计时：挂载 / 首次布局 / 销毁 三段分开记。
+ * 容器是**面板里可见的小框**（不是 display:none），保证真的发生排版与绘制。
+ */
+async function runProbe(label: string, bytes: number, times: number): Promise<void> {
+  const host = probeHost.value;
+  if (!host || probeBusy.value) return;
+  probeBusy.value = true;
+  try {
+    const text = makeText(bytes);
+    for (let round = 1; round <= times; round++) {
+      const size = bytes > 0 ? `${(text.length / 1024).toFixed(0)}KB` : "空";
+      const t0 = performance.now();
+      const view = new EditorView({
+        state: EditorState.create({ doc: text }),
+        parent: host,
+      });
+      const mountMs = performance.now() - t0;
+
+      // 强制同步布局一次（读 offsetHeight 会触发排版）
+      const t1 = performance.now();
+      void host.offsetHeight;
+      const layoutMs = performance.now() - t1;
+
+      // 等一帧，看"首帧绘制"有没有额外代价
+      const t2 = performance.now();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const frameMs = performance.now() - t2;
+
+      const t3 = performance.now();
+      view.destroy();
+      const destroyMs = performance.now() - t3;
+
+      probeResults.value.unshift(
+        `${label} #${round}（${size}）: 挂载 ${formatMs(mountMs)} · 排版 ${formatMs(
+          layoutMs
+        )} · 首帧 ${formatMs(frameMs)} · 销毁 ${formatMs(destroyMs)}`
+      );
+      if (probeResults.value.length > 12) probeResults.value.pop();
+    }
+  } finally {
+    probeBusy.value = false;
+  }
+}
 
 const doctorSummary = computed(() => {
   const report = doctor.report;
@@ -415,6 +482,34 @@ const diagnostics = computed(() =>
       </section>
 
       <section class="dev-card">
+        <div class="dev-card-title">P3 实测 · CodeMirror 挂载耗时</div>
+        <div class="dev-row">
+          <span class="dev-key">怎么判</span>
+          <span class="dev-val">
+            先点「空文档」：若空文档本身就慢 ⇒ 贵的只是挂载，
+            「每段一个 CodeMirror」这条路不成立；只有空文档毫秒级，130KB 的数字才有意义。
+          </span>
+        </div>
+        <div class="dev-actions">
+          <NButton size="tiny" :loading="probeBusy" @click="runProbe('空文档', 0, 1)">
+            空文档
+          </NButton>
+          <NButton size="tiny" :loading="probeBusy" @click="runProbe('20KB', 20 * 1024, 1)">
+            20KB（当前视口量）
+          </NButton>
+          <NButton size="tiny" :loading="probeBusy" @click="runProbe('130KB', 130 * 1024, 1)">
+            130KB（一段）
+          </NButton>
+          <NButton size="tiny" :loading="probeBusy" @click="runProbe('130KB', 130 * 1024, 3)">
+            130KB 连挂 3 次
+          </NButton>
+        </div>
+        <div ref="probeHost" class="dev-probe-host"></div>
+        <div v-if="probeResults.length" class="dev-pre">{{ probeResults.join("\n") }}</div>
+        <div v-else class="dev-val">（尚无数据）</div>
+      </section>
+
+      <section class="dev-card">
         <div class="dev-card-title">输出日志（测试）</div>
         <div class="dev-row">
           <span class="dev-key">面板</span>
@@ -535,6 +630,14 @@ const diagnostics = computed(() =>
   border-radius: 8px;
   background: var(--pvf-surface-card);
   padding: 8px 10px 10px;
+}
+/* P3 探针：必须是**可见**的小框（display:none 不会排版，测不出真实代价）。 */
+.dev-probe-host {
+  height: 110px;
+  overflow: hidden;
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 4px;
+  margin: 6px 0;
 }
 .dev-card-title {
   font-size: 12px;
