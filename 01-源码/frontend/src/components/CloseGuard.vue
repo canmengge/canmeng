@@ -18,20 +18,15 @@ function eventData(event: any): any {
   return event?.data ?? event;
 }
 
-async function requestClose(action: CloseAction): Promise<void> {
+function requestClose(action: CloseAction): void {
   if (pendingAction.value || closing.value) return;
   pendingAction.value = action;
 
-  // 先把大文件 TXT 视图里未提交的段写回归档内存，再判定"有没有未保存修改"。
-  // 这样判定只依赖归档计数（久经验证的路径），不依赖前端标记的时序 ——
-  // 点 X 会先让文本框失焦触发自动提交，中间那几十毫秒的空档曾导致静默关窗丢改动。
-  const flushed = await editor.flushLargeEditors();
-
-  // 关窗确认是数据安全路径：收到请求与最终判定都进操作时间线（控制台 SCRZ 可查）。
+  // ⚠ 这里**不做任何写回归档**（用户 2026-09-30 明确要求：只有用户点保存才允许写入）。
+  // "有没有未保存修改"的判定来自 useUnsavedChanges，其中已包含大文件的待写段。
   markTrace(`收到关闭请求(${action})`, {
-    段已冲刷: flushed,
     未保存判定: hasUnsavedChanges.value,
-    大文件段未提交: editor.pendingLargeEditCount,
+    大文件待写段: editor.pendingLargeEditCount,
   });
   // 把这次判定直接写进日志文件（等价于自动敲一次 SCRZ）：
   // 关窗这条链出问题时，不必再让用户手动敲控制台命令，日志里直接有现场。

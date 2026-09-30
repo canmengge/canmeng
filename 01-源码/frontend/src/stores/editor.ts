@@ -112,48 +112,54 @@ export const useEditorStore = defineStore("editor", () => {
   );
   const dirtyCount = computed(() => tabs.value.filter((tab) => tab.text !== tab.original).length);
   /**
-   * 大文件「段内改动未提交」的标签集合（TXT 视图专用）。
+   * 大文件 TXT 视图里「改了但还没写回归档」的段：tabIndex → (起始行 → {行数, 文本})。
    *
-   * 大文件的文本不在窗口里（见 services/large_text.go），`tab.text` 恒为空 ⇒
-   * `dirtyCount` 永远看不到它。若不单独上报，用户改了一段却直接关窗口，
-   * 「未保存修改」确认框不会出现，改动会静默丢掉。
+   * 规则（用户 2026-09-30 明确要求）：**只有用户自己点保存（或 Ctrl+S）才允许写回归档**。
+   * 编辑器绝不自动保存 —— 打一半的字被自动写进去是不可接受的。因此这些段只存在前端：
+   *  - 切标签不会丢（存在 store 里）；
+   *  - 滚动离开再回来仍显示用户改过的内容；
+   *  - 关标签 / 关窗口前会先提示（详见 hasPendingLargeEdits 与 useUnsavedChanges）。
+   * 大文件的 `tab.text` 恒为空（文本不进窗口，见 services/large_text.go），
+   * 所以 `dirtyCount` 看不到它们，必须单独算。
    */
-  const pendingLargeEdits = ref<Set<number>>(new Set());
-  const pendingLargeEditCount = computed(() => pendingLargeEdits.value.size);
+  type PendingLargeSegment = { start: number; count: number; text: string };
+  const pendingLargeSegments = ref<Map<number, Map<number, PendingLargeSegment>>>(new Map());
+  const pendingLargeEditCount = computed(() => {
+    let total = 0;
+    for (const segments of pendingLargeSegments.value.values()) total += segments.size;
+    return total;
+  });
 
-  function notePendingLargeEdit(index: number, pending: boolean): void {
-    const next = new Set(pendingLargeEdits.value);
-    if (pending) next.add(index);
-    else next.delete(index);
-    pendingLargeEdits.value = next;
+  /** 该标签待写回的段（按起始行升序）。 */
+  function pendingSegmentsOf(index: number): PendingLargeSegment[] {
+    const segments = pendingLargeSegments.value.get(index);
+    if (!segments || segments.size === 0) return [];
+    return [...segments.values()].sort((a, b) => a.start - b.start);
   }
 
-  /**
-   * 大文件 TXT 视图注册的「立即写回归档内存」回调。
-   *
-   * 关窗确认前必须先冲刷它们：冲刷完"是否有未保存修改"就只需看归档计数
-   * （`archive.modifiedCount`，这条路径久经验证），不再依赖前端标记的时序 ——
-   * 2026-09-30 实测踩过：点 X 会先让文本框失焦触发自动提交，标记与归档计数
-   * 之间有几十毫秒空档，正好被关窗判定读到 false，导致静默关窗丢改动。
-   */
-  const largeFlushers = new Map<number, () => Promise<boolean>>();
-
-  function registerLargeFlusher(index: number, flush: (() => Promise<boolean>) | null): void {
-    if (flush) largeFlushers.set(index, flush);
-    else largeFlushers.delete(index);
+  function hasPendingLargeEdits(index: number): boolean {
+    return (pendingLargeSegments.value.get(index)?.size ?? 0) > 0;
   }
 
-  /** 把全部大文件的未提交段写回归档内存；返回是否全部成功。 */
-  async function flushLargeEditors(): Promise<boolean> {
-    let ok = true;
-    for (const flush of [...largeFlushers.values()]) {
-      try {
-        if (!(await flush())) ok = false;
-      } catch {
-        ok = false;
-      }
-    }
-    return ok;
+  /** 记下/更新一段未写回归档的改动（start 为 1 基起始行）。 */
+  function setPendingLargeSegment(
+    index: number,
+    start: number,
+    count: number,
+    text: string
+  ): void {
+    const next = new Map(pendingLargeSegments.value);
+    const segments = new Map(next.get(index) ?? new Map<number, PendingLargeSegment>());
+    segments.set(start, { start, count, text });
+    next.set(index, segments);
+    pendingLargeSegments.value = next;
+  }
+
+  function clearPendingLargeSegments(index: number): void {
+    if (!pendingLargeSegments.value.has(index)) return;
+    const next = new Map(pendingLargeSegments.value);
+    next.delete(index);
+    pendingLargeSegments.value = next;
   }
   const pendingClose = ref<PendingTabClose | null>(null);
   /** 待定位的搜索命中:文件打开后由编辑器滚动到命中处并高亮。 */
@@ -326,6 +332,8 @@ export const useEditorStore = defineStore("editor", () => {
     if (!stillUsed) {
       const globalTabIndex = tabs.value.findIndex((tab) => tab.index === index);
       if (globalTabIndex >= 0) tabs.value.splice(globalTabIndex, 1);
+      // 标签已关：它在 TXT 视图里没写回归档的段也就放弃了（关之前已提示过）。
+      clearPendingLargeSegments(index);
       clearExplorerSelection(tab?.path);
     }
 
@@ -366,6 +374,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     tabs.value = tabs.value.filter((tab) => !removedIndexes.has(tab.index));
+    for (const index of removedIndexes) clearPendingLargeSegments(index);
     clearExplorerSelection(removedPaths);
 
     while (isSplit.value) {
@@ -745,7 +754,7 @@ export const useEditorStore = defineStore("editor", () => {
     if (pendingClose.value) return;
     const tab = tabs.value.find((item) => item.index === index);
     if (!tab) return;
-    if (isDirty(tab)) {
+    if (isDirty(tab) || hasPendingLargeEdits(index)) {
       pendingClose.value = { kind: "tab", index, paneId: resolvePaneId(requestedPaneId) };
       return;
     }
@@ -755,7 +764,9 @@ export const useEditorStore = defineStore("editor", () => {
   /** 关闭其它标签:有待确认的脏标签时先请求确认。 */
   function requestCloseOthers(keepIndex: number): void {
     if (pendingClose.value) return;
-    const hasDirty = tabs.value.some((tab) => tab.index !== keepIndex && isDirty(tab));
+    const hasDirty = tabs.value.some(
+      (tab) => tab.index !== keepIndex && (isDirty(tab) || hasPendingLargeEdits(tab.index))
+    );
     if (hasDirty) {
       pendingClose.value = { kind: "others", keepIndex };
       return;
@@ -766,7 +777,7 @@ export const useEditorStore = defineStore("editor", () => {
   /** 关闭所有标签:有待确认的脏标签时先请求确认。 */
   function requestCloseAll(): void {
     if (pendingClose.value) return;
-    if (tabs.value.some((tab) => isDirty(tab))) {
+    if (tabs.value.some((tab) => isDirty(tab) || hasPendingLargeEdits(tab.index))) {
       pendingClose.value = { kind: "all" };
       return;
     }
@@ -1028,9 +1039,10 @@ export const useEditorStore = defineStore("editor", () => {
     activeTab,
     dirtyCount,
     pendingLargeEditCount,
-    notePendingLargeEdit,
-    registerLargeFlusher,
-    flushLargeEditors,
+    pendingSegmentsOf,
+    hasPendingLargeEdits,
+    setPendingLargeSegment,
+    clearPendingLargeSegments,
     activePaneId,
     draggingTab,
     isSplit,

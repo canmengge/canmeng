@@ -39,12 +39,21 @@ const totalLines = ref(0);
 const editable = ref(true);
 const loading = ref(false);
 const saving = ref(false);
-const dirty = ref(false);
 
 /** 已加载窗口：起始行（1 基）、行数、文本。 */
 const winStart = ref(1);
 const winCount = ref(0);
 const winText = ref("");
+
+/**
+ * 本标签「改了但还没写回归档」的段数。
+ *
+ * ⚠ 本组件的铁律（用户 2026-09-30 明确要求）：**绝不自动保存**。
+ * 打字、失焦、滚动、切标签，都只把改动记在前端（`editor.pendingLargeSegments`）；
+ * 只有用户点「保存本段」或按 Ctrl+S，才写回归档内存（再「保存 PVF」才落盘）。
+ * 打一半的字被自动写进去是不允许的 —— 之前那版会在失焦/滚动时自动写回，已被移除。
+ */
+const pendingCount = computed(() => editor.pendingSegmentsOf(props.index).length);
 
 const spacerHeight = computed(() => `${Math.max(totalLines.value, 1) * ROW_HEIGHT}px`);
 const winTop = computed(() => `${(winStart.value - 1) * ROW_HEIGHT}px`);
@@ -68,8 +77,12 @@ async function loadWindow(startLine: number): Promise<void> {
     totalLines.value = chunk.lines;
     editable.value = chunk.editable;
     winStart.value = chunk.start;
-    winCount.value = chunk.count;
-    winText.value = chunk.text;
+    // 这一段若用户改过、还没写回归档，就显示用户自己的内容（滚走再滚回来也还在）。
+    const pending = editor
+      .pendingSegmentsOf(props.index)
+      .find((segment) => segment.start === chunk.start);
+    winCount.value = pending ? pending.count : chunk.count;
+    winText.value = pending ? pending.text : chunk.text;
   } catch (error: any) {
     message.error(`读取第 ${startLine} 行起的内容失败：${error?.message ?? error}`);
   } finally {
@@ -77,25 +90,26 @@ async function loadWindow(startLine: number): Promise<void> {
   }
 }
 
-/** 把当前窗口的改动写回归档内存（返回是否成功）。 */
-async function commit(): Promise<boolean> {
-  if (!dirty.value) return true;
-  const start = winStart.value;
-  const count = winCount.value;
+/**
+ * 把本标签所有「待写回」的段写回归档内存 —— **只有用户点保存 / Ctrl+S 才会走到这里**。
+ * 降序写回：后面的段先写，前面段的行号不会被顶掉。
+ */
+async function savePending(): Promise<boolean> {
+  const segments = editor.pendingSegmentsOf(props.index);
+  if (segments.length === 0) return true;
   saving.value = true;
   try {
-    const chunk = await SetFileLines(props.index, start, count, winText.value);
-    if (chunk) totalLines.value = chunk.lines;
+    for (const segment of [...segments].sort((a, b) => b.start - a.start)) {
+      const chunk = await SetFileLines(props.index, segment.start, segment.count, segment.text);
+      if (chunk) totalLines.value = chunk.lines;
+    }
+    editor.clearPendingLargeSegments(props.index);
     await archive.refreshInfo();
-    // ⚠ 顺序很重要（2026-09-30 实测踩坑）：先把归档信息刷成"有未保存修改"，
-    // 再撤下段内待提交标记。反过来的话，在"标记已撤、归档计数还没刷新"的那几十毫秒里
-    // 点窗口关闭（点 X 会先让文本框失焦、触发本函数），未保存判定会是 false ⇒ 不弹确认框、
-    // 静默关窗，段内改动丢失。
-    dirty.value = false;
-    editor.notePendingLargeEdit(props.index, false);
+    // 写回后把窗口重新对齐到同一位置：用户看到的就是刚写进去的内容。
+    await loadWindow(winStart.value);
     return true;
   } catch (error: any) {
-    message.error(`保存第 ${start}–${start + count} 行失败：${error?.message ?? error}`);
+    message.error(`写回归档失败：${error?.message ?? error}`);
     return false;
   } finally {
     saving.value = false;
@@ -125,8 +139,8 @@ function onScroll(): void {
     const haveStart = winStart.value;
     const haveEnd = winStart.value + winCount.value;
     if (need.start >= haveStart && need.end <= haveEnd) return;
+    // 滚动只换窗口、不写归档：改过的段留在前端（loadWindow 会把它显示回来）。
     enqueue(async () => {
-      if (!(await commit())) return;
       await loadWindow(need.start);
     });
   });
@@ -135,9 +149,8 @@ function onScroll(): void {
 function onInput(event: Event): void {
   winText.value = (event.target as HTMLTextAreaElement).value;
   winCount.value = countLines(winText.value);
-  dirty.value = true;
-  // 上报"段内有未提交改动"：tab.text 恒为空，靠这个才能让退出确认看到它。
-  editor.notePendingLargeEdit(props.index, true);
+  // 只记在前端；用户没点保存之前绝不写回归档。
+  editor.setPendingLargeSegment(props.index, winStart.value, winCount.value, winText.value);
 }
 
 /** 段内 Ctrl/Cmd+S = 保存本段（避免用户以为已经落盘）。 */
@@ -149,13 +162,12 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 async function onSaveClick(): Promise<void> {
-  if (await commit()) message.success("已写回归档内存，请点工具栏「保存 PVF」落盘");
+  if (await savePending()) message.success("已写回归档内存，请点工具栏「保存 PVF」落盘");
 }
 
-/** 供搜索定位使用：跳到指定行。 */
+/** 供搜索定位使用：跳到指定行（只换窗口，不写归档）。 */
 async function gotoLine(line: number): Promise<void> {
   enqueue(async () => {
-    if (!(await commit())) return;
     await loadWindow(Math.max(1, line - 50));
   });
   const el = viewport.value;
@@ -175,14 +187,11 @@ watch(
 
 onMounted(() => {
   void loadWindow(1);
-  // 关窗确认前由 CloseGuard 调用：先把未提交的段写回归档内存，
-  // 这样"是否有未保存修改"就落到归档计数那条已验证的路径上。
-  editor.registerLargeFlusher(props.index, commit);
 });
 
 onBeforeUnmount(() => {
-  editor.registerLargeFlusher(props.index, null);
-  void commit();
+  // 刻意什么都不做：未写回的段留在 store 里（切标签不丢），
+  // 关标签 / 关窗口会由确认框提示（见 editor.hasPendingLargeEdits / useUnsavedChanges）。
 });
 </script>
 
@@ -194,17 +203,19 @@ onBeforeUnmount(() => {
         连续全文 {{ totalLines.toLocaleString() }} 行 · 文本留在后端，滚到哪取到哪
       </span>
       <span class="lsc-gap" />
-      <span v-if="saving" class="lsc-state">保存中…</span>
-      <span v-else-if="dirty" class="lsc-state lsc-state--dirty">本段有改动待保存</span>
+      <span v-if="saving" class="lsc-state">写回归档中…</span>
+      <span v-else-if="pendingCount > 0" class="lsc-state lsc-state--dirty">
+        有 {{ pendingCount }} 段改动未写回归档（点右侧按钮或 Ctrl+S）
+      </span>
       <span v-else-if="loading" class="lsc-state">加载中…</span>
       <NButton
         size="tiny"
         type="primary"
         :loading="saving"
-        :disabled="!dirty"
+        :disabled="pendingCount === 0"
         @click="onSaveClick"
       >
-        保存本段{{ dirty ? " ●" : "" }}
+        {{ pendingCount > 1 ? `保存全部 ${pendingCount} 段` : "保存本段" }}{{ pendingCount > 0 ? " ●" : "" }}
       </NButton>
     </div>
 
@@ -219,7 +230,6 @@ onBeforeUnmount(() => {
           :value="winText"
           @input="onInput"
           @keydown="onKeydown"
-          @blur="() => enqueue(commit)"
         />
       </div>
     </div>
