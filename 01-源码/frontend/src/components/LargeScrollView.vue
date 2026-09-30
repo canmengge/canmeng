@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
-import { GetFileLines, SetFileLines } from "../services/largeTextApi";
+import { GetFileLines } from "../services/largeTextApi";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
 
@@ -100,26 +100,23 @@ async function loadWindow(startLine: number): Promise<void> {
 }
 
 /**
- * 把本标签所有「待写回」的段写回归档内存 —— **只有用户点保存 / Ctrl+S 才会走到这里**。
- * 降序写回：后面的段先写，前面段的行号不会被顶掉。
+ * Ctrl+S：与普通文件完全一致 —— 把本标签的改动写进归档内存（再由工具栏「保存 PVF」落盘）。
+ *
+ * 实现上直接调 `editor.saveTab`：它内部会先把 TXT 视图的"待写回段"落到归档内存，
+ * 因此 TXT 视图不再需要单独一个「保存本段」按钮（用户 2026-09-30 要求合并掉那一步）。
  */
-async function savePending(): Promise<boolean> {
-  const segments = editor.pendingSegmentsOf(props.index);
-  if (segments.length === 0) return true;
+async function saveNow(): Promise<void> {
+  if (pendingCount.value === 0) return;
   saving.value = true;
   try {
-    for (const segment of [...segments].sort((a, b) => b.start - a.start)) {
-      const chunk = await SetFileLines(props.index, segment.start, segment.count, segment.text);
-      if (chunk) totalLines.value = chunk.lines;
-    }
-    editor.clearPendingLargeSegments(props.index);
+    const saved = await editor.saveTab(props.index);
+    if (!saved) return;
     await archive.refreshInfo();
     // 写回后把窗口重新对齐到同一位置：用户看到的就是刚写进去的内容。
     await loadWindow(winStart.value);
-    return true;
+    message.success("已写回归档内存，请点工具栏「保存 PVF」落盘");
   } catch (error: any) {
     message.error(`写回归档失败：${error?.message ?? error}`);
-    return false;
   } finally {
     saving.value = false;
   }
@@ -162,17 +159,15 @@ function onInput(event: Event): void {
   editor.setPendingLargeSegment(props.index, winStart.value, winCount.value, winText.value);
 }
 
-/** 段内 Ctrl/Cmd+S = 保存本段（避免用户以为已经落盘）。 */
+/** 段内 Ctrl/Cmd+S = 与普通文件一致：写回归档内存（不再是单独的"保存本段"）。 */
 function onKeydown(event: KeyboardEvent): void {
   if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
     event.preventDefault();
-    void onSaveClick();
+    void saveNow();
   }
 }
 
-async function onSaveClick(): Promise<void> {
-  if (await savePending()) message.success("已写回归档内存，请点工具栏「保存 PVF」落盘");
-}
+
 
 /** 供搜索定位使用：跳到指定行（只换窗口，不写归档）。 */
 async function gotoLine(line: number): Promise<void> {
@@ -214,18 +209,9 @@ onBeforeUnmount(() => {
       <span class="lsc-gap" />
       <span v-if="saving" class="lsc-state">写回归档中…</span>
       <span v-else-if="pendingCount > 0" class="lsc-state lsc-state--dirty">
-        有 {{ pendingCount }} 段改动未写回归档（点右侧按钮或 Ctrl+S）
+        有 {{ pendingCount }} 段改动未保存（按 Ctrl+S 或点上方的「保存」按钮）
       </span>
       <span v-else-if="loading" class="lsc-state">加载中…</span>
-      <NButton
-        size="tiny"
-        type="primary"
-        :loading="saving"
-        :disabled="pendingCount === 0"
-        @click="onSaveClick"
-      >
-        {{ pendingCount > 1 ? `保存全部 ${pendingCount} 段` : "保存本段" }}{{ pendingCount > 0 ? " ●" : "" }}
-      </NButton>
     </div>
 
     <div ref="viewport" class="lsc-viewport" @scroll="onScroll">

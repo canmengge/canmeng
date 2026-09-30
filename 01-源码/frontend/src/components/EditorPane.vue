@@ -499,9 +499,18 @@ const canRevealActiveFile = computed(
 const activeBookmarked = computed(
   () => !!activeTab.value && bookmarks.isBookmarkedInGroup(activeTab.value.path)
 );
-const activeTabDirty = computed(
-  () => !!activeTab.value && activeTab.value.editable && activeTab.value.text !== activeTab.value.original
-);
+/**
+ * 当前文件是否有待保存的修改。
+ *
+ * 大文件（TXT 视图）的 `tab.text` 恒为空，改动记在 editor 的"待写回段"里，
+ * 所以必须一并算进来 —— 否则工具条保存按钮会显示"没有待保存的修改"，
+ * 而 TXT 视图里其实还压着没保存的段（用户 2026-09-30 反馈过这个错位）。
+ */
+const activeTabDirty = computed(() => {
+  const tab = activeTab.value;
+  if (!tab || !tab.editable) return false;
+  return tab.text !== tab.original || editor.hasPendingLargeEdits(tab.index);
+});
 const canBookmarkActiveFile = computed(
   () => archive.open && bookmarks.loaded && !!activeTab.value && !bookmarking.value
 );
@@ -951,7 +960,12 @@ function onDrop(event: DragEvent): void {
             @contextmenu.stop="onTabContextMenu($event, tab.index)"
           >
             <ImageThumbnail v-if="tab.icon" :reference="tab.icon" :size="16" />
-            <span :class="['tab-dot', { dirty: tab.text !== tab.original }]" />
+            <span
+              :class="[
+                'tab-dot',
+                { dirty: tab.text !== tab.original || editor.hasPendingLargeEdits(tab.index) },
+              ]"
+            />
             <span class="tab-title">{{ tab.title }}</span>
             <NTooltip>
               <template #trigger>

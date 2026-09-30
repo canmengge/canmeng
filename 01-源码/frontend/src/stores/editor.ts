@@ -2,6 +2,7 @@ import { acceptHMRUpdate, defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { ArchiveService, EditorService } from "../../bindings/pvfine/services";
+import { SetFileLines } from "../services/largeTextApi";
 import { markTrace, traceAsync } from "../diagTrace";
 import type { EditorAnnotation, FileMeta, TreeTag, ImageReference } from "../../bindings/pvfine/services/models";
 import {
@@ -595,10 +596,32 @@ export const useEditorStore = defineStore("editor", () => {
     return tab.editable && tab.text !== tab.original;
   }
 
+  /**
+   * 把某个标签在 TXT 视图里「改了但还没写回归档」的段写进归档内存。
+   *
+   * 由保存动作自动调用（Ctrl+S / 编辑器工具条「保存」/ 主工具条「保存」）——
+   * 用户 2026-09-30 反馈：TXT 视图里再单独点一次「保存本段」是多余的一步，
+   * 所以那个按钮已删除，保存语义与普通文件完全一致：
+   *   Ctrl+S（或工具条保存）→ 写进归档内存 → 主工具条「保存」→ 落盘 PVF。
+   * 降序写回：后面的段先写，前面段的行号不会被顶掉。
+   */
+  async function flushLargeSegments(index: number): Promise<boolean> {
+    const segments = pendingSegmentsOf(index);
+    if (segments.length === 0) return false;
+    for (const segment of [...segments].sort((a, b) => b.start - a.start)) {
+      await SetFileLines(index, segment.start, segment.count, segment.text);
+    }
+    clearPendingLargeSegments(index);
+    return true;
+  }
+
   /** 把单个标签的本地文本写入后端 overlay,成功后重置脏基线。 */
   async function saveTab(index: number): Promise<boolean> {
     const tab = tabs.value.find((item) => item.index === index);
-    if (!tab || !isDirty(tab)) return false;
+    if (!tab) return false;
+    // 大文件 TXT 视图的待写段先落到归档内存（等价于用户按了保存）。
+    const flushedLarge = await flushLargeSegments(index);
+    if (!isDirty(tab)) return flushedLarge;
     const text = tab.text;
     await EditorService.SetText(tab.index, text);
     const annotations = (await EditorService.GetAnnotations(tab.index)) ?? [];
@@ -632,7 +655,10 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 把所有本地有修改的标签写入 overlay(PVF 写盘前调用)。 */
   async function saveAllDirty(): Promise<number> {
-    const indexes = tabs.value.filter((tab) => isDirty(tab)).map((tab) => tab.index);
+    // 大文件 TXT 视图的待写段也算"有修改"，必须一起写回归档内存，否则按「保存 PVF」会漏掉它们。
+    const indexes = tabs.value
+      .filter((tab) => isDirty(tab) || hasPendingLargeEdits(tab.index))
+      .map((tab) => tab.index);
     let saved = 0;
     for (const index of indexes) {
       if (await saveTab(index)) saved += 1;
