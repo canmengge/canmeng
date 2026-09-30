@@ -2,9 +2,18 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import {
+  drawSelection,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+} from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
+import { listLinkAt, resolveListLinkIndex } from "../listNames";
 import { GetFileLines } from "../services/largeTextApi";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
@@ -34,9 +43,17 @@ const props = defineProps<{
   reveal?: { seq: number; needles: string[]; line?: number } | null;
 }>();
 
+/** Ctrl/Cmd+单击清单里的路径：与普通编辑器一致——打开目标文件并在左树定位。 */
+const emit = defineEmits<{
+  (event: "activate-reference", fileIndex: number): void;
+}>();
+
 const message = useMessage();
 const archive = useArchiveStore();
 const editor = useEditorStore();
+
+/** 清单文件（.lst）：才启用行内路径链接的 Ctrl+单击跳转。 */
+const isListFile = computed(() => props.path.toLowerCase().endsWith(".lst"));
 
 const viewport = ref<HTMLDivElement | null>(null);
 const totalLines = ref(0);
@@ -72,11 +89,23 @@ const editableCompartment = new Compartment();
 const remoteWindowChange = Annotation.define<boolean>();
 
 const largeWindowTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "13px", backgroundColor: "transparent" },
+  // 高度交给内容自己撑开：搜索面板出现时不会把正文顶掉（窗口是顶部锚定的，
+  // 向下长出去不会让行号与 spacer 错位）。
+  "&": { fontSize: "13px", backgroundColor: "transparent" },
   ".cm-scroller": {
     overflow: "hidden",
     fontFamily: "'SF Mono', Menlo, Consolas, 'Courier New', monospace",
     lineHeight: "20px",
+  },
+  ".cm-gutters": {
+    background: "transparent",
+    color: "var(--pvf-text-faint)",
+    border: "none",
+  },
+  ".cm-activeLine": { background: "rgba(127, 127, 127, 0.10)" },
+  ".cm-activeLineGutter": {
+    background: "rgba(127, 127, 127, 0.10)",
+    color: "var(--pvf-text-primary)",
   },
   ".cm-content": { padding: "0", lineHeight: "20px", caretColor: "var(--pvf-text-primary)" },
   ".cm-line": { padding: "0", lineHeight: "20px" },
@@ -87,6 +116,14 @@ const largeWindowTheme = EditorView.theme({
 function makeExtensions(): Extension[] {
   return [
     largeWindowTheme,
+    // 行号显示**文件真实行号**（窗口只装了其中一段，所以用 winStart 换算）
+    lineNumbers({ formatNumber: (lineNo) => String(winStart.value + lineNo - 1) }),
+    highlightActiveLineGutter(),
+    highlightActiveLine(),
+    drawSelection(),
+    highlightSelectionMatches(),
+    // 段内搜索（Ctrl+F）：只在当前视口这几千行里找，不碰后端、不影响秒开
+    search(),
     // PVF 语法着色（与普通编辑器同一套语言与高亮规则）
     pvfLanguage.extension,
     pvfHighlighting,
@@ -95,7 +132,30 @@ function makeExtensions(): Extension[] {
       { key: "Mod-s", run: () => (void saveNow(), true) },
       ...defaultKeymap,
       ...historyKeymap,
+      ...searchKeymap,
     ]),
+    // Ctrl/Cmd+单击清单里的路径 → 打开目标文件（大文件多半就是清单，这条最实用）
+    EditorView.domEventHandlers({
+      click(event, currentView) {
+        const mouseEvent = event as MouseEvent;
+        if (!mouseEvent.ctrlKey && !mouseEvent.metaKey) return false;
+        if (!isListFile.value) return false;
+        const position = currentView.posAtCoords({
+          x: mouseEvent.clientX,
+          y: mouseEvent.clientY,
+        });
+        if (position === null) return false;
+        const linkPath = listLinkAt(currentView, position);
+        if (!linkPath) return false;
+        mouseEvent.preventDefault();
+        mouseEvent.stopPropagation();
+        void resolveListLinkIndex(linkPath).then((fileIndex) => {
+          if (fileIndex < 0) return;
+          emit("activate-reference", fileIndex);
+        });
+        return true;
+      },
+    }),
     // 绝不折行：折行会破坏「行号 × 20px」的虚拟定位
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
@@ -351,7 +411,7 @@ onBeforeUnmount(() => {
 }
 /* CodeMirror 的行必须严格等于 ROW_HEIGHT（20px）、不折行，否则虚拟定位会漂移 */
 .lsc-window :deep(.cm-editor) {
-  height: 100%;
+  height: auto;
   background: transparent;
   color: var(--pvf-text-primary);
   font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace;

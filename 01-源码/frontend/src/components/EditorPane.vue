@@ -1169,6 +1169,7 @@ function onDrop(event: DragEvent): void {
             :path="tab.path"
             :size="tab.size"
             :reveal="revealFor(tab.index)"
+            @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"
           />
           <CodeEditor
             v-else
