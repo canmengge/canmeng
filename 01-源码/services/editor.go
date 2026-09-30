@@ -16,8 +16,9 @@ import (
 )
 
 // bigTextBytes / bigTextLines 是「反编译后文本」规模的大文件阈值，与 bigFileBytes
-//（归档内原始体积）并用：归档内小 ≠ 展开后小，前端靠 LargeFile 决定渲染降级策略
-//（纯文本模式、关闭折行/空白高亮），漏判会让前端带着几百万字符跑语法解析而卡死。
+//（归档内原始体积）并用：归档内小 ≠ 展开后小，前端靠 LargeFile 决定是否改走
+//「连续全文 TXT」通道（见 services/large_text.go），漏判会让前端带着几百万字符
+// 去挂编辑器而卡死。
 const (
 	bigTextBytes = 4 << 20 // 展开后 4MB
 	bigTextLines = 100000  // 或 10 万行
@@ -123,9 +124,10 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 		if meta.LargeFile {
 			// 超大文本**不下发**（2026-09-30 实测）：list/equipment.lst 解码后 2740 万字符，
 			// 光是把它送进窗口就让前端停摆 43 秒、之后每 11 秒一轮（与编辑器、扩展、
-			// 渲染行数都无关；空文档挂载 CM 也要 30 秒）。这类文件改走「导出 → 外部编辑器
-			// → 回填」通道，因此这里只保留判定：文本与注解都不给前端，前端据 largeFile
-			// 显示大文件卡片。解码结果仍进缓存，供回填/保存链路复用。
+			// 渲染行数都无关；空文档挂载 CM 也要 30 秒）。这类文件改走「连续全文 TXT」
+			// 通道（GetFileLines/SetFileLines 按视口取行），因此这里只保留判定：
+			// 文本与注解都不给前端，前端据 largeFile 走 TXT 视图。
+			// 解码结果仍进缓存，供按行取数与保存链路复用。
 			meta.Text = ""
 			meta.TextOmitted = true
 			meta.Annotations = nil

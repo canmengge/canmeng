@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
 import { GetFileLines, SetFileLines } from "../services/largeTextApi";
 import { useArchiveStore } from "../stores/archive";
-import { useExternalEditStore } from "../stores/externalEdit";
+import { useEditorStore } from "../stores/editor";
 
 /**
  * 大文件的「连续全文 TXT 视图」（记事本那种一路滚下去的观感）。
@@ -32,7 +32,7 @@ const props = defineProps<{
 
 const message = useMessage();
 const archive = useArchiveStore();
-const externalEdit = useExternalEditStore();
+const editor = useEditorStore();
 
 const viewport = ref<HTMLDivElement | null>(null);
 const totalLines = ref(0);
@@ -86,6 +86,7 @@ async function commit(): Promise<boolean> {
   try {
     const chunk = await SetFileLines(props.index, start, count, winText.value);
     dirty.value = false;
+    editor.notePendingLargeEdit(props.index, false);
     if (chunk) totalLines.value = chunk.lines;
     await archive.refreshInfo();
     return true;
@@ -131,22 +132,20 @@ function onInput(event: Event): void {
   winText.value = (event.target as HTMLTextAreaElement).value;
   winCount.value = countLines(winText.value);
   dirty.value = true;
+  // 上报"段内有未提交改动"：tab.text 恒为空，靠这个才能让退出确认看到它。
+  editor.notePendingLargeEdit(props.index, true);
+}
+
+/** 段内 Ctrl/Cmd+S = 保存本段（避免用户以为已经落盘）。 */
+function onKeydown(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
+    event.preventDefault();
+    void onSaveClick();
+  }
 }
 
 async function onSaveClick(): Promise<void> {
   if (await commit()) message.success("已写回归档内存，请点工具栏「保存 PVF」落盘");
-}
-
-async function onOpenExternal(): Promise<void> {
-  try {
-    if (!(await commit())) return;
-    const session = await externalEdit.start(props.path);
-    message.success(
-      session?.opened ? "已导出副本并用系统默认程序打开" : "已导出副本，请到工作目录里手动打开"
-    );
-  } catch (error: any) {
-    message.error(`导出失败：${error?.message ?? error}`);
-  }
 }
 
 /** 供搜索定位使用：跳到指定行。 */
@@ -190,7 +189,6 @@ onBeforeUnmount(() => {
       <span v-if="saving" class="lsc-state">保存中…</span>
       <span v-else-if="dirty" class="lsc-state lsc-state--dirty">本段有改动待保存</span>
       <span v-else-if="loading" class="lsc-state">加载中…</span>
-      <NButton size="tiny" quaternary @click="onOpenExternal">用外部编辑器打开</NButton>
       <NButton
         size="tiny"
         type="primary"
@@ -212,6 +210,7 @@ onBeforeUnmount(() => {
           :readonly="!editable"
           :value="winText"
           @input="onInput"
+          @keydown="onKeydown"
           @blur="() => enqueue(commit)"
         />
       </div>

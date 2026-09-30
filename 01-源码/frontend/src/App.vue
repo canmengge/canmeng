@@ -131,12 +131,6 @@ async function onKeydown(e: KeyboardEvent) {
     settings.toggleReferenceTags();
     return;
   }
-  // Alt+T：切换「纯文本模式」（关掉注解 / 着色 / 名称标签，像记事本一样打开）。
-  if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyT") {
-    e.preventDefault();
-    settings.togglePlainTextMode();
-    return;
-  }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   if (e.code === "Backslash") {

@@ -111,6 +111,22 @@ export const useEditorStore = defineStore("editor", () => {
     () => tabs.value.find((tab) => tab.index === activePane.value.activeKey) ?? null
   );
   const dirtyCount = computed(() => tabs.value.filter((tab) => tab.text !== tab.original).length);
+  /**
+   * 大文件「段内改动未提交」的标签集合（TXT 视图专用）。
+   *
+   * 大文件的文本不在窗口里（见 services/large_text.go），`tab.text` 恒为空 ⇒
+   * `dirtyCount` 永远看不到它。若不单独上报，用户改了一段却直接关窗口，
+   * 「未保存修改」确认框不会出现，改动会静默丢掉。
+   */
+  const pendingLargeEdits = ref<Set<number>>(new Set());
+  const pendingLargeEditCount = computed(() => pendingLargeEdits.value.size);
+
+  function notePendingLargeEdit(index: number, pending: boolean): void {
+    const next = new Set(pendingLargeEdits.value);
+    if (pending) next.add(index);
+    else next.delete(index);
+    pendingLargeEdits.value = next;
+  }
   const pendingClose = ref<PendingTabClose | null>(null);
   /** 待定位的搜索命中:文件打开后由编辑器滚动到命中处并高亮。 */
   const pendingReveal = ref<{ index: number; needles: string[]; seq: number; line?: number } | null>(null);
@@ -983,6 +999,8 @@ export const useEditorStore = defineStore("editor", () => {
     activeKey,
     activeTab,
     dirtyCount,
+    pendingLargeEditCount,
+    notePendingLargeEdit,
     activePaneId,
     draggingTab,
     isSplit,

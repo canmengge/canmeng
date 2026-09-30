@@ -19,10 +19,8 @@ import { ArrowCollapseAll20Regular, Target20Regular } from "@vicons/fluent";
 import { ArchiveService } from "../../bindings/pvfine/services";
 import { ExportFilesTo } from "../services/exportApi";
 import ExportDialog from "./ExportDialog.vue";
-import ExternalEditPanel from "./ExternalEditPanel.vue";
 import type { FileRegistration, TreeTag, TreeNode } from "../../bindings/pvfine/services/models";
 import { useArchiveStore } from "../stores/archive";
-import { useExternalEditStore } from "../stores/externalEdit";
 import { useExplorerStore, type SearchItem, type TreeItem } from "../stores/explorer";
 import { useEditorStore } from "../stores/editor";
 import { useFileSetStore, type FileSetEntry } from "../stores/fileSets";
@@ -41,7 +39,6 @@ const archive = useArchiveStore();
 const explorer = useExplorerStore();
 const searchWindow = useSearchWindowStore();
 const annotationEdit = useAnnotationEditStore();
-const externalEdit = useExternalEditStore();
 const sidebar = useSidebarStore();
 const ai = useAIStore();
 const editor = useEditorStore();
@@ -141,21 +138,6 @@ const contextMenuOptions = computed(() => [
     label: "导出文件",
     key: "export",
     disabled: copyMenuDisabled.value,
-  },
-  {
-    // 大文件（如 list/equipment.lst）在编辑器里打开很慢：导出成文本用系统默认程序改，再一键回填。
-    label: "用外部编辑器编辑",
-    key: "external-edit",
-    disabled:
-      copyBusy.value ||
-      !archive.open ||
-      contextMenu.value.items.length !== 1 ||
-      contextMenu.value.anchor?.isDir === true,
-  },
-  {
-    label: "外部编辑会话…",
-    key: "external-edit-panel",
-    disabled: !archive.open,
   },
   {
     label: "复制",
@@ -739,30 +721,6 @@ async function onContextMenuSelect(key: string | number): Promise<void> {
     await onAIIntroduce();
     return;
   }
-  if (key === "external-edit-panel") {
-    hideContextMenu();
-    externalEdit.openPanel();
-    return;
-  }
-  if (key === "external-edit") {
-    const item = contextMenu.value.anchor;
-    hideContextMenu();
-    if (!item || item.isDir) {
-      message.info("外部编辑只针对单个文件：请右键一个文件");
-      return;
-    }
-    try {
-      const session = await externalEdit.start(item.key);
-      message.success(
-        session.opened
-          ? `已导出并用系统默认程序打开：${session.localPath}`
-          : `已导出到 ${session.localPath}（未能自动打开，请手动打开）`
-      );
-    } catch (error: any) {
-      message.error(`外部编辑失败：${error?.message ?? error}`);
-    }
-    return;
-  }
   if (key === "add-to-search-window") {
     // 先复制待处理项：下面要 await 补目录标注，菜单状态随时可能被清掉。
     const items = [...contextMenu.value.items];
@@ -1101,7 +1059,6 @@ function isCancel(error: any): boolean {
       :paths="exportPickScopes"
       @confirm="onExportPicked"
     />
-    <ExternalEditPanel v-model:show="externalEdit.panelVisible" />
   </div>
 </template>
 

@@ -22,6 +22,9 @@ export function useUnsavedChanges(): ComputedRef<boolean> {
     () =>
       archive.modifiedCount > 0 ||
       editor.dirtyCount > 0 ||
+      // 大文件 TXT 视图里「改了段但还没提交」：tab.text 恒为空，dirtyCount 看不到，
+      // 必须单独算进来，否则关窗口时不会提示、改动静默丢失。
+      editor.pendingLargeEditCount > 0 ||
       fileSets.dirty ||
       // 工作区分离后脚本内容在独立窗口里：本窗口的 script.dirty 停留在分离那一刻
       // 的值（在那边保存也不会同步回来），必须改用独立窗口上报的 dirty，否则

@@ -28,7 +28,6 @@ import {
   Save24Regular,
   Search24Regular,
   TextAddT24Regular,
-  TextT24Regular,
 } from "@vicons/fluent";
 import {
   useEditorStore,
@@ -443,10 +442,10 @@ function runListDuplicateCheck(): void {
     message.warning("请先打开一个 lst 文件");
     return;
   }
-  // 大文件的文本没有载入窗口（走 TXT 页模式，见 services/large_text.go）：
+  // 大文件的文本没有载入窗口（走连续全文 TXT，见 services/large_text.go）：
   // 这里必须明确拒绝，否则会拿空串去查重、报「未发现重复条目」——错得看不出错。
   if (tab.largeFile) {
-    message.warning("大文件走 TXT 页模式（文本未载入窗口），list 查重暂不支持；可改用「用外部编辑器打开」后在本机查重");
+    message.warning("大文件走 TXT 模式（文本留在后端、不整份载入窗口），list 查重暂不支持");
     return;
   }
   // 每次都按编辑器里的「当前内容」全量重算（未保存的改动同样生效），
@@ -521,7 +520,7 @@ function previewFile(tab: EditorTab): PreviewFile {
 }
 
 function previewProviderFor(tab: EditorTab) {
-  // 大文件的文本没进窗口（TXT 页模式）：预览拿不到内容，直接不给入口，
+  // 大文件的文本没进窗口（TXT 模式）：预览拿不到内容，直接不给入口，
   // 免得点开是空白让人以为文件是空的。
   if (tab.largeFile) return undefined;
   return getPreviewProvider(previewFile(tab));
@@ -1008,23 +1007,6 @@ function onDrop(event: DragEvent): void {
           </div>
 
           <div class="editor-pane-actions" role="group" aria-label="编辑器操作">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  quaternary
-                  size="tiny"
-                  :type="settings.plainTextMode ? 'primary' : 'default'"
-                  aria-label="纯文本模式"
-                  @click="settings.togglePlainTextMode()"
-                >
-                  <template #icon><NIcon><TextT24Regular /></NIcon></template>
-                  纯文本
-                </NButton>
-              </template>
-              {{ settings.plainTextMode
-                ? "纯文本模式已开启（Alt+T 关闭）：关闭注解标签 / 语法着色 / 清单名称标签 / 补全，像记事本一样打开"
-                : "纯文本模式（Alt+T）：像记事本一样打开，关闭注解标签 / 着色 / 名称标签，大文件更快" }}
-            </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && isListFile(tab.path)" trigger="hover">
               <template #trigger>
                 <NButton
@@ -1039,7 +1021,7 @@ function onDrop(event: DragEvent): void {
                 </NButton>
               </template>
               {{ tab.largeFile
-                ? "大文件走 TXT 页模式（文本未载入窗口），暂不支持查重"
+                ? "大文件走 TXT 模式（文本留在后端、不整份载入窗口），暂不支持查重"
                 : "检查当前 lst 里重复的条目（ID 重复 / 路径重复 / 整行重复）" }}
             </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && !activeHasID" trigger="hover">
@@ -1180,8 +1162,7 @@ function onDrop(event: DragEvent): void {
             :doc="tab.text"
             :read-only="!tab.editable"
             :large-file="tab.largeFile"
-            :plain-text="settings.plainTextMode"
-            :annotations="settings.plainTextMode ? [] : tab.annotations"
+            :annotations="tab.annotations"
             :tag-placement="settings.annotationTagPlacement"
             :show-reference-tags="settings.showReferenceTags"
             :vim-mode="settings.vimMode"
