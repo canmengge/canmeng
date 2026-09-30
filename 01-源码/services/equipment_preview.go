@@ -299,10 +299,21 @@ func enumValue(field annotationrules.FieldDefinition, raw string, document *Equi
 	if label, ok := field.Annotation.Values[value]; ok {
 		return label
 	}
+	// 兜底匹配可能命中多个同形键（如 `ha waist` 与 `HA WAIST`）：按归一化后的
+	// 字典序取最小那个，保证同一份数据每次得到相同结果 —— map 迭代顺序是随机的，
+	// 不排序会让同一行偶尔翻译成不同词。
+	matchedKey, matchedLabel := "", ""
 	for key, label := range field.Annotation.Values {
-		if strings.EqualFold(strings.Trim(key, "`"), value) {
-			return label
+		normalized := strings.Trim(key, "`")
+		if !strings.EqualFold(normalized, value) {
+			continue
 		}
+		if matchedKey == "" || normalized < matchedKey {
+			matchedKey, matchedLabel = normalized, label
+		}
+	}
+	if matchedKey != "" {
+		return matchedLabel
 	}
 	if len(field.Annotation.Values) > 0 && value != "" {
 		addPreviewIssue(&document.Issues, text, start, "warning", field.Annotation.Title, "未知枚举值: "+value)
