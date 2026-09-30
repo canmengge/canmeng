@@ -18,15 +18,6 @@ const providers: PreviewProvider[] = [
     chrome: "game-tooltip",
   },
   {
-    // 消耗品 / 材料：字段定义见 config/annotations.json 的 stk.* 条目，
-    // 与 .equ 共用同一套预览文档结构（provider 都是 "equ"）。
-    id: "stk",
-    label: "物品预览",
-    matches: (file) => file.path.toLowerCase().endsWith(".stk"),
-    component: EquipmentPreview,
-    chrome: "game-tooltip",
-  },
-  {
     id: "lst",
     label: "清单预览",
     matches: (file) => file.path.toLowerCase().endsWith(".lst"),
