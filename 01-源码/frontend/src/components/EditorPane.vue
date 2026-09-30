@@ -28,6 +28,7 @@ import {
   Save24Regular,
   Search24Regular,
   TextAddT24Regular,
+  TextT24Regular,
 } from "@vicons/fluent";
 import {
   useEditorStore,
@@ -997,6 +998,23 @@ function onDrop(event: DragEvent): void {
           </div>
 
           <div class="editor-pane-actions" role="group" aria-label="编辑器操作">
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="tiny"
+                  :type="settings.plainTextMode ? 'primary' : 'default'"
+                  aria-label="纯文本模式"
+                  @click="settings.togglePlainTextMode()"
+                >
+                  <template #icon><NIcon><TextT24Regular /></NIcon></template>
+                  纯文本
+                </NButton>
+              </template>
+              {{ settings.plainTextMode
+                ? "纯文本模式已开启（Alt+T 关闭）：关闭注解标签 / 语法着色 / 清单名称标签 / 补全，像记事本一样打开"
+                : "纯文本模式（Alt+T）：像记事本一样打开，关闭注解标签 / 着色 / 名称标签，大文件更快" }}
+            </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && isListFile(tab.path)" trigger="hover">
               <template #trigger>
                 <NButton
@@ -1137,7 +1155,8 @@ function onDrop(event: DragEvent): void {
             :doc="tab.text"
             :read-only="!tab.editable"
             :large-file="tab.largeFile"
-            :annotations="tab.annotations"
+            :plain-text="settings.plainTextMode"
+            :annotations="settings.plainTextMode ? [] : tab.annotations"
             :tag-placement="settings.annotationTagPlacement"
             :show-reference-tags="settings.showReferenceTags"
             :vim-mode="settings.vimMode"

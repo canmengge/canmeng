@@ -69,6 +69,17 @@ export const useSettingsStore = defineStore("settings", () => {
     showReferenceTags.value = !showReferenceTags.value;
   }
 
+  /**
+   * 「纯文本模式」：把所有编辑器降级成记事本——关掉注解标签、语法着色、清单名称标签、
+   * 补全与空白高亮，只留文本 + 行号 + 折行 + 查找。大文件（如几十万行的 list/*.lst）
+   * 用它换取打开速度。工具条「纯文本」按钮或 Alt+T 切换，仅本次会话有效。
+   */
+  const plainTextMode = ref(false);
+
+  function togglePlainTextMode(): void {
+    plainTextMode.value = !plainTextMode.value;
+  }
+
   async function load() {
     if (loaded.value) return;
     try {
@@ -341,6 +352,8 @@ export const useSettingsStore = defineStore("settings", () => {
     mcpWriteEnabled,
     showReferenceTags,
     toggleReferenceTags,
+    plainTextMode,
+    togglePlainTextMode,
     load,
     savePlacement,
     saveExplorerOpenMode,

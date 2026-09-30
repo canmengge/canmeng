@@ -20,6 +20,7 @@ import {
   Compartment,
   StateEffect,
   StateField,
+  type Extension,
   type Range,
 } from "@codemirror/state";
 import {
@@ -47,6 +48,7 @@ import { useImageStore } from "../stores/images";
 import { scriptCompletionSource as declarationCompletionSource } from "../scriptLanguageService";
 import type { ResolvedThemeId } from "../theme";
 import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
+import { markTrace } from "../diagTrace";
 
 const props = defineProps<{
   doc: string;
@@ -64,6 +66,8 @@ const props = defineProps<{
   reveal?: { seq: number; needles: string[]; line?: number } | null;
   /** .lst 清单文件：在可见行路径后显示目标文件名称（惰性，见 listNames.ts）。 */
   listNames?: boolean;
+  /** 「纯文本模式」（记事本式）：关掉注解标签 / 语法着色 / 名称标签 / 补全 / 空白高亮。 */
+  plainText?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +93,10 @@ let view: EditorView | null = null;
 const readOnlyComp = new Compartment();
 const vimComp = new Compartment();
 const editorThemeComp = new Compartment();
+// 「纯文本模式」切换用的两个隔间：观感装饰（空白高亮）与重扩展（名称标签/语法/着色/补全）。
+// 用隔间重配而不是重建编辑器：几十万行的文档重建要几百毫秒，还会丢掉撤销栈。
+const plainViewComp = new Compartment();
+const plainPluginComp = new Compartment();
 const images = useImageStore();
 
 interface AnnotationDisplay {
@@ -597,8 +605,34 @@ function flushPendingChange(): void {
   if (view) reportChange(view.state.doc.toString());
 }
 
-function makeExtensions(themeId: ResolvedThemeId) {
+/** 「纯文本模式」是否生效：大文件本就降级渲染，这个开关让用户对任意文件手动降级。 */
+function plainTextActive(): boolean {
+  return props.plainText === true;
+}
+
+/** 观感类装饰（空白高亮：每个空白字符一个装饰，几十万行时是主要负担之一）。 */
+function viewDecorations(large: boolean): Extension[] {
+  return large || plainTextActive() ? [] : [highlightWhitespace()];
+}
+
+/** 需扫描全文的重扩展：清单名称标签、语法解析、着色与补全提示。 */
+function heavyExtensions(large: boolean): Extension[] {
+  if (large || plainTextActive()) return [];
   const isJavaScript = props.language === "javascript";
+  return [
+    ...(props.listNames ? [listNamePlugin] : []),
+    isJavaScript ? javascript() : pvfLanguage.extension,
+    ...(isJavaScript
+      ? [
+          tooltips({ parent: document.body, position: "fixed" }),
+          javascriptHighlighting,
+          autocompletion({ override: [scriptCompletionSource] }),
+        ]
+      : [pvfHighlighting]),
+  ];
+}
+
+function makeExtensions(themeId: ResolvedThemeId) {
   // 大文件降级：空白高亮要给每个空白字符加装饰、折行要逐字符测量，几十万行时都是
   // 卡顿主因；这里只剔除空白高亮（折行保留：长行不换行会看不见内容）。
   const large = props.largeFile === true;
@@ -608,7 +642,7 @@ function makeExtensions(themeId: ResolvedThemeId) {
     highlightActiveLine(),
     history(),
     drawSelection(),
-    ...(large ? [] : [highlightWhitespace()]),
+    plainViewComp.of(viewDecorations(large)),
     rectangularSelection(),
     crosshairCursor(),
     highlightSelectionMatches(),
@@ -669,22 +703,11 @@ function makeExtensions(themeId: ResolvedThemeId) {
     annotationDisplayField,
     annotationField,
     diagnosticLineField,
-    // .lst 清单：可见行路径后显示目标文件名称（惰性，不影响打开速度）。
-    ...(props.listNames ? [listNamePlugin] : []),
     indentUnit.of("\t"),
-    // 语法解析（lezer）要扫描全文：41 万行的清单解析一次就是几十秒，
-    // 是"打开第二个大文件直接卡死"的主因。超大文本以纯文本模式打开：
-    // 不做语法着色，其余能力（链接跳转、定位、搜索、名称标签）全部保留。
-    ...(large ? [] : [isJavaScript ? javascript() : pvfLanguage.extension]),
-    ...(large
-      ? []
-      : isJavaScript
-        ? [
-            tooltips({ parent: document.body, position: "fixed" }),
-            javascriptHighlighting,
-            autocompletion({ override: [scriptCompletionSource] }),
-          ]
-        : [pvfHighlighting]),
+    // 清单名称标签 / 语法解析 / 着色 / 补全：语法解析（lezer）要扫描全文，41 万行的清单
+    // 解析一次就是几十秒，是"打开第二个大文件直接卡死"的主因。大文件与「纯文本模式」
+    // 一律不装这些重扩展（编辑、查找、定位、链接跳转能力不受影响）。
+    plainPluginComp.of(heavyExtensions(large)),
     editorThemeComp.of(createEditorTheme(themeId)),
     // 折行：长行（[item list] 一长串 ID）必须换行显示，否则要横向滚动、看不全。
     // 大文件也保留折行（2026-09-27 用户明确要求）。
@@ -783,9 +806,17 @@ function insertText(text: string): boolean {
 defineExpose({ revealPosition, insertText });
 
 onMounted(() => {
-  view = new EditorView({
-    state: EditorState.create({ doc: props.doc, extensions: makeExtensions(props.themeId) }),
-    parent: host.value!,
+  // 打开大文件卡死的定位：这三条会进前端操作时间线（看门狗 / 控制台 SCRZ 可见），
+  // 一眼看出时间花在「建状态（文档+扩展）」「建视图（DOM）」还是「首帧布局」。
+  const started = performance.now();
+  const state = EditorState.create({ doc: props.doc, extensions: makeExtensions(props.themeId) });
+  const stateBuilt = performance.now();
+  view = new EditorView({ state, parent: host.value! });
+  const viewBuilt = performance.now();
+  markTrace("编辑器建状态", { 字符: props.doc.length, 毫秒: Math.round(stateBuilt - started) });
+  markTrace("编辑器建视图", { 毫秒: Math.round(viewBuilt - stateBuilt) });
+  requestAnimationFrame(() => {
+    markTrace("编辑器首帧", { 毫秒: Math.round(performance.now() - started) });
   });
 });
 
@@ -849,6 +880,21 @@ watch(
     } else if (props.reveal.needles.length > 0) {
       revealNeedle(props.reveal.needles);
     }
+  }
+);
+
+// 「纯文本模式」切换：只重配扩展，不重建文档（几十万行时重建要几百毫秒，还会丢撤销栈）。
+watch(
+  () => props.plainText,
+  () => {
+    if (!view) return;
+    const large = props.largeFile === true;
+    view.dispatch({
+      effects: [
+        plainViewComp.reconfigure(viewDecorations(large)),
+        plainPluginComp.reconfigure(heavyExtensions(large)),
+      ],
+    });
   }
 );
 
