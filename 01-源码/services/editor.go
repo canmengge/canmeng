@@ -243,6 +243,11 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 		s.c.mu.Unlock()
 		return ArchiveInfo{}, fmt.Errorf("归档没有源文件,请使用另存为")
 	}
+	// 保存前的禁动表双保险（写保护总开关开启时生效）：发现禁动表被改动就拒绝保存。
+	if err := s.c.assertProtectedTablesUnmodifiedLocked(a); err != nil {
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, err
+	}
 	if s.shouldBackupSource() {
 		job.phase("backup")
 		backupStart := time.Now()
@@ -365,6 +370,11 @@ func (s *EditorService) SaveAsDialog() (string, error) {
 		return "", ErrNoArchive
 	}
 	if err := s.c.ensureVersionReadyLocked(); err != nil {
+		s.c.mu.Unlock()
+		return "", err
+	}
+	// 另存为同样要过保存前的禁动表校验。
+	if err := s.c.assertProtectedTablesUnmodifiedLocked(a); err != nil {
 		s.c.mu.Unlock()
 		return "", err
 	}

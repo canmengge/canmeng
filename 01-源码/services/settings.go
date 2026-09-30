@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"pvfine/internal/logging"
 )
 
 const (
@@ -81,7 +83,14 @@ type AppSettings struct {
 	Theme                  string `json:"theme"`
 	// ProtectedStringTableGuard 是「字符串表写保护」总开关：
 	// 开启后拦截对客户端汉化禁动字符串表的写入，关闭时不做任何拦截。
+	//
+	// 2026-10-01 起**默认开启**（改坏禁动表会让客户端界面成片显示占位符，
+	// 属于不可逆损失）。老配置里此前从未显式设置过该项，靠
+	// StringTableGuardDefaultMigrated 做一次性迁移，迁移后仍可手动关闭。
 	ProtectedStringTableGuard bool `json:"protectedStringTableGuard"`
+	// StringTableGuardDefaultMigrated 记录"默认开启"这一次性迁移是否已执行：
+	// 老配置里该字段缺失（false）→ 把写保护置为开启并写回；此后用户手动关闭不再被覆盖。
+	StringTableGuardDefaultMigrated bool `json:"stringTableGuardDefaultMigrated"`
 	// AI 是「AI 助手」配置（模型接入 + AI 写保护开关），见 AI镶嵌.md。
 	AI AIAssistantSettings `json:"ai"`
 	// UpdateChannel 是「更新通道」：stable 走正式更新源，dev 走开发人员专用测试源。
@@ -108,13 +117,15 @@ func DefaultAppSettings() AppSettings {
 		BackupSourceOnSave: false,
 		NPKDirectory:       "",
 		Theme:              ThemeDark,
-		// 2026-09-24 用户要求：字符串表写保护**默认关闭**（默认不限制写入），
-		// 需要拦截时到「设置 → 交互与文件 → 字符串表写保护」打开开关。
-		ProtectedStringTableGuard: false,
-		AI:                         DefaultAIAssistantSettings(),
-		UpdateChannel:              UpdateChannelStable,
-		MCPEnabled:                 false,
-		MCPWriteEnabled:            false,
+		// 2026-10-01 用户要求：字符串表写保护**默认开启**（改坏禁动表不可逆，
+		// 客户端会成片显示 <20::main_menu…> 这类占位符）。需要放开时到
+		// 「设置 → 交互与文件 → 字符串表写保护」手动关闭。
+		ProtectedStringTableGuard:       true,
+		StringTableGuardDefaultMigrated: true,
+		AI:                              DefaultAIAssistantSettings(),
+		UpdateChannel:                   UpdateChannelStable,
+		MCPEnabled:                      false,
+		MCPWriteEnabled:                 false,
 	}
 }
 
@@ -171,6 +182,23 @@ func (s *SettingsService) getSettingsLocked() (AppSettings, error) {
 	settings := DefaultAppSettings()
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return AppSettings{}, fmt.Errorf("解析设置失败: %w", err)
+	}
+	// 判定"字段是否存在"必须解到零值结构体上：直接解到默认值上时，缺字段会保留
+	// 默认值 true，看起来像"已迁移过"，迁移就永远不会触发。
+	var present AppSettings
+	if err := json.Unmarshal(data, &present); err != nil {
+		return AppSettings{}, fmt.Errorf("解析设置失败: %w", err)
+	}
+	// 一次性迁移：老配置里没有 StringTableGuardDefaultMigrated 字段，
+	// 说明"写保护默认关闭"是当年由默认值写进去的、不是用户显式选择 —— 这里补成开启
+	// 并落盘。迁移后用户手动关闭的状态会被保留，不再被覆盖。
+	if !present.StringTableGuardDefaultMigrated {
+		settings.StringTableGuardDefaultMigrated = true
+		settings.ProtectedStringTableGuard = true
+		// 尽力写回：失败也不影响本次读到的值（返回的 settings 已经是迁移后的）。
+		if err := s.saveSettingsLocked(settings); err != nil {
+			logging.For("settings").Warn("写保护默认开启迁移未能落盘", "错误", err.Error())
+		}
 	}
 	if err := validateSettings(settings); err != nil {
 		return AppSettings{}, err

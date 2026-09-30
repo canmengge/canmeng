@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"pvfine/internal/logging"
+	"pvfine/internal/pvf"
 	"pvfine/internal/stringguard"
 )
 
@@ -41,6 +42,56 @@ func setStringTableGuardEnabled(enabled bool) { stringTableGuardEnabled.Store(en
 // StringTableGuardEnabled 报告写保护总开关当前是否开启。
 // 前端「编辑器占位符编辑」据此决定是否做界面拦截，与后端共用同一事实源。
 func StringTableGuardEnabled() bool { return stringTableGuardEnabled.Load() }
+
+// protectedStringTablePaths 返回禁动名单里的归档路径（归一化形式）。
+func protectedStringTablePaths() ([]string, error) {
+	guard, err := stringGuard()
+	if err != nil {
+		return nil, err
+	}
+	return guard.ProtectedPaths(), nil
+}
+
+// assertProtectedTablesUnmodifiedLocked 是保存前的**双保险指纹校验**。
+//
+// 正常的写入路径已经由写保护逐个拦截；这里在落盘前再把禁动表过一遍，
+// 抓「从别的路绕过去」的改动（批量处理 / 导入 / 脚本等），发现即拒绝保存 ——
+// 宁可报错让用户确认，也不产出客户端读不了的包（对照 4.4 客户乱码事故）。
+//
+// 总开关关闭时一律放行（那是用户显式选择，界面里能看清）。
+// 调用方必须已持有 c.mu。
+func (c *core) assertProtectedTablesUnmodifiedLocked(a *pvf.Archive) error {
+	if a == nil || !StringTableGuardEnabled() {
+		return nil
+	}
+	paths, err := protectedStringTablePaths()
+	if err != nil || len(paths) == 0 {
+		// 清单读不到就不阻止保存：保护缺失应是"少一层保险"，不该让用户存不了文件。
+		return nil
+	}
+	var changed []string
+	for _, path := range paths {
+		index, ok := a.Find(path)
+		if !ok {
+			continue
+		}
+		if a.IsModified(index) {
+			changed = append(changed, a.Path(index))
+		}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	sample := changed
+	if len(sample) > 5 {
+		sample = sample[:5]
+	}
+	return &ProtectedStringTableError{
+		Path:   sample[0],
+		Reason: "本次保存包含对客户端汉化禁动表的修改：" + strings.Join(sample, "、"),
+		Hint:   "这些表被客户端直接读取，改坏会导致界面与文本成片报废；请撤销这些修改（或在「设置 → 交互与文件」里关闭字符串表写保护，后果自负）后重新保存",
+	}
+}
 
 // isSafeStringTable 查询表号是否在安全表白名单内（**事实查询，与总开关无关**）。
 //

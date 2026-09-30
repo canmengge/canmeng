@@ -76,11 +76,46 @@ func TestSettingsServiceEnablesBackupForLegacySettings(t *testing.T) {
 	}
 }
 
-// 2026-09-24：字符串表写保护开关默认关闭，且保存设置后立即同步到进程内状态。
+// 老配置（没有 stringTableGuardDefaultMigrated 字段）会被一次性迁移为"写保护开启"；
+// 迁移过之后再手动关闭则保持关闭，不被反复覆盖。
+func TestSettingsServiceMigratesGuardDefaultToOne(t *testing.T) {
+	defer setStringTableGuardEnabled(false)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	legacy := []byte(`{"protectedStringTableGuard":false,"theme":"dark"}`)
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := newSettingsService(path).GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.ProtectedStringTableGuard {
+		t.Fatal("老配置应被迁移为写保护开启")
+	}
+	if !settings.StringTableGuardDefaultMigrated {
+		t.Fatal("迁移标记应已写入")
+	}
+
+	// 用户显式关闭 → 保存 → 再读，必须保持关闭。
+	settings.ProtectedStringTableGuard = false
+	if err := newSettingsService(path).SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	again, err := newSettingsService(path).GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ProtectedStringTableGuard {
+		t.Fatal("用户显式关闭后不应被迁移覆盖")
+	}
+}
+
+// 2026-10-01（用户要求，取代 2026-09-24 的"默认关闭"）：
+// 字符串表写保护**默认开启**，且保存设置后立即同步到进程内状态。
 func TestSettingsServiceSyncsStringTableGuardSwitch(t *testing.T) {
 	defer setStringTableGuardEnabled(false)
-	if DefaultAppSettings().ProtectedStringTableGuard {
-		t.Fatal("字符串表写保护默认应为关闭")
+	if !DefaultAppSettings().ProtectedStringTableGuard {
+		t.Fatal("字符串表写保护默认应为开启")
 	}
 	service := newSettingsService(filepath.Join(t.TempDir(), "settings.json"))
 	settings := DefaultAppSettings()

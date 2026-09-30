@@ -1,6 +1,7 @@
 package stringguard
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -122,6 +123,17 @@ func (g *Guard) AllowedTableNumbers() []int {
 
 // ProtectedPathCount 返回禁动路径条数（供界面展示）。
 func (g *Guard) ProtectedPathCount() int { return len(g.protected) }
+
+// ProtectedPaths 返回禁动名单里的归档路径（已归一化：`/` 分隔、小写、去首尾斜杠），
+// 按字典序排列。供「保存前指纹校验」这类批量化检查使用。
+func (g *Guard) ProtectedPaths() []string {
+	out := make([]string, 0, len(g.protected))
+	for key := range g.protected {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Hint 返回清单里的修复建议。
 func (g *Guard) Hint() string { return g.hint }
