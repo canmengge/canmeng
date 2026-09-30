@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"testing"
 	"time"
@@ -55,6 +56,21 @@ func TestPerfBaseline(t *testing.T) {
 	t.Logf("[内存] HeapAlloc=%.1f MB  TotalAlloc=%.1f MB  Sys=%.1f MB",
 		float64(m.HeapAlloc)/(1<<20), float64(m.TotalAlloc)/(1<<20), float64(m.Sys)/(1<<20))
 	t.Logf("[合计] Open+buildIndex = %v", openDur+indexDur)
+
+	// 可选：导出堆剖析，用来回答"内存到底被谁占了"（P2 立项依据，不参与日常测试）。
+	// 用法：set PVF_BENCH_HEAP_PROFILE=<输出路径>
+	if profilePath := os.Getenv("PVF_BENCH_HEAP_PROFILE"); profilePath != "" {
+		f, err := os.Create(profilePath)
+		if err != nil {
+			t.Fatalf("创建堆剖析文件失败: %v", err)
+		}
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			f.Close()
+			t.Fatalf("写堆剖析失败: %v", err)
+		}
+		f.Close()
+		t.Logf("[堆剖析] 已写出: %s", profilePath)
+	}
 }
 
 // TestPerfSearchIndex 测量「语义搜索索引」构建耗时（旧版会生成 4.4 GB 级索引，
