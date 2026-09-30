@@ -800,6 +800,10 @@ watch(
   () => props.doc,
   (doc) => {
     if (!view) return;
+    // O(1) 短路：这个 doc 就是本组件刚刚回报出去的那份文本 ⇒ 编辑器里已经是它了。
+    // 少了这一步，每次切档/每次击键回传都要做一次 O(文档) 的 toString() 比较
+    // （切大文件的标签时尤其明显）。
+    if (lastEmitted !== null && lastEmitted === doc) return;
     const current = view.state.doc.toString();
     if (doc !== current) {
       view.dispatch({

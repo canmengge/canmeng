@@ -844,6 +844,9 @@ export const useEditorStore = defineStore("editor", () => {
   async function refreshRenderedText() {
     await Promise.all(
       tabs.value.map(async (tab) => {
+        // 大文件跳过：文本不下发窗口（GetFile 大文件分支返回空 text），
+        // 重拉只会白解一遍几十兆文本，还会把标签文本清空。
+        if (tab.largeFile) return;
         const meta = await EditorService.GetFile(tab.index);
         const current = tabs.value.find((item) => item.index === tab.index);
         if (!current || !meta) return;
@@ -875,6 +878,8 @@ export const useEditorStore = defineStore("editor", () => {
       uniqueIndexes.map(async (index) => {
         const current = tabs.value.find((tab) => tab.index === index);
         if (!current) return;
+        // 大文件跳过：文本不下发窗口，重拉既白解一遍文本又会清空标签内容。
+        if (current.largeFile) return;
         const meta = await EditorService.GetFile(index);
         if (!meta) return;
         current.path = meta.path;
@@ -976,6 +981,10 @@ export const useEditorStore = defineStore("editor", () => {
     await Promise.all(
       remainingTabs
         .filter((tab) => pathsToRefresh.has(tab.path))
+        // 大文件（TXT 通道）跳过：它们的文本本来就不下发给窗口（GetFile 的大文件分支
+        // 返回空 text），重拉一次只会白解一遍几十兆文本，而拿回来的 text 还会把
+        // 标签的文本清空。窗口内容由 LargeScrollView 自己按视口取。
+        .filter((tab) => !tab.largeFile)
         .map(async (tab) => {
           const meta = await EditorService.GetFile(tab.index);
           if (!meta) return;
@@ -986,19 +995,25 @@ export const useEditorStore = defineStore("editor", () => {
           tab.tags = cleanTreeTags(meta.tags);
           tab.icon = meta.icon ?? null;
           tab.fieldImage = meta.fieldImage ?? null;
+          // 兜底：万一大文件标记是这一次才出现的，也不能用空文本覆盖标签。
+          const textAvailable = !meta.largeFile;
           if (resetOriginal) {
             // 归档整体重载:索引已失效,直接采用新内容。
-            tab.text = meta.text;
-            tab.original = meta.text;
+            if (textAvailable) {
+              tab.text = meta.text;
+              tab.original = meta.text;
+            }
             tab.modified = false;
           } else {
             tab.modified = meta.modified;
             // 本地有未保存编辑时保留编辑器内容,不被后端结果覆盖。
-            if (!isDirty(tab)) tab.text = meta.text;
+            if (textAvailable && !isDirty(tab)) tab.text = meta.text;
           }
-          tab.annotations = (meta.annotations ?? []).filter(
-            (annotation): annotation is EditorAnnotation => !!annotation
-          );
+          if (textAvailable) {
+            tab.annotations = (meta.annotations ?? []).filter(
+              (annotation): annotation is EditorAnnotation => !!annotation
+            );
+          }
         })
     );
     while (isSplit.value) {
