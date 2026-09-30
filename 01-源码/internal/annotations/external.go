@@ -244,8 +244,17 @@ func mergeDocuments(base, overlay Document) Document {
 	for _, field := range overlay.Fields {
 		key := annotationFieldKey(field)
 		if index, ok := indexByKey[key]; ok {
-			if fields[index].Preview != nil && field.Preview == nil {
-				field.Preview = fields[index].Preview
+			base := fields[index]
+			if base.Preview != nil && field.Preview == nil {
+				field.Preview = base.Preview
+			}
+			// 外置注释数据常常只给「悬停说明文本」（type=text、没有 values），
+			// 那一刻它会整个顶掉内嵌定义，连枚举翻译表一起丢 —— 预览就会把
+			// `[amulet]` / `ha waist` / `[sealing]` 原样显示（2026-10-01 实况）。
+			// 内嵌定义里有 values 而外置没给时继承过来：悬停说明仍是外置的（type 不变），
+			// 预览又能翻译。外置自己写了 values 则以它为准。
+			if len(field.Annotation.Values) == 0 && len(base.Annotation.Values) > 0 {
+				field.Annotation.Values = base.Annotation.Values
 			}
 			fields[index] = field
 			continue
