@@ -37,6 +37,18 @@ const rarityClass = computed(() => {
  * 无法重新生成的产物，所以这里按本地扩展类型读取（与 importApi/saveApi 同源做法）。
  */
 const gradeText = computed(() => (document.value as { gradeText?: string } | null)?.gradeText ?? "");
+/**
+ * 装备小类是否要单独显示一行。
+ *
+ * 首饰类文件里 `[equipment type]` 与 `[item group name]` 常常是同一个词
+ * （如 `[amulet]` 与 `amulet` 都译成「项链」），两行并排就是重复内容
+ * （2026-10-01 用户要求：只留一个装备类型）。
+ */
+const showItemGroupName = computed(() => {
+  const group = document.value?.itemGroupName?.trim() ?? "";
+  const type = document.value?.equipmentType?.trim() ?? "";
+  return group !== "" && group !== type;
+});
 const explanation = computed(() => {
   if (detailMode.value && document.value?.detailExplain) return document.value.detailExplain;
   return document.value?.baseExplain ?? "";
@@ -207,7 +219,7 @@ onBeforeUnmount(() => {
           <span v-if="gradeText" class="equ-grade">等级 {{ gradeText }}</span>
         </div>
         <div
-          v-if="baseAttributes.length || document.equipmentType || document.itemGroupName || document.attachType"
+          v-if="baseAttributes.length || document.equipmentType || showItemGroupName || document.attachType"
           class="equ-summary-columns"
         >
           <div v-if="baseAttributes.length" class="equ-summary-column equ-summary-column--base">
@@ -217,7 +229,8 @@ onBeforeUnmount(() => {
           </div>
           <div class="equ-summary-column equ-summary-column--category">
             <div v-if="document.equipmentType" class="equ-attribute">{{ document.equipmentType }}</div>
-            <div v-if="document.itemGroupName" class="equ-attribute">{{ document.itemGroupName }}</div>
+            <!-- 与装备类型同义时不再重复显示（首饰类常见） -->
+            <div v-if="showItemGroupName" class="equ-attribute">{{ document.itemGroupName }}</div>
             <div v-if="document.attachType" class="equ-attribute">{{ document.attachType }}</div>
           </div>
         </div>
