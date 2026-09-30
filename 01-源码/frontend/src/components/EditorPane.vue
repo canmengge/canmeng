@@ -43,7 +43,7 @@ import { MAX_CONTEXT_FILES, useAIStore } from "../stores/ai";
 import { useSidebarStore } from "../stores/sidebar";
 import { useAnnotationEditStore } from "../stores/annotationEdit";
 import CodeEditor, { type PlaceholderEditRequest } from "./CodeEditor.vue";
-import LargeFilePanel from "./LargeFilePanel.vue";
+import LargeTextView from "./LargeTextView.vue";
 import ListDuplicatePanel from "./ListDuplicatePanel.vue";
 import {
   findListDuplicates,
@@ -1151,15 +1151,15 @@ function onDrop(event: DragEvent): void {
           </div>
           <NSpin v-if="isOpeningTab(tab.index)" style="margin-top: 120px" />
           <!--
-            大文件（tab.largeFile：归档内 >8MB / 展开后 >4MB / >10 万行）不进编辑器：
-            后端也不再下发文本（见 services/editor.go 的 GetFile 大文件分支）。
-            实测 2740 万字符进窗口就让界面停摆 43 秒，与是否挂 CodeMirror 无关。
+            大文件（tab.largeFile：归档内 >8MB / 展开后 >4MB / >10 万行）走「内置 TXT（页式）」：
+            后端不再整份下发文本（services/editor.go 大文件分支），窗口每次只取一页
+            （services/large_text.go）。实测整份 2740 万字符进窗口会让界面停摆 43 秒。
           -->
-          <LargeFilePanel
+          <LargeTextView
             v-else-if="tab.largeFile"
+            :index="tab.index"
             :path="tab.path"
             :size="tab.size"
-            :data-type="tab.dataType"
           />
           <CodeEditor
             v-else
