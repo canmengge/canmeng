@@ -51,7 +51,10 @@ type FileMeta struct {
 	Editable    bool               `json:"editable"`
 	// LargeFile 标记「超过 bigFileBytes 的大文件」：前端据此二次确认并降级渲染。
 	LargeFile bool `json:"largeFile"`
-	Text        string             `json:"text"`
+	// TextOmitted 表示该文件的文本**有意没有下发**（见 GetFile 里的大文件分支）：
+	// 前端据 largeFile 显示「大文件卡片」，不要把它当成空文件。
+	TextOmitted bool   `json:"textOmitted"`
+	Text        string `json:"text"`
 	Modified    bool               `json:"modified"`
 	Annotations []EditorAnnotation `json:"annotations,omitempty"`
 	Icon        *ImageReference    `json:"icon,omitempty"`
@@ -116,6 +119,24 @@ func (s *EditorService) GetFile(index int32) (*FileMeta, error) {
 		rows := strings.Count(text, "\n") + 1
 		if !meta.LargeFile && (int64(len(text)) > bigTextBytes || rows > bigTextLines) {
 			meta.LargeFile = true
+		}
+		if meta.LargeFile {
+			// 超大文本**不下发**（2026-09-30 实测）：list/equipment.lst 解码后 2740 万字符，
+			// 光是把它送进窗口就让前端停摆 43 秒、之后每 11 秒一轮（与编辑器、扩展、
+			// 渲染行数都无关；空文档挂载 CM 也要 30 秒）。这类文件改走「导出 → 外部编辑器
+			// → 回填」通道，因此这里只保留判定：文本与注解都不给前端，前端据 largeFile
+			// 显示大文件卡片。解码结果仍进缓存，供回填/保存链路复用。
+			meta.Text = ""
+			meta.TextOmitted = true
+			meta.Annotations = nil
+			meta.Editable = true
+			traceStep(stage, "omitted")
+			traceDone(stage, OpenTrace{
+				Index: index, Path: meta.Path, Bytes: int64(f.DataSize), Lines: rows,
+				StepMs: steps, Skipped: "文本不下发(大文件)",
+			})
+			meta.Modified = a.IsModified(index)
+			return meta, nil
 		}
 		if f.DataType == pvf.TypeScript {
 			traceStep(stage, "annotations")

@@ -745,7 +745,9 @@ export const useEditorStore = defineStore("editor", () => {
 
   async function refreshAnnotations() {
     await Promise.all(
-      tabs.value.map(async (tab) => {
+      // 大文件的文本没有下发（见 GetFile 大文件分支）：这里别去问注解，否则后端会为
+      // 查注解把几十兆文本再解一遍。
+      tabs.value.filter((tab) => !tab.largeFile).map(async (tab) => {
         const text = tab.text;
         const annotations = (await EditorService.GetAnnotations(tab.index)) ?? [];
         const current = tabs.value.find((item) => item.index === tab.index);
