@@ -65,6 +65,7 @@ import {
   loadStringTableGuard,
   type SafeTableTarget,
 } from "../services/stringGuardApi";
+import { CheckListDuplicates } from "../services/largeTextApi";
 
 const props = defineProps<{
   paneId: EditorPaneId;
@@ -435,17 +436,40 @@ const listDuplicate = reactive({
 const canCheckListDuplicate = computed(
   () => archive.open && !!activeTab.value && isListFile(activeTab.value.path),
 );
+/** 大文件查重在后端扫整份（可能几秒），按钮要有忙碌态。 */
+const listDuplicateChecking = ref(false);
 
-function runListDuplicateCheck(): void {
+async function runListDuplicateCheck(): Promise<void> {
   const tab = activeTab.value;
   if (!tab) {
     message.warning("请先打开一个 lst 文件");
     return;
   }
   // 大文件的文本没有载入窗口（走连续全文 TXT，见 services/large_text.go）：
-  // 这里必须明确拒绝，否则会拿空串去查重、报「未发现重复条目」——错得看不出错。
+  // 整份扫描改由后端做（CheckListDuplicates），只回传问题条目，秒开不受影响。
   if (tab.largeFile) {
-    message.warning("大文件走 TXT 模式（文本留在后端、不整份载入窗口），list 查重暂不支持");
+    listDuplicateChecking.value = true;
+    try {
+      const report = await CheckListDuplicates(tab.index);
+      const issues = report?.issues ?? [];
+      listDuplicate.fileName = tab.path;
+      listDuplicate.issues = issues;
+      listDuplicate.checkedAt = Date.now();
+      listDuplicate.show = true;
+      const base = `list 查重完成（${report?.entries ?? 0} 个条目）`;
+      if (issues.length === 0) {
+        message.success(`${base}：未发现重复条目`);
+      } else {
+        const suffix = report?.truncated
+          ? `，共 ${report?.total ?? issues.length} 处（面板只显示前 ${issues.length} 处）`
+          : "";
+        message.warning(`${base}：发现 ${issues.length} 处问题${suffix}`);
+      }
+    } catch (error: any) {
+      message.error(`list 查重失败：${error?.message ?? error}`);
+    } finally {
+      listDuplicateChecking.value = false;
+    }
     return;
   }
   // 每次都按编辑器里的「当前内容」全量重算（未保存的改动同样生效），
@@ -1026,7 +1050,8 @@ function onDrop(event: DragEvent): void {
                 <NButton
                   quaternary
                   size="tiny"
-                  :disabled="!canCheckListDuplicate || tab.largeFile"
+                  :disabled="!canCheckListDuplicate || listDuplicateChecking"
+                  :loading="activeTab?.index === tab.index && listDuplicateChecking"
                   aria-label="list 查重"
                   @click="runListDuplicateCheck"
                 >
@@ -1035,7 +1060,7 @@ function onDrop(event: DragEvent): void {
                 </NButton>
               </template>
               {{ tab.largeFile
-                ? "大文件走 TXT 模式（文本留在后端、不整份载入窗口），暂不支持查重"
+                ? "检查当前 lst 里重复的条目（整份文本留在后端扫描，只回传问题条目）"
                 : "检查当前 lst 里重复的条目（ID 重复 / 路径重复 / 整行重复）" }}
             </NTooltip>
             <NTooltip v-if="activeTab?.index === tab.index && !activeHasID" trigger="hover">

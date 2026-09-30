@@ -30,6 +30,42 @@ export function GetFileLines(
   return $Call.ByName("pvfine/services.EditorService.GetFileLines", index, startLine, count);
 }
 
+/** 清单条目（与前端 listDuplicate.ts 的 ListEntry 同构）。 */
+export interface ListDuplicateEntry {
+  line: number;
+  id: string;
+  path: string;
+  raw: string;
+}
+
+/** 一处重复问题；kind: id / path / both。 */
+export interface ListDuplicateIssue {
+  kind: "id" | "path" | "both";
+  message: string;
+  entries: ListDuplicateEntry[];
+}
+
+export interface ListDuplicateReport {
+  issues: ListDuplicateIssue[];
+  /** 真实问题条数（可能大于 issues.length，超出部分被截断）。 */
+  total: number;
+  truncated: boolean;
+  /** 解析出的条目数。 */
+  entries: number;
+}
+
+/**
+ * 大文件 list 查重：整份文本留在后端扫，只回传问题条目。
+ *
+ * 前端拿不到大文件的整份文本（秒开前提），所以这一路必须走后端；
+ * 规则与提示语与前端 `listDuplicate.ts` 完全一致。
+ */
+export function CheckListDuplicates(
+  index: number
+): $CancellablePromise<ListDuplicateReport | null> {
+  return $Call.ByName("pvfine/services.EditorService.CheckListDuplicates", index);
+}
+
 /**
  * 大文件当前视口那一段的注解（中文名 / 绿色关联框回归用）。
  * start / end 是**相对段首**的字符偏移 —— 窗口里的文本就是这一段的全部内容。
