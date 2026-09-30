@@ -1,0 +1,53 @@
+{
+  "_说明": [
+    "list 查重的共享用例：前端 frontend/src/listDuplicate.ts 与后端 services/list_duplicate.go",
+    "必须给出完全一致的结果（kind + 涉及行号）。任一侧改规则而忘了同步，这里的断言就会失败。",
+    "前端校验：node 01-源码/scripts/check-listdup.mjs",
+    "后端校验：go test -run TestListDuplicateFixture ./services"
+  ],
+  "cases": [
+    {
+      "name": "三类重复齐全（含注释与空行）",
+      "text": "; 注释行不算条目\n\n10001\t`equipment/a.equ`\n10002\t`equipment/b.equ`\n10001\t`equipment/c.equ`\n10003\t`equipment/a.equ`\n10002\t`equipment/b.equ`\n# 井号注释\n",
+      "entries": 5,
+      "issues": [
+        { "kind": "id", "lines": [3, 5] },
+        { "kind": "path", "lines": [3, 6] },
+        { "kind": "both", "lines": [4, 7] }
+      ]
+    },
+    {
+      "name": "路径三种写法都能识别",
+      "text": "20001\t`equipment/a.equ`\n20001\t\"equipment/a.equ\"\n20001\t'equipment/a.equ'\n20001 equipment/a.equ\n",
+      "entries": 4,
+      "issues": [{ "kind": "both", "lines": [1, 2, 3, 4] }]
+    },
+    {
+      "name": "无重复",
+      "text": "30001\t`equipment/a.equ`\n30002\t`equipment/b.equ`\n30003\t`equipment/c.equ`\n",
+      "entries": 3,
+      "issues": []
+    },
+    {
+      "name": "只有 ID 重复、路径不同",
+      "text": "40001\t`equipment/a.equ`\n40001\t`equipment/b.equ`\n",
+      "entries": 2,
+      "issues": [{ "kind": "id", "lines": [1, 2] }]
+    },
+    {
+      "name": "同行 ID 三连（两两关系混合）",
+      "text": "50001\t`equipment/a.equ`\n50001\t`equipment/a.equ`\n50001\t`equipment/b.equ`\n",
+      "entries": 3,
+      "issues": [
+        { "kind": "id", "lines": [1, 2, 3] },
+        { "kind": "both", "lines": [1, 2] }
+      ]
+    },
+    {
+      "name": "注释分隔符各自生效（; // #）",
+      "text": "; c1\n// c2\n# c3\n60001\t`equipment/a.equ`\n60001\t`equipment/a.equ`\n",
+      "entries": 2,
+      "issues": [{ "kind": "both", "lines": [4, 5] }]
+    }
+  ]
+}
