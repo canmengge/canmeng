@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"runtime/pprof"
+	"unsafe"
 	"strconv"
 	"testing"
 	"time"
@@ -71,6 +73,118 @@ func TestPerfBaseline(t *testing.T) {
 		f.Close()
 		t.Logf("[堆剖析] 已写出: %s", profilePath)
 	}
+}
+
+// TestPerfMemoryReclaim 回答 P2 的核心问题：打开 + 建索引之后，
+// "能还给系统但还没还"的内存到底有多少。
+//
+// 做法与产品里的 releaseArchiveMemory 完全一致（丢读缓存 → runtime.GC → FreeOSMemory），
+// 只是把前后数字都打出来，用于判断还有没有优化空间。
+//
+// 用法：
+//   set PVF_BENCH_FILE=<Script.pvf>
+//   go test -run TestPerfMemoryReclaim -v -count=1 -timeout 20m ./services/
+func TestPerfMemoryReclaim(t *testing.T) {
+	path := os.Getenv("PVF_BENCH_FILE")
+	if path == "" {
+		t.Skip("PVF_BENCH_FILE 未设置")
+	}
+	a, err := pvf.Open(path)
+	if err != nil {
+		t.Fatalf("打开失败: %v", err)
+	}
+	// 归档在最后一次使用之后就可被 GC 回收；这里要测的是"丢缓存 + 归还高水位"，
+	// 不是"整个归档被丢掉"——必须保活，否则量到的数字毫无意义。
+	defer runtime.KeepAlive(a)
+	dirs, paths, err := buildIndex(a)
+	if err != nil {
+		t.Fatalf("建索引失败: %v", err)
+	}
+	defer runtime.KeepAlive(dirs)
+	defer runtime.KeepAlive(paths)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	a.ReleaseReadCaches()
+	runtime.GC()
+	debug.FreeOSMemory()
+	runtime.ReadMemStats(&after)
+
+	t.Logf("[归还前] HeapAlloc=%.1f MB  HeapInuse=%.1f MB  HeapReleased=%.1f MB  Sys=%.1f MB",
+		mb(before.HeapAlloc), mb(before.HeapInuse), mb(before.HeapReleased), mb(before.Sys))
+	t.Logf("[归还后] HeapAlloc=%.1f MB  HeapInuse=%.1f MB  HeapReleased=%.1f MB  Sys=%.1f MB",
+		mb(after.HeapAlloc), mb(after.HeapInuse), mb(after.HeapReleased), mb(after.Sys))
+	t.Logf("[结论] 真实存活=%.1f MB  本步多还回系统=%.1f MB  堆占用下降=%.1f MB",
+		mb(after.HeapAlloc),
+		mb(uint64(int64(after.HeapReleased)-int64(before.HeapReleased))),
+		mb(uint64(int64(before.HeapInuse)-int64(after.HeapInuse))))
+}
+
+func mb(bytes uint64) float64 { return float64(bytes) / (1 << 20) }
+
+// unsafeSizeOfPathEntry 只用于估算条目结构本身的体积（pathEntry 含 2 个字符串头
+// 与 4 个 int32/string，按 64 位对齐粗算），不参与任何产品逻辑。
+func unsafeSizeOfPathEntry() int { return int(unsafe.Sizeof(pathEntry{})) }
+
+// TestPerfIndexFootprint 量化 P2-b 的可行性：services 层这份索引（438 万条路径）
+// 到底占多少内存、以及"不物化路径、按需现算"要付多少时间代价。
+//
+// 用法：
+//   set PVF_BENCH_FILE=<Script.pvf>
+//   go test -run TestPerfIndexFootprint -v -count=1 -timeout 20m ./services/
+func TestPerfIndexFootprint(t *testing.T) {
+	path := os.Getenv("PVF_BENCH_FILE")
+	if path == "" {
+		t.Skip("PVF_BENCH_FILE 未设置")
+	}
+	a, err := pvf.Open(path)
+	if err != nil {
+		t.Fatalf("打开失败: %v", err)
+	}
+	defer runtime.KeepAlive(a)
+	dirs, paths, err := buildIndex(a)
+	if err != nil {
+		t.Fatalf("建索引失败: %v", err)
+	}
+
+	var pathBytes, lowerBytes int64
+	for _, entry := range paths {
+		pathBytes += int64(len(entry.path))
+		lowerBytes += int64(len(entry.lower))
+	}
+	t.Logf("索引规模: 路径条目=%d  目录节点=%d  路径字符串=%.1f MB  小写副本=%.1f MB  条目结构≈%.1f MB",
+		len(paths), len(dirs), float64(pathBytes)/(1<<20), float64(lowerBytes)/(1<<20),
+		float64(len(paths))*float64(unsafeSizeOfPathEntry())/(1<<20))
+
+	// ① 按需现算的代价：随机取 2000 个条目调 Path(i)
+	sampled := 0
+	var pathCost time.Duration
+	for i := 0; i < len(paths) && sampled < 2000; i += len(paths)/2000 {
+		start := time.Now()
+		_ = a.Path(int32(i))
+		pathCost += time.Since(start)
+		sampled++
+	}
+	if sampled > 0 {
+		t.Logf("Path(i) 按需现算: 采样 %d 次，平均 %.3f ms/次（全量 %d 次约 %.1f s）",
+			sampled, float64(pathCost.Milliseconds())/float64(sampled),
+			len(paths), float64(pathCost.Milliseconds())/float64(sampled)*float64(len(paths))/1000)
+	}
+
+	// ② 这份索引占多少内存：丢掉引用后回收了多少
+	runtime.GC()
+	debug.FreeOSMemory()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	dirs = nil
+	paths = nil
+	runtime.GC()
+	debug.FreeOSMemory()
+	runtime.ReadMemStats(&after)
+	t.Logf("丢掉索引后: HeapAlloc %.1f MB → %.1f MB（索引约占 %.1f MB）",
+		mb(before.HeapAlloc), mb(after.HeapAlloc),
+		mb(uint64(int64(before.HeapAlloc)-int64(after.HeapAlloc))))
 }
 
 // TestPerfSearchIndex 测量「语义搜索索引」构建耗时（旧版会生成 4.4 GB 级索引，
