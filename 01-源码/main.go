@@ -67,6 +67,14 @@ const (
 	closeRequestedEvent = "app:close-requested"
 	quitConfirmedEvent  = "app:quit-confirmed"
 	closeConfirmedEvent = "app:close-confirmed"
+	// closeCancelledEvent 是前端在关窗确认框上点「取消」时回的信号：内核据此
+	// 取消这次关闭（也取消兜底），否则兜底会在用户点了"取消"后又把窗口关掉。
+	closeCancelledEvent = "app:close-cancelled"
+
+	// closeFallbackDelay 是"前端对关窗请求毫无回应"时内核的兜底放行时长。
+	// 存在原因（2026-09-30 实测）：确认框曾因前端链路问题没起来，用户表现为
+	// 「点 X 关不掉窗口」。宁可 3 秒后放行，也不能让用户关不掉窗口。
+	closeFallbackDelay = 3 * time.Second
 
 	// mainWindowName identifies the archive editor window. It must be set
 	// explicitly, otherwise Wails names it "window-N" and it cannot be
@@ -116,6 +124,11 @@ func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWind
 			}
 		}
 	})
+	app.Event.On(closeCancelledEvent, func(*application.CustomEvent) {
+		logging.For("window").Warn("收到关闭取消：保留窗口")
+		coordinator.pendingClose.Store(0)
+		coordinator.allowWindowClosing.Store(false)
+	})
 	app.Event.On(quitConfirmedEvent, func(*application.CustomEvent) {
 		logging.For("window").Warn("收到退出确认：放行退出")
 		// The detached script window keeps its own close confirmation and its own
@@ -142,16 +155,44 @@ func (c *closeCoordinator) handlerFor(window application.Window) func(*applicati
 			return
 		}
 		name := ""
+		var id uint64
 		if window != nil {
 			name = window.Name()
-			c.pendingClose.Store(uint64(window.ID()))
+			id = uint64(window.ID())
+			c.pendingClose.Store(id)
 		}
 		event.Cancel()
 		// 关窗确认这条链是"数据安全"路径：拦下与放行都留痕，出问题时能一眼看出
 		// 断在"内核没拦"、"前端没收到"还是"前端没弹框"。
 		logging.For("window").Warn("窗口关闭请求：已拦下，等待前端确认", "窗口", name)
 		_ = c.app.Event.Emit(closeRequestedEvent)
+		c.armCloseFallback(id, name)
 	}
+}
+
+// armCloseFallback 给这次关窗请求上"兜底"：前端若在 closeFallbackDelay 内既没确认
+// 也没取消（例如确认框没起来），就直接放行关闭 —— 用户永远不该遇到"点 X 关不掉窗口"。
+func (c *closeCoordinator) armCloseFallback(expectedID uint64, name string) {
+	go func() {
+		time.Sleep(closeFallbackDelay)
+		// 已被确认（pendingClose 清零）或被取消（同样清零）→ 不兜底。
+		if c.pendingClose.Load() != expectedID {
+			return
+		}
+		if !c.allowWindowClosing.CompareAndSwap(false, true) {
+			return
+		}
+		logging.For("window").Warn("前端未回应关窗请求，兜底放行关闭", "窗口", name)
+		if expectedID != 0 {
+			if window, ok := c.app.Window.GetByID(uint(expectedID)); ok && window != nil {
+				window.Close()
+				return
+			}
+		}
+		if window := c.app.Window.Current(); window != nil {
+			window.Close()
+		}
+	}()
 }
 
 // Wails uses Go's `embed` package to embed the frontend files into the binary.

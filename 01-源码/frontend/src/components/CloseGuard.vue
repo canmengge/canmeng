@@ -4,7 +4,7 @@ import { Events } from "@wailsio/runtime";
 import { useDialog } from "naive-ui";
 import { useUnsavedChanges } from "../composables/unsavedChanges";
 import { useEditorStore } from "../stores/editor";
-import { markTrace } from "../diagTrace";
+import { markTrace, traceLines } from "../diagTrace";
 
 type CloseAction = "close" | "quit";
 
@@ -33,6 +33,9 @@ async function requestClose(action: CloseAction): Promise<void> {
     未保存判定: hasUnsavedChanges.value,
     大文件段未提交: editor.pendingLargeEditCount,
   });
+  // 把这次判定直接写进日志文件（等价于自动敲一次 SCRZ）：
+  // 关窗这条链出问题时，不必再让用户手动敲控制台命令，日志里直接有现场。
+  void Events.Emit("dev:diag", { cmd: "SCRZ", uiTrace: traceLines() }).catch(() => {});
 
   if (!hasUnsavedChanges.value) {
     void confirmClose(action);
@@ -67,6 +70,9 @@ async function confirmClose(action: CloseAction): Promise<void> {
 function cancelClose(): void {
   if (closing.value) return;
   pendingAction.value = null;
+  // 必须回一个"取消"：内核给关窗请求挂了 3 秒兜底放行，若不告诉它用户取消了，
+  // 3 秒后窗口会被兜底关掉（用户明明点了"取消"）。
+  void Events.Emit("app:close-cancelled");
 }
 
 const offQuitRequested = Events.On("app:quit-requested", () => requestClose("quit"));
