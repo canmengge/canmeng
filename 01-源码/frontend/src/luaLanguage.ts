@@ -89,6 +89,28 @@ const BUILTINS = new Set([
   "MyInfo",
   "State",
   "ChangeCommand",
+  // ---- DNF 110 AI 全局 API ----------------------------------------------
+  // 2026-10-01 对全部 **2054 个 .lua** 实测选出：括号里是「出现在多少个文件里」，
+  // 只收跨文件共享的 API 对象/函数，不收各文件自建的东西。
+  "Common", // 1640 个文件
+  "AIBaseScripts", // 1388
+  "Patrol", // 1326
+  "MoveMethod", // 295
+  "SkillDifficulty", // 176
+  "AIBaseScriptsNew", // 159
+  "DestinationSelect", // 113
+  "Buff", // 58
+  "Pvp", // 13
+  "AIEvent", // 4
+  "UtilBridge", // 2
+  "setDefault", // 1555（全局函数）
+  "GetCommand", // 262
+  "BindCommand", // 85
+  "_A", // 72（按等级换算数值的辅助函数，如 _A(180)）
+  "_ALERT", // 3
+  // 刻意排除（实测验证过，收了反而会把局部/属性错当成 API）：
+  //   L            —— 各文件自建：`local L = {}`
+  //   ObjectInfo   —— 是属性：`myObjInfo = MyInfo.ObjectInfo`
 ]);
 
 type LuaMode = "normal" | "longstring" | "longcomment";
@@ -130,6 +152,10 @@ function consumeLong(stream: StringStream, state: LuaState, style: string): stri
 export const luaLanguage = StreamLanguage.define<LuaState>({
   name: "lua",
   startState: () => ({ mode: "normal", level: 0 }),
+  // 自定义样式名（StreamParser.tokenTable）：后面跟 `(` 的调用名。
+  tokenTable: {
+    luaFunction: tags.function(tags.variableName),
+  },
   token(stream, state) {
     // 跨行的长字符串 / 长注释：接着上一行读。
     if (state.mode === "longstring") return consumeLong(stream, state, "string");
@@ -182,13 +208,21 @@ export const luaLanguage = StreamLanguage.define<LuaState>({
       return "number";
     }
 
-    // 标识符：原子 / 关键字 / 内建 / 普通（普通标识符不上色，保持正文可读）
+    // 标识符：原子 / 关键字 / 内建 / 函数调用名 / 普通
+    // （普通标识符刻意不上色，保持正文可读。**这里只决定配色，不改变任何字符**）
     if (stream.match(/^[A-Za-z_]\w*/)) {
       const word = stream.current();
       if (ATOMS.has(word)) return "atom";
       if (KEYWORDS.has(word)) return "keyword";
       if (BUILTINS.has(word)) return "builtin";
-      return null;
+      // 往前窥探一个非空白字符是不是 `(`：是则按「函数调用名」配色。
+      // 注意：只是窥探，必须把位置还原到词尾，否则会吃掉后面的字符
+      //（那将直接破坏正文 —— 与本功能的「只上色、不动内容」原则相悖）。
+      const wordEnd = stream.pos;
+      stream.eatWhile(/\s/);
+      const isCall = stream.peek() === "(";
+      stream.pos = wordEnd;
+      return isCall ? "luaFunction" : null;
     }
 
     // 运算符：多字符必须优先于单字符（`..`/`...` 先于 `.`）
@@ -218,6 +252,8 @@ const luaHighlightStyle = HighlightStyle.define([
     tag: tags.standard(tags.variableName),
     color: "var(--pvf-editor-syntax-heading)",
   },
+  // 函数调用名：`math.abs(...)` / `AIBridge:getObjectInfo(...)` / `setDefault(...)`
+  { tag: tags.function(tags.variableName), color: "var(--pvf-editor-syntax-heading)" },
   { tag: tags.operator, color: "var(--pvf-text-secondary)" },
   { tag: tags.punctuation, color: "var(--pvf-text-muted)" },
 ]);

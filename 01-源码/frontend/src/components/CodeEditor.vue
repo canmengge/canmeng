@@ -616,7 +616,10 @@ function makeExtensions(themeId: ResolvedThemeId) {
     highlightActiveLine(),
     history(),
     drawSelection(),
-    ...(large ? [] : [highlightWhitespace()]),
+    // 空白字符显示：大文件要关（几十万行逐字符加装饰会卡）；`.lua` 也关 ——
+    // Lua 靠 tab 缩进，满屏 `→`/`•` 比代码本身还显眼（用户 2026-10-01 反馈）。
+    // 纯显示开关，不碰文本内容。
+    ...(large || isLua ? [] : [highlightWhitespace()]),
     rectangularSelection(),
     crosshairCursor(),
     highlightSelectionMatches(),
