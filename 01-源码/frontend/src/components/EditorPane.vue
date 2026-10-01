@@ -307,6 +307,20 @@ function isListFile(path: string): boolean {
   return path.toLowerCase().endsWith(".lst");
 }
 
+/**
+ * 编辑器语言模式 —— **严格按扩展名判定，只认 `.lua`**。
+ *
+ * 2026-10-01：110 版 PVF 的 AI 脚本是标准 Lua（`.../monster/.../ai/action.lua`、
+ * `aicharacter/pvp/.../ai/movecommand.lua` 等，实测 2054 个）；老版 DNF 用的
+ * `.nut`（Squirrel）在 110 归档里已是 0 个。
+ *
+ * 除 `.lua` 外的所有文件一律返回 `pvf`（走原有 `pvfLanguage`），
+ * 着色与行为完全不变 —— 这是本功能的影响边界。
+ */
+function editorLanguage(path: string): "pvf" | "lua" {
+  return path.toLowerCase().endsWith(".lua") ? "lua" : "pvf";
+}
+
 /** 单击可跳转注释（如 .lst 路径）：打开目标文件并在左侧文件树中定位。 */
 async function onActivateReference(fileIndex: number, paneId: EditorPaneId): Promise<void> {
   // 已打开过的标签可直接算出路径 ⇒ 先发起定位，再打开文件，两者不再串行等待
@@ -1208,6 +1222,7 @@ function onDrop(event: DragEvent): void {
             v-else
             :ref="(instance: unknown) => setEditorRef(tab.index, instance)"
             :doc="tab.text"
+            :language="editorLanguage(tab.path)"
             :read-only="!tab.editable"
             :large-file="tab.largeFile"
             :annotations="tab.annotations"

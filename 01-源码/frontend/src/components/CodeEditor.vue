@@ -41,6 +41,7 @@ import { tags } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
 import { NTooltip } from "naive-ui";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
+import { luaHighlighting, luaLanguage } from "../luaLanguage";
 import type { EditorAnnotation } from "../../bindings/pvfine/services/models";
 import type { AnnotationTagPlacement } from "../stores/settings";
 import { useImageStore } from "../stores/images";
@@ -50,7 +51,11 @@ import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
 
 const props = defineProps<{
   doc: string;
-  language?: "pvf" | "javascript";
+  /**
+   * 编辑器语言模式：默认 `pvf`（PVF token 格式，所有普通文件）；
+   * `javascript` 供脚本工作台；`lua` **仅** `.lua` 文件（由 EditorPane 严格按扩展名判定）。
+   */
+  language?: "pvf" | "javascript" | "lua";
   readOnly?: boolean;
   /** 大文件（>8MB）：不装空白高亮，避免几十万行把渲染拖死（折行保留）。 */
   largeFile?: boolean;
@@ -599,6 +604,9 @@ function flushPendingChange(): void {
 
 function makeExtensions(themeId: ResolvedThemeId) {
   const isJavaScript = props.language === "javascript";
+  // Lua 只给 .lua 用（判定见 EditorPane.vue 的 editorLanguage）：110 版 PVF 的 AI
+  // 脚本是 Lua，老版的 .nut 是 Squirrel，两者语法与高亮规则完全不同，不能混用。
+  const isLua = props.language === "lua";
   // 大文件降级：空白高亮要给每个空白字符加装饰、折行要逐字符测量，几十万行时都是
   // 卡顿主因；这里只剔除空白高亮（折行保留：长行不换行会看不见内容）。
   const large = props.largeFile === true;
@@ -674,7 +682,9 @@ function makeExtensions(themeId: ResolvedThemeId) {
     ...(props.listNames ? [listNamePlugin] : []),
     // 语法解析（lezer）要扫描全文：41 万行的清单解析一次就是几十秒，是"打开第二个大文件
     // 直接卡死"的主因。超大文本不做语法着色，其余能力（链接跳转、定位、搜索）保留。
-    ...(large ? [] : [isJavaScript ? javascript() : pvfLanguage.extension]),
+    ...(large
+      ? []
+      : [isJavaScript ? javascript() : isLua ? luaLanguage.extension : pvfLanguage.extension]),
     ...(large
       ? []
       : isJavaScript
@@ -683,7 +693,9 @@ function makeExtensions(themeId: ResolvedThemeId) {
             javascriptHighlighting,
             autocompletion({ override: [scriptCompletionSource] }),
           ]
-        : [pvfHighlighting]),
+        : isLua
+          ? [luaHighlighting]
+          : [pvfHighlighting]),
     editorThemeComp.of(createEditorTheme(themeId)),
     // 折行：长行（[item list] 一长串 ID）必须换行显示，否则要横向滚动、看不全。
     // 大文件也保留折行（2026-09-27 用户明确要求）。
