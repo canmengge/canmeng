@@ -50,6 +50,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo 完成。双击 04-运行环境\启动开发版.cmd 测试。
+echo 完成。请【先关闭正在运行的工具】，再双击 04-运行环境\HMR 热更新\启动HMR热更新.cmd（Go 改动必须换 exe）。
 pause
 endlocal
