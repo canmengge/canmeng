@@ -69,6 +69,11 @@ const props = defineProps<{
   reveal?: { seq: number; needles: string[]; line?: number } | null;
   /** .lst 清单文件：在可见行路径后显示目标文件名称（惰性，见 listNames.ts）。 */
   listNames?: boolean;
+  /**
+   * 本标签当前是否可见。标签切换走 v-show（NTabPane 的 `show:lazy`），隐藏时
+   * display:none 会把编辑器滚动位置归零 —— 靠这个信号在重新可见时把位置写回去。
+   */
+  active?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -846,11 +851,14 @@ onMounted(() => {
     state: EditorState.create({ doc: props.doc, extensions: makeExtensions(props.themeId) }),
     parent: host.value!,
   });
+  // 记下滚动位置：标签被隐藏（display:none）时它会被浏览器归零，切回来要写回去。
+  view.scrollDOM.addEventListener("scroll", rememberScrollTop, { passive: true });
 });
 
 onBeforeUnmount(() => {
   hideAnnotationTooltip();
   flushPendingChange(); // 大文件的改动可能还在防抖窗口里，先补发再销毁
+  view?.scrollDOM.removeEventListener("scroll", rememberScrollTop);
   view?.destroy();
   view = null;
 });
@@ -901,11 +909,52 @@ function revealNeedle(needles: string[]): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// 标签滚动位置记忆
+//
+// 背景：标签切换用 NTabPane 的 `display-directive="show:lazy"`，隐藏的标签是
+// display:none（不是卸载）。元素一旦 display:none 就失去布局，浏览器会把
+// `.cm-scroller` 的 scrollTop 归零 —— 于是切回来时停在文档第一行（用户实测）。
+//
+// 做法：可见期间持续记下 scrollTop（隐藏期间不记，避免把归零当成真实位置），
+// 重新可见时在下一帧写回（写前先 requestMeasure，让 CodeMirror 重新测量布局）。
+// 定位请求（搜索命中 / 文件树跳转）驱动的显示要跳过恢复，否则会盖掉定位。
+// ---------------------------------------------------------------------------
+let savedScrollTop = 0;
+let lastRevealAt = 0;
+
+function rememberScrollTop(): void {
+  if (!view || props.active === false) return;
+  savedScrollTop = view.scrollDOM.scrollTop;
+}
+
+function restoreScrollTop(): void {
+  const top = savedScrollTop;
+  if (!view || top <= 0) return;
+  requestAnimationFrame(() => {
+    if (!view || props.active === false) return;
+    view.requestMeasure();
+    view.scrollDOM.scrollTop = top;
+  });
+}
+
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) return;
+    // 本次显示是为了「定位到某行」（下面的 reveal watcher 自己会滚动）：别抢。
+    if (performance.now() - lastRevealAt < 300) return;
+    restoreScrollTop();
+  },
+  { flush: "post" }
+);
+
 // 必须在 doc 的 watch 之后注册：文件内容整体替换先发生，再做定位。
 watch(
   () => props.reveal?.seq,
   () => {
     if (!props.reveal) return;
+    lastRevealAt = performance.now();
     // AI 引用跳转：带行号时直接按行定位；否则按搜索命中文本定位。
     if (props.reveal.line && props.reveal.line > 0) {
       revealPosition(props.reveal.line);

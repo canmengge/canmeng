@@ -1216,6 +1216,7 @@ function onDrop(event: DragEvent): void {
             :path="tab.path"
             :size="tab.size"
             :reveal="revealFor(tab.index)"
+            :active="activeKeyStr === String(tab.index)"
             @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"
           />
           <CodeEditor
@@ -1231,6 +1232,7 @@ function onDrop(event: DragEvent): void {
             :vim-mode="settings.vimMode"
             :theme-id="props.themeId"
             :reveal="revealFor(tab.index)"
+            :active="activeKeyStr === String(tab.index)"
             :list-names="isListFile(tab.path)"
             @change="(text: string) => editor.updateContent(tab.index, text)"
             @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"

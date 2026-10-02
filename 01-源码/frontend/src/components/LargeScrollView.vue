@@ -52,6 +52,8 @@ const props = defineProps<{
   size: number;
   /** 搜索结果定位请求：跳到目标行所在位置。 */
   reveal?: { seq: number; needles: string[]; line?: number } | null;
+  /** 本标签当前是否可见（见 CodeEditor 的同名 prop：隐藏时滚动位置会被 display:none 归零）。 */
+  active?: boolean;
 }>();
 
 /** Ctrl/Cmd+单击清单里的路径：与普通编辑器一致——打开目标文件并在左树定位。 */
@@ -387,8 +389,21 @@ function visibleRange(): { start: number; end: number } {
   return { start: Math.max(1, first - OVERSCAN), end: first + rows + OVERSCAN };
 }
 
+// ---------------------------------------------------------------------------
+// 标签滚动位置记忆（与 CodeEditor 同一套做法，背景见那边的说明）：
+// 标签切换用 v-show，隐藏时 display:none 会把 viewport.scrollTop 归零；
+// 这里不涉及窗口数据（winStart/winText 都还在），只是把滚动位置写回去。
+// ---------------------------------------------------------------------------
+/** 上次可见时的滚动位置。 */
+let savedScrollTop = 0;
+/** 最近一次「定位跳转」的时间戳：紧跟着的标签显示不要抢滚动。 */
+let lastRevealAt = 0;
+
 let raf = 0;
 function onScroll(): void {
+  // 先记下位置（标签隐藏期间不记：那时 scrollTop 已被 display:none 归零）。
+  const el = viewport.value;
+  if (el && props.active !== false) savedScrollTop = el.scrollTop;
   if (raf) return;
   raf = requestAnimationFrame(() => {
     raf = 0;
@@ -405,12 +420,30 @@ function onScroll(): void {
 
 /** 供搜索定位使用：跳到指定行（只换窗口，不写归档）。 */
 async function gotoLine(line: number): Promise<void> {
+  lastRevealAt = performance.now();
   enqueue(async () => {
     await loadWindow(Math.max(1, line - 50));
   });
   const el = viewport.value;
   if (el) el.scrollTop = Math.max(0, (Math.max(1, line) - 1) * ROW_HEIGHT);
 }
+
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) return;
+    // 定位请求（搜索 / AI 跳转）驱动的显示：别抢它的滚动。
+    if (performance.now() - lastRevealAt < 300) return;
+    const top = savedScrollTop;
+    if (top <= 0) return;
+    requestAnimationFrame(() => {
+      const el = viewport.value;
+      if (!el || props.active === false) return;
+      el.scrollTop = top;
+    });
+  },
+  { flush: "post" }
+);
 
 defineExpose({ revealLine: gotoLine });
 
