@@ -121,6 +121,7 @@ func (c *core) editorAnnotationsLocked(index int32, text string) ([]EditorAnnota
 		})
 	}
 	annotations = c.appendUnindexedListLinksLocked(filePath, view, annotations)
+	annotations = c.appendExternalLinkAnnotationsLocked(filePath, view, annotations)
 	annotations = c.appendPlaceholderAnnotationsLocked(view, annotations)
 	if len(annotations) > annotationCountLimit {
 		annotations = annotations[:annotationCountLimit]
@@ -304,6 +305,8 @@ func (c *core) resolveListAnnotationReferenceLocked(relationName, id, context, l
 func (c *core) resetAnnotationCachesLocked() {
 	c.annotationRelations = make(map[string]map[string]*relationTarget)
 	c.listNameCache = nil
+	// 外部登记表链接同样按内容派生：改过登记表（或换归档）后必须重解析。
+	c.externalLinkTables = nil
 }
 
 // listNameCacheKey 组合影响名称结果的三要素；listPath 参与是因为部分清单

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "外部登记表链接：把脚本字段里的编号按登记表解析成归档路径（Ctrl+单击跳转，悬停显示目标路径）",
+  "links": [
+    {
+      "id": "equ.partSetIndex",
+      "description": "装备 [part set index] → etc/equipmentpartset.etc 的 [equipment part set] 段登记的套装属性文件",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "source": {
+        "section": "part set index",
+        "index": 0
+      },
+      "table": {
+        "path": "etc/equipmentpartset.etc",
+        "section": "equipment part set",
+        "idToken": 0,
+        "pathToken": 1,
+        "pathPrefix": "equipment/"
+      }
+    }
+  ]
+}

@@ -413,16 +413,21 @@ function annotationDecorations(
     const result: Range<Decoration>[] = [];
 
     if (annotation.targetFileIndex >= 0 && targetStart < targetEnd && annotation.type !== "reference") {
-      // .lst 路径链接：悬停用原生 title 给出操作提示（仅 Ctrl+单击才跳转，见 click 处理）。
+      // .lst 路径链接 / 外部登记表链接（如 [part set index]）：悬停用原生 title 给出操作提示
+      // （仅 Ctrl+单击才跳转，见 click 处理）。
       // ID 关联（type=reference）不在此列：关联目标只由后面的绿色标签承载，
       // 原文 token 保持普通可编辑文本（2026-09-27 用户要求）。
       const linkText = state.doc.sliceString(targetStart, targetEnd);
+      // 无标题的 link 注解（后端不挂名称标签）用 content 承载解析出的目标归档路径：
+      // 悬停直接给出目标路径，例如 [part set index] 4 → equipment/character/partset/uniqueset.equ。
+      const target = (annotation.content ?? "").trim();
+      const hint = target
+        ? `目标：${target}\nCtrl+单击：打开文件并在左侧文件树中定位`
+        : `Ctrl+单击：打开文件并在左侧文件树中定位\n${linkText}`;
       result.push(
         Decoration.mark({
           class: "cm-annotation-link",
-          attributes: {
-            title: `Ctrl+单击：打开文件并在左侧文件树中定位\n${linkText}`,
-          },
+          attributes: { title: hint },
         }).range(targetStart, targetEnd)
       );
     }
