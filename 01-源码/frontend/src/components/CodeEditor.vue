@@ -424,9 +424,12 @@ function annotationDecorations(
       const hint = target
         ? `目标：${target}\nCtrl+单击：打开文件并在左侧文件树中定位`
         : `Ctrl+单击：打开文件并在左侧文件树中定位\n${linkText}`;
+      // 外部登记表链接（type=link 且带目标路径）：额外加醒目样式，
+      // 让"这个值可以点"一眼可见（普通 .lst 路径链接保持只有虚线下划线）。
+      const classes = target ? "cm-annotation-link cm-external-link" : "cm-annotation-link";
       result.push(
         Decoration.mark({
-          class: "cm-annotation-link",
+          class: classes,
           attributes: { title: hint },
         }).range(targetStart, targetEnd)
       );
@@ -1051,6 +1054,20 @@ watch(
   cursor: pointer;
   text-decoration: underline dotted var(--pvf-editor-annotation-link);
   text-underline-offset: 2px;
+}
+/* 外部登记表链接（如 [part set index] 的编号）：淡色底 + 实线细边 + 加粗，
+   与只有虚线下划线的普通路径链接区分开 —— "这里能点"一眼可见。 */
+.code-editor :deep(.cm-external-link) {
+  background: var(--pvf-editor-annotation-external-surface);
+  /* 用 inset 阴影画下边线：不占布局空间，不扰动行高与列对齐。 */
+  box-shadow: inset 0 -1px 0 var(--pvf-editor-annotation-external-border);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.code-editor :deep(.cm-external-link:hover) {
+  filter: brightness(1.3);
 }
 /* .lst 清单行内名称标签：风格与文件树的 [中文名] 保持一致。 */
 .code-editor :deep(.cm-list-name-tag) {

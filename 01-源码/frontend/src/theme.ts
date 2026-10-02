@@ -77,6 +77,10 @@ export interface ThemePalette {
     annotationReferenceSurface: string;
     annotationReferenceBorder: string;
     annotationLink: string;
+    // 外部登记表链接（如 [part set index] 的编号）：需要比普通路径链接更醒目，
+    // 否则使用者不知道那个数字可以 Ctrl+单击跳转。
+    annotationExternalSurface: string;
+    annotationExternalBorder: string;
     syntaxNumber: string;
     syntaxString: string;
     syntaxHeading: string;
@@ -185,6 +189,9 @@ const darkPalette: ThemePalette = {
     annotationReferenceSurface: "transparent",
     annotationReferenceBorder: "rgba(67, 138, 105, 0.3)",
     annotationLink: "rgba(174, 220, 255, 0.8)",
+    // 外部登记表链接（深色主题）：淡蓝底 + 亮蓝下边，像一枚可点的胶囊。
+    annotationExternalSurface: "rgba(86, 156, 235, 0.22)",
+    annotationExternalBorder: "rgba(126, 190, 255, 0.85)",
     // 数字（含 [item list] 的物品 ID）：亮度提高一档，让 ID 更抢眼。
     syntaxNumber: "#f5b46a",
     syntaxString: "#98c379",
@@ -287,6 +294,9 @@ const lightPalette: ThemePalette = {
     annotationReferenceSurface: "transparent",
     annotationReferenceBorder: "rgba(103, 183, 147, 0.42)",
     annotationLink: "#245f9e",
+    // 外部登记表链接（浅色主题）：淡蓝底 + 中蓝下边，保持可读又不抢正文。
+    annotationExternalSurface: "rgba(45, 108, 200, 0.14)",
+    annotationExternalBorder: "rgba(36, 95, 158, 0.75)",
     // 同上：浅色主题下用更饱和的橙棕提升对比。
     syntaxNumber: "#b45309",
     syntaxString: "#257a48",
@@ -473,6 +483,8 @@ function themeVariables(p: ThemePalette): Record<string, string> {
     "--pvf-editor-annotation-reference-surface": p.editor.annotationReferenceSurface,
     "--pvf-editor-annotation-reference-border": p.editor.annotationReferenceBorder,
     "--pvf-editor-annotation-link": p.editor.annotationLink,
+    "--pvf-editor-annotation-external-surface": p.editor.annotationExternalSurface,
+    "--pvf-editor-annotation-external-border": p.editor.annotationExternalBorder,
     "--pvf-editor-syntax-number": p.editor.syntaxNumber,
     "--pvf-editor-syntax-string": p.editor.syntaxString,
     "--pvf-editor-syntax-heading": p.editor.syntaxHeading,
