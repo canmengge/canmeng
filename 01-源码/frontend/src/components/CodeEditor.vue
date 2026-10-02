@@ -394,6 +394,22 @@ watch(
   }
 );
 
+/**
+ * 外部登记表链接值后面的说明标签（如 [part set index] 的编号 → 「↗ CTRL+左键可跳转目标套装属性」）。
+ * 纯展示：WidgetType 默认 ignoreEvent 为 true —— 不接收事件、不参与文档内容，保存时不会被写进 PVF。
+ */
+class ExternalLinkHintWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    const hint = document.createElement("span");
+    hint.className = "cm-external-hint";
+    hint.textContent = "↗ CTRL+左键可跳转目标套装属性";
+    return hint;
+  }
+}
+
+/** 无状态，复用一个实例（引用相等即视为同一个 widget，避免每次重排都重建）。 */
+const externalLinkHintWidget = new ExternalLinkHintWidget();
+
 /** 单个文件参与装饰的标注上限；超出不再渲染（与后端 annotationCountLimit 同向兜底）。 */
 const annotationRenderLimit = 20000;
 
@@ -412,27 +428,45 @@ function annotationDecorations(
     const targetEnd = Math.max(targetStart, Math.min(state.doc.length, annotation.end));
     const result: Range<Decoration>[] = [];
 
+    // 外部登记表链接（后端 type=link 且 Content 是目标归档路径，如 [part set index] 的编号）：
+    // 悬停显示套装名 + 目标路径，值后面再挂一个说明标签（见 ExternalLinkHintWidget）。
+    // 普通 .lst 路径链接不受影响（仍是虚线下划线 + 原提示）。
+    const externalTarget =
+      annotation.type === "link" ? (annotation.content ?? "").trim() : "";
+    const isExternalLink = externalTarget !== "";
+
     if (annotation.targetFileIndex >= 0 && targetStart < targetEnd && annotation.type !== "reference") {
-      // .lst 路径链接 / 外部登记表链接（如 [part set index]）：悬停用原生 title 给出操作提示
+      // .lst 路径链接 / 外部登记表链接：悬停用原生 title 给出操作提示
       // （仅 Ctrl+单击才跳转，见 click 处理）。
       // ID 关联（type=reference）不在此列：关联目标只由后面的绿色标签承载，
       // 原文 token 保持普通可编辑文本（2026-09-27 用户要求）。
       const linkText = state.doc.sliceString(targetStart, targetEnd);
-      // 无标题的 link 注解（后端不挂名称标签）用 content 承载解析出的目标归档路径：
-      // 悬停直接给出目标路径，例如 [part set index] 4 → equipment/character/partset/uniqueset.equ。
-      const target = (annotation.content ?? "").trim();
-      const hint = target
-        ? `目标：${target}\nCtrl+单击：打开文件并在左侧文件树中定位`
+      const setName = (annotation.title ?? "").trim();
+      const hint = isExternalLink
+        ? [
+            setName ? `套装：${setName}` : "",
+            `目标：${externalTarget}`,
+            "Ctrl+单击：打开文件并在左侧文件树中定位",
+          ]
+            .filter(Boolean)
+            .join("\n")
         : `Ctrl+单击：打开文件并在左侧文件树中定位\n${linkText}`;
-      // 外部登记表链接（type=link 且带目标路径）：额外加醒目样式，
-      // 让"这个值可以点"一眼可见（普通 .lst 路径链接保持只有虚线下划线）。
-      const classes = target ? "cm-annotation-link cm-external-link" : "cm-annotation-link";
+      // 外部登记表链接额外加醒目样式，让"这个值可以点"一眼可见
+      // （普通 .lst 路径链接保持只有虚线下划线）。
       result.push(
         Decoration.mark({
-          class: classes,
+          class: isExternalLink
+            ? "cm-annotation-link cm-external-link"
+            : "cm-annotation-link",
           attributes: { title: hint },
         }).range(targetStart, targetEnd)
       );
+      if (isExternalLink) {
+        // 值后面的说明标签：只给人看，不进文档、不可点（见 ExternalLinkHintWidget）。
+        result.push(
+          Decoration.widget({ widget: externalLinkHintWidget, side: 1 }).range(targetEnd)
+        );
+      }
     }
 
     if (annotation.type === "reference" && targetStart < targetEnd) {
@@ -446,6 +480,8 @@ function annotationDecorations(
     if (
       display.placement !== "hidden" &&
       annotation.title.trim() !== "" &&
+      // 外部登记表链接的 Title 是套装名（只供悬停提示用），不渲染成名称标签。
+      !isExternalLink &&
       // 绿色关联框（ID 关联标签）：Alt+Q 可整体隐藏，原文保持可编辑（2026-09-28 用户要求）。
       (display.showReferenceTags || annotation.type !== "reference")
     ) {
@@ -1068,6 +1104,16 @@ watch(
 }
 .code-editor :deep(.cm-external-link:hover) {
   filter: brightness(1.3);
+}
+/* 外部登记表链接值后面的说明标签（纯展示，不进文档、不可点）。 */
+.code-editor :deep(.cm-external-hint) {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--pvf-editor-annotation-link);
+  opacity: 0.75;
+  user-select: none;
+  white-space: nowrap;
 }
 /* .lst 清单行内名称标签：风格与文件树的 [中文名] 保持一致。 */
 .code-editor :deep(.cm-list-name-tag) {

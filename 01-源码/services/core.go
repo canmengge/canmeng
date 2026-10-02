@@ -90,10 +90,10 @@ type core struct {
 	// 解析一次要把目标文件整体解码再取字段（O(目标文件大小)）；几十万行的
 	// list/*.lst 会触发同等次数的解码，是打开大清单时界面冻结的主因之一。
 	listNameCache map[string]string
-	// externalLinkTables 缓存「外部登记表 → 编号 → 归档路径」的解析结果
+	// externalLinkTables 缓存「外部登记表 → 编号 → 目标路径 + 名称」的解析结果
 	// （键见 externalLinkTableCacheKey）。首次打开带该字段的文件时惰性解析一次，
 	// 不参与打开热路径（F3）；内容改动时随注解派生缓存一起作废。
-	externalLinkTables map[string]map[string]string
+	externalLinkTables map[string]map[string]externalLinkTarget
 	// pathAnnotations 是「路径 → 目录标注」的**按需**缓存，由 pathAnnotationsMu 保护
 	// （与 mu 分开：访问点多在持有 mu.RLock 时发生，无法就地写入；加锁顺序恒为
 	// mu → pathAnnotationsMu，不得反向）。

@@ -19,6 +19,7 @@
         "section": "equipment part set",
         "idToken": 0,
         "pathToken": 1,
+        "nameToken": 2,
         "pathPrefix": "equipment/"
       }
     }

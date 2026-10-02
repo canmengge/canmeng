@@ -23,20 +23,24 @@ import (
 //
 //	etc/equipmentpartset.etc
 //		[equipment part set]
-//			4	`character/partset/uniqueset.equ`	...
+//			4	`character/partset/uniqueset.equ`	`神器装扮  套装`	...
 //
 // （路径相对 `equipment/`，所以完整路径是 equipment/character/partset/uniqueset.equ）。
 // 于是只按文本解析出来的注解引擎只能看到数字「4」，无法跳转。
 //
-// 做法：为命中的值 token 下发一条 link 注解（TargetFileIndex = 解析出的目标文件索引），并把
-// 解析到的目标归档路径放进 Content —— 前端据此在悬停提示里显示目标路径。
-// 注意：这类注解的 **Title 必须留空**，否则前端会按「有标题就渲染绿色名称标签」的既有规则
-// 多画一个标签（见 frontend\src\components\CodeEditor.vue 的 annotationDecorations 与
-// AnnotationWidget）；前端也只对「Title 为空的 link 注解」启用 Content 提示。
+// 做法：为命中的值 token 下发一条 link 注解：
+//   - TargetFileIndex = 解析出的目标文件索引（Ctrl+单击跳转）
+//   - Content         = 目标归档路径（前端悬停提示里显示「目标」）
+//   - Title           = 登记表给出的名称（如套装名；前端悬停提示里显示「套装」，**不**渲染名称标签）
+//
+// 注意两个约定（前端 CodeEditor.vue 与这里成对出现，改一处必须改另一处）：
+//  1. 这类注解的 Title 虽然非空，但前端**不**给它渲染绿色名称标签（否则每处多一个标签）；
+//     判定方式：type === "link" 且 Content 非空。
+//  2. 前端只对这类注解挂「↗ CTRL+左键可跳转…」装饰提示。
 //
 // 规则来自内嵌 config/external_links.json（业务规则外部数据，不硬编码）。
 // 登记表解析走「段名 + 段内 token 序号」，不要求记录等宽 —— etc 里同一个段的记录宽度并不一致
-// （有的记录名称在同一行，有的缩进到下一行），按固定步长切分会整体错位。
+// （有的记录名称与编号同行，有的缩进到下一行），按固定步长切分会整体错位。
 //
 // 性能：登记表在首次打开带该字段的文件时惰性解析一次并缓存（不参与打开热路径，符合 F3），
 // 内容改动时随 resetAnnotationCachesLocked 一起作废。
@@ -63,14 +67,18 @@ type externalLinkTable struct {
 	// IDToken / PathToken 是记录段内 token 序号：编号列与路径列。
 	IDToken   int `json:"idToken"`
 	PathToken int `json:"pathToken"`
+	// NameToken 是记录段内「名称」列的 token 序号（可选）。取到的值可能是字符串表
+	// 占位符（如 `<3::rareset_name_cap>`），取用时再解析成实际文本。
+	NameToken *int `json:"nameToken,omitempty"`
 	// PathPrefix 是登记表里路径需要补的前缀（该表存的是相对 equipment/ 的路径）。
 	PathPrefix string `json:"pathPrefix"`
 }
 
 type externalLinkRule struct {
-	ID     string             `json:"id"`
-	Desc   string             `json:"description,omitempty"`
-	Match  externalLinkMatch  `json:"match"`
+	ID    string            `json:"id"`
+	Desc  string            `json:"description,omitempty"`
+	Match externalLinkMatch `json:"match"`
+	// Source 是承载编号的那个字段。
 	Source externalLinkSource `json:"source"`
 	Table  externalLinkTable  `json:"table"`
 }
@@ -78,6 +86,14 @@ type externalLinkRule struct {
 type externalLinkDocument struct {
 	Version int                `json:"version"`
 	Links   []externalLinkRule `json:"links"`
+}
+
+// externalLinkTarget 是登记表一行的解析结果。
+type externalLinkTarget struct {
+	// Path 是目标文件的归档路径（已补前缀）。
+	Path string
+	// Name 是登记表给出的名称（可能是字符串表占位符原文）。
+	Name string
 }
 
 var (
@@ -101,6 +117,9 @@ func externalLinkRulesFromConfig() []externalLinkRule {
 				rule.Table.IDToken < 0 || rule.Table.PathToken < 0 ||
 				rule.Table.IDToken == rule.Table.PathToken {
 				continue
+			}
+			if rule.Table.NameToken != nil && *rule.Table.NameToken < 0 {
+				rule.Table.NameToken = nil
 			}
 			rules = append(rules, rule)
 		}
@@ -169,51 +188,72 @@ func (c *core) appendExternalLinkAnnotationsLocked(
 		if _, exists := linked[key]; exists {
 			continue
 		}
-		target, ok := c.externalLinkTableLocked(rule.Table)[strings.ToLower(strings.TrimSpace(token.Value))]
-		if !ok || target == "" {
+		entry, ok := c.externalLinkTableLocked(rule.Table)[strings.ToLower(strings.TrimSpace(token.Value))]
+		if !ok || entry.Path == "" {
 			continue
 		}
 		// 解析不到目标文件时静默跳过：宁可没有下划线，也不给出点了没反应的链接。
-		resolved, fileIndex, ok := findListTargetInArchive(c.archive, rule.Table.Path, target)
+		resolved, fileIndex, ok := findListTargetInArchive(c.archive, rule.Table.Path, entry.Path)
 		if !ok {
 			continue
 		}
 		annotations = append(annotations, EditorAnnotation{
 			Start: int32(token.Start), End: int32(token.End),
-			Type: "link", TargetFileIndex: fileIndex,
-			// Content 只承载「目标路径」，供前端悬停提示；Title 留空以避开名称标签。
+			// Title = 登记表里的名称（如套装名）。这类注解不渲染名称标签，
+			// 只由前端拼进悬停提示（见本文件顶部约定）。
+			Title:   resolveExternalLinkName(c, entry.Name),
 			Content: resolved,
+			Type:    "link", TargetFileIndex: fileIndex,
 		})
 		linked[key] = struct{}{}
 	}
 	return annotations
 }
 
+// resolveExternalLinkName 把登记表里的名称解析成可显示的文本：名称大多写成字符串表占位符
+// （如 `<3::equipmentpartset_1>`），交给既有的占位符解析取文。
+// 解析不出来（拿回来仍是占位符原文）时返回空 —— 悬停里显示 `<3::xxx>` 比不显示名称更难读。
+func resolveExternalLinkName(c *core, value string) string {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return ""
+	}
+	resolved := strings.TrimSpace(c.resolveNameTextLocked(name))
+	if strings.Contains(resolved, "<") && strings.Contains(resolved, "::") {
+		return ""
+	}
+	return resolved
+}
+
 func externalLinkTableCacheKey(table externalLinkTable) string {
-	return fmt.Sprintf("%s|%s|%d|%d|%s",
+	nameToken := -1
+	if table.NameToken != nil {
+		nameToken = *table.NameToken
+	}
+	return fmt.Sprintf("%s|%s|%d|%d|%d|%s",
 		normalizeAnnotationPath(table.Path),
 		strings.ToLower(strings.TrimSpace(table.Section)),
-		table.IDToken, table.PathToken,
+		table.IDToken, table.PathToken, nameToken,
 		strings.ToLower(strings.TrimSpace(table.PathPrefix)),
 	)
 }
 
-// externalLinkTableLocked 取「编号 → 归档路径」表；惰性解析一次后缓存。
+// externalLinkTableLocked 取「编号 → 登记信息」表；惰性解析一次后缓存。
 // 解析失败（表不存在 / 解码失败）缓存空表，避免每次打开文件都重试。
-func (c *core) externalLinkTableLocked(table externalLinkTable) map[string]string {
+func (c *core) externalLinkTableLocked(table externalLinkTable) map[string]externalLinkTarget {
 	key := externalLinkTableCacheKey(table)
 	if cached, ok := c.externalLinkTables[key]; ok {
 		return cached
 	}
 	parsed := c.parseExternalLinkTableLocked(table)
 	if c.externalLinkTables == nil {
-		c.externalLinkTables = make(map[string]map[string]string)
+		c.externalLinkTables = make(map[string]map[string]externalLinkTarget)
 	}
 	c.externalLinkTables[key] = parsed
 	return parsed
 }
 
-func (c *core) parseExternalLinkTableLocked(table externalLinkTable) map[string]string {
+func (c *core) parseExternalLinkTableLocked(table externalLinkTable) map[string]externalLinkTarget {
 	index, ok := c.archive.FindList(table.Path)
 	if !ok {
 		return nil
@@ -225,16 +265,21 @@ func (c *core) parseExternalLinkTableLocked(table externalLinkTable) map[string]
 	return parseExternalLinkTableText(text, table)
 }
 
-// parseExternalLinkTableText 从登记表文本里抽出「编号 → 归档路径」。
+// parseExternalLinkTableText 从登记表文本里抽出「编号 → 目标路径 + 名称」。
 // 按「段名 + 段内 token 序号」取值：不要求记录等宽，也不会把 [hide equipment part set]
 // 这类别的段算进来。同一编号重复登记时以先出现的为准（与清单关系的口径一致）。
-func parseExternalLinkTableText(text string, table externalLinkTable) map[string]string {
+func parseExternalLinkTableText(text string, table externalLinkTable) map[string]externalLinkTarget {
 	view := pvf.ParseScriptView(text)
 	section := strings.TrimSpace(table.Section)
+	nameToken := -1
+	if table.NameToken != nil {
+		nameToken = *table.NameToken
+	}
 
 	type record struct {
 		id     string
 		target string
+		name   string
 	}
 	// 按 SectionID 分组：登记表里每个 [segment] 开段就是一条记录。
 	pending := make(map[int]*record)
@@ -249,15 +294,17 @@ func parseExternalLinkTableText(text string, table externalLinkTable) map[string
 			pending[element.SectionID] = current
 			order = append(order, element.SectionID)
 		}
-		switch element.Index {
-		case table.IDToken:
+		switch {
+		case element.Index == table.IDToken:
 			current.id = strings.ToLower(strings.TrimSpace(element.Value))
-		case table.PathToken:
+		case element.Index == table.PathToken:
 			current.target = element.Value
+		case nameToken >= 0 && element.Index == nameToken:
+			current.name = element.Value
 		}
 	}
 
-	result := make(map[string]string, len(order))
+	result := make(map[string]externalLinkTarget, len(order))
 	for _, sectionID := range order {
 		current := pending[sectionID]
 		if current.id == "" || strings.TrimSpace(current.target) == "" {
@@ -266,7 +313,10 @@ func parseExternalLinkTableText(text string, table externalLinkTable) map[string
 		if _, duplicate := result[current.id]; duplicate {
 			continue
 		}
-		result[current.id] = joinExternalLinkPath(table.PathPrefix, current.target)
+		result[current.id] = externalLinkTarget{
+			Path: joinExternalLinkPath(table.PathPrefix, current.target),
+			Name: strings.TrimSpace(current.name),
+		}
 	}
 	return result
 }
