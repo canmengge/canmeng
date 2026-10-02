@@ -15,12 +15,34 @@
         "index": 0
       },
       "table": {
+        "format": "section",
         "path": "etc/equipmentpartset.etc",
         "section": "equipment part set",
         "idToken": 0,
         "pathToken": 1,
         "nameToken": 2,
         "pathPrefix": "equipment/"
+      }
+    },
+    {
+      "id": "equ.appendage",
+      "description": "装备 [appendage] 的附加状态 ID → list/appendage.lst 登记的 .apd 文件（名称取目标文件的 [name]，没有就只显示路径）",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "source": {
+        "section": "appendage",
+        "index": 0
+      },
+      "table": {
+        "format": "flat",
+        "path": "list/appendage.lst",
+        "recordTokens": 2,
+        "idToken": 0,
+        "pathToken": 1,
+        "nameSection": "name"
       }
     }
   ]

@@ -60,17 +60,28 @@ type externalLinkSource struct {
 
 // externalLinkTable 指向登记表及其列约定。
 type externalLinkTable struct {
+	// Format 决定登记表怎么切分记录：
+	//
+	//	"section"（默认）—— 每个 `[section]` 段是一条记录，IDToken/PathToken 是「段内序号」，
+	//	                    如 etc/equipmentpartset.etc 的 [equipment part set]；
+	//	"flat"          —— 整份文本按 RecordTokens 等宽切分，IDToken/PathToken 是「记录内偏移」，
+	//	                    如 list/appendage.lst（每行 `ID \`路径\``）。
+	Format string `json:"format,omitempty"`
 	// Path 是登记表的归档路径。
 	Path string `json:"path"`
-	// Section 是登记表里的记录段名，如 "equipment part set"。
-	Section string `json:"section"`
-	// IDToken / PathToken 是记录段内 token 序号：编号列与路径列。
+	// Section 是记录段名（仅 format=section），如 "equipment part set"。
+	Section string `json:"section,omitempty"`
+	// RecordTokens 是每条记录的 token 数（仅 format=flat），如 list/*.lst 的 2。
+	RecordTokens int `json:"recordTokens,omitempty"`
+	// IDToken / PathToken 是编号列与路径列（section 用段内序号；flat 用记录内偏移）。
 	IDToken   int `json:"idToken"`
 	PathToken int `json:"pathToken"`
-	// NameToken 是记录段内「名称」列的 token 序号（可选）。取到的值可能是字符串表
+	// NameToken 是登记表内「名称」列的序号（可选）。取到的值可能是字符串表
 	// 占位符（如 `<3::rareset_name_cap>`），取用时再解析成实际文本。
 	NameToken *int `json:"nameToken,omitempty"`
-	// PathPrefix 是登记表里路径需要补的前缀（该表存的是相对 equipment/ 的路径）。
+	// NameSection 是登记表**没有**名称列时，去目标文件里读名称的段名（可选，如 "name"）。
+	NameSection string `json:"nameSection,omitempty"`
+	// PathPrefix 是登记表里路径需要补的前缀（如该表存的是相对 equipment/ 的路径）。
 	PathPrefix string `json:"pathPrefix"`
 }
 
@@ -111,11 +122,30 @@ func externalLinkRulesFromConfig() []externalLinkRule {
 		}
 		rules := make([]externalLinkRule, 0, len(document.Links))
 		for _, rule := range document.Links {
+			format := strings.ToLower(strings.TrimSpace(rule.Table.Format))
+			if format == "" {
+				format = "section"
+			}
+			rule.Table.Format = format
 			if len(rule.Match.Extensions) == 0 ||
 				strings.TrimSpace(rule.Source.Section) == "" || rule.Source.Index < 0 ||
-				strings.TrimSpace(rule.Table.Path) == "" || strings.TrimSpace(rule.Table.Section) == "" ||
+				strings.TrimSpace(rule.Table.Path) == "" ||
 				rule.Table.IDToken < 0 || rule.Table.PathToken < 0 ||
 				rule.Table.IDToken == rule.Table.PathToken {
+				continue
+			}
+			if format == "section" {
+				if strings.TrimSpace(rule.Table.Section) == "" {
+					continue
+				}
+			} else if format == "flat" {
+				// 扁平表必须能按等宽切分，否则整份表会错位（宁可不生效）。
+				if rule.Table.RecordTokens <= 0 ||
+					rule.Table.RecordTokens <= rule.Table.IDToken ||
+					rule.Table.RecordTokens <= rule.Table.PathToken {
+					continue
+				}
+			} else {
 				continue
 			}
 			if rule.Table.NameToken != nil && *rule.Table.NameToken < 0 {
@@ -197,11 +227,19 @@ func (c *core) appendExternalLinkAnnotationsLocked(
 		if !ok {
 			continue
 		}
+		// Title = 名称（如套装名 / 状态名）。这类注解不渲染名称标签，
+		// 只由前端拼进悬停提示（见本文件顶部约定）。
+		// 登记表没有名称列时退回目标文件里的 NameSection（如 .apd 的 [name]）；
+		// 两者都取不到就留空（悬停只显示目标路径）。
+		name := resolveExternalLinkName(c, entry.Name)
+		if name == "" && strings.TrimSpace(rule.Table.NameSection) != "" {
+			name = resolveExternalLinkName(c, c.readRelationTargetNameLocked(
+				fileIndex, rule.Table.Path, rule.Table.NameSection,
+			))
+		}
 		annotations = append(annotations, EditorAnnotation{
 			Start: int32(token.Start), End: int32(token.End),
-			// Title = 登记表里的名称（如套装名）。这类注解不渲染名称标签，
-			// 只由前端拼进悬停提示（见本文件顶部约定）。
-			Title:   resolveExternalLinkName(c, entry.Name),
+			Title:   name,
 			Content: resolved,
 			Type:    "link", TargetFileIndex: fileIndex,
 		})
@@ -230,10 +268,11 @@ func externalLinkTableCacheKey(table externalLinkTable) string {
 	if table.NameToken != nil {
 		nameToken = *table.NameToken
 	}
-	return fmt.Sprintf("%s|%s|%d|%d|%d|%s",
+	return fmt.Sprintf("%s|%s|%s|%d|%d|%d|%d|%s",
+		strings.ToLower(strings.TrimSpace(table.Format)),
 		normalizeAnnotationPath(table.Path),
 		strings.ToLower(strings.TrimSpace(table.Section)),
-		table.IDToken, table.PathToken, nameToken,
+		table.RecordTokens, table.IDToken, table.PathToken, nameToken,
 		strings.ToLower(strings.TrimSpace(table.PathPrefix)),
 	)
 }
@@ -266,10 +305,19 @@ func (c *core) parseExternalLinkTableLocked(table externalLinkTable) map[string]
 }
 
 // parseExternalLinkTableText 从登记表文本里抽出「编号 → 目标路径 + 名称」。
-// 按「段名 + 段内 token 序号」取值：不要求记录等宽，也不会把 [hide equipment part set]
-// 这类别的段算进来。同一编号重复登记时以先出现的为准（与清单关系的口径一致）。
+// 同一编号重复登记时以先出现的为准（与清单关系的口径一致）。
 func parseExternalLinkTableText(text string, table externalLinkTable) map[string]externalLinkTarget {
 	view := pvf.ParseScriptView(text)
+	if strings.EqualFold(strings.TrimSpace(table.Format), "flat") {
+		return parseFlatExternalLinkTable(view, table)
+	}
+	return parseSectionExternalLinkTable(view, table)
+}
+
+// parseSectionExternalLinkTable 处理 `[section]` 结构的登记表（如 etc/equipmentpartset.etc）：
+// 按「段名 + 段内 token 序号」取值 —— 不要求记录等宽（同一段里名称可能与编号同行、也可能缩进
+// 到下一行），也不会把 [hide equipment part set] 这类别的段算进来。
+func parseSectionExternalLinkTable(view pvf.ScriptView, table externalLinkTable) map[string]externalLinkTarget {
 	section := strings.TrimSpace(table.Section)
 	nameToken := -1
 	if table.NameToken != nil {
@@ -317,6 +365,46 @@ func parseExternalLinkTableText(text string, table externalLinkTable) map[string
 			Path: joinExternalLinkPath(table.PathPrefix, current.target),
 			Name: strings.TrimSpace(current.name),
 		}
+	}
+	return result
+}
+
+// parseFlatExternalLinkTable 处理等宽扁平的登记表（如 list/appendage.lst：每行 `ID `路径“）：
+// 把全部 token 拉平后按 RecordTokens 切分，IDToken/PathToken 就是记录内偏移。
+func parseFlatExternalLinkTable(view pvf.ScriptView, table externalLinkTable) map[string]externalLinkTarget {
+	step := table.RecordTokens
+	if step <= 0 || step <= table.IDToken || step <= table.PathToken {
+		return nil
+	}
+	tokens := make([]pvf.ScriptElement, 0, len(view.Elements))
+	for _, element := range view.Elements {
+		if element.Kind == pvf.ScriptElementToken {
+			tokens = append(tokens, element)
+		}
+	}
+	nameToken := -1
+	if table.NameToken != nil {
+		nameToken = *table.NameToken
+	}
+
+	result := make(map[string]externalLinkTarget, len(tokens)/step)
+	for offset := 0; offset+step <= len(tokens); offset += step {
+		id := strings.ToLower(strings.TrimSpace(tokens[offset+table.IDToken].Value))
+		if id == "" {
+			continue
+		}
+		if _, duplicate := result[id]; duplicate {
+			continue
+		}
+		path := joinExternalLinkPath(table.PathPrefix, tokens[offset+table.PathToken].Value)
+		if path == "" {
+			continue
+		}
+		target := externalLinkTarget{Path: path}
+		if nameToken >= 0 && nameToken < step {
+			target.Name = strings.TrimSpace(tokens[offset+nameToken].Value)
+		}
+		result[id] = target
 	}
 	return result
 }
