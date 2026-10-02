@@ -95,6 +95,12 @@ if not exist "%EXE%" (
   pause
   exit /b 1
 )
+REM ---- 关闭已有实例（2026-10-02 加）：注释数据由 Go 侧在程序启动时读取 ----
+REM      HMR 只热更新前端，旧实例不关掉会一直显示旧注释（踩坑表 #36）。
+set "APPKILLTAG="
+set "APPKILLN="
+for /f "tokens=1,2" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%kill-stale-app.ps1"') do ( set "APPKILLTAG=%%A" & set "APPKILLN=%%B" )
+if "%APPKILLTAG%"=="KILLED" echo  [信息] 已关闭旧实例 %APPKILLN% 个（注释数据将重新加载）
 echo 启动程序: %EXE%
 start "" "%EXE%"
 endlocal
