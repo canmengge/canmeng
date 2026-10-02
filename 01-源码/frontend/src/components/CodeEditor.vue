@@ -395,14 +395,15 @@ watch(
 );
 
 /**
- * 外部登记表链接值后面的说明标签（如 [part set index] 的编号 → 「↗ CTRL+左键可跳转目标套装属性」）。
+ * 外部登记表链接值后面的说明标签（如 [part set index] 的编号 → 「↗ CTRL+左键可跳转到对应文件」）。
  * 纯展示：WidgetType 默认 ignoreEvent 为 true —— 不接收事件、不参与文档内容，保存时不会被写进 PVF。
  */
 class ExternalLinkHintWidget extends WidgetType {
   toDOM(): HTMLElement {
     const hint = document.createElement("span");
     hint.className = "cm-external-hint";
-    hint.textContent = "↗ CTRL+左键可跳转目标套装属性";
+    // 文案保持通用：同一套机制既服务 [part set index]（套装），也服务 [appendage]（扩展状态）。
+    hint.textContent = "↗ CTRL+左键可跳转到对应文件";
     return hint;
   }
 }
