@@ -25,11 +25,13 @@
  * 可视化这边绝不落盘（我曾在 saveDrafts 里调 editor.save()，日志现出 7.147s 的整包保存，已撤回）。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import type { Ref } from "vue";
 // 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
 // 不新增后端接口（用户 2026-10-03 要求：把 3015 改成 3037 时名字要跟着变）。
 import {
   AddDropCandidate,
   AddIndependentDrop,
+  DeleteDropCandidate,
   DeleteIndependentDrop,
   ResolveRefNames,
   type FormViewDropItem,
@@ -717,36 +719,55 @@ const selectedRows = ref<Set<number>>(new Set());
 /** 连选的锚点：上一次不带 Shift 点击的那一行。 */
 const selectAnchor = ref<number | null>(null);
 
-function onRowClick(row: FormViewRow, event: MouseEvent): void {
-  const index = row.index;
-  if (event.shiftKey && selectAnchor.value !== null) {
-    const order = pagedRows.value.map((item) => item.index);
-    const from = order.indexOf(selectAnchor.value);
+/**
+ * 行选择的公共逻辑：主表与「掉落候选」查看器共用一套（避免两处行为走样）。
+ *
+ * order 是**当前显示顺序**里的行号（连选用它算区间，跟系统一样按屏上顺序）。
+ */
+function applyRowSelection(
+  order: number[],
+  index: number,
+  event: MouseEvent,
+  selected: Ref<Set<number>>,
+  anchor: Ref<number | null>
+): void {
+  if (event.shiftKey && anchor.value !== null) {
+    const from = order.indexOf(anchor.value);
     const to = order.indexOf(index);
     if (from >= 0 && to >= 0) {
       const start = Math.min(from, to);
       const end = Math.max(from, to);
-      const next = event.ctrlKey || event.metaKey ? new Set(selectedRows.value) : new Set<number>();
+      const next = event.ctrlKey || event.metaKey ? new Set(selected.value) : new Set<number>();
       for (let position = start; position <= end; position += 1) next.add(order[position]);
-      selectedRows.value = next;
+      selected.value = next;
       return;
     }
   }
   if (event.ctrlKey || event.metaKey) {
-    const next = new Set(selectedRows.value);
+    const next = new Set(selected.value);
     if (next.has(index)) next.delete(index);
     else next.add(index);
-    selectedRows.value = next;
-    selectAnchor.value = index;
+    selected.value = next;
+    anchor.value = index;
     return;
   }
-  if (selectedRows.value.size === 1 && selectedRows.value.has(index)) {
-    selectedRows.value = new Set();
-    selectAnchor.value = null;
+  if (selected.value.size === 1 && selected.value.has(index)) {
+    selected.value = new Set();
+    anchor.value = null;
     return;
   }
-  selectedRows.value = new Set([index]);
-  selectAnchor.value = index;
+  selected.value = new Set([index]);
+  anchor.value = index;
+}
+
+function onRowClick(row: FormViewRow, event: MouseEvent): void {
+  applyRowSelection(
+    pagedRows.value.map((item) => item.index),
+    row.index,
+    event,
+    selectedRows,
+    selectAnchor
+  );
 }
 
 function clearSelection(): void {
@@ -771,6 +792,78 @@ function queueDeleteSelected(): void {
   message.success(
     `已把 ${fresh.length} 条加入待删除（共 ${pendingDeletes.value.length} 条，点上方「保存改动」才真正删除）`
   );
+}
+
+// ---- 查看器（掉落候选）里的行选择与删除 ----
+//
+// 用户 2026-10-03：「掉落候选里面添加一个删除按钮，功能和可视化编辑里边的一样，
+// 可以删除现在界面里面的东西，删除后的格式也要一样，多选功能也能用」。
+// 所以这里照抄主表那套操作（单击 / Ctrl 多选 / Shift 连选 → 排队 → 保存改动才写）。
+
+const viewerSelectedRows = ref<Set<number>>(new Set());
+const viewerSelectAnchor = ref<number | null>(null);
+
+/**
+ * 排队中的候选删除（**还没写进归档**）：记到「段 + 出现序号 + 行号」上。
+ * 带上段与出现序号是因为查看器可以切到别的 `[list]` 去，只记行号会张冠李戴。
+ */
+const pendingCandidateDeletes = ref<
+  { section: string; occurrence: number; row: number }[]
+>([]);
+
+/** 当前查看器这一处里，排队待删的行号（界面上标出来）。 */
+const viewerPendingDeleteRows = computed<number[]>(() => {
+  const current = viewerSection.value;
+  if (!current) return [];
+  return pendingCandidateDeletes.value
+    .filter(
+      (item) =>
+        item.section.toLowerCase() === current.section.toLowerCase() &&
+        item.occurrence === current.occurrence
+    )
+    .map((item) => item.row);
+});
+
+function clearViewerSelection(): void {
+  viewerSelectedRows.value = new Set();
+  viewerSelectAnchor.value = null;
+}
+
+function onViewerRowClick(row: FormViewRow, event: MouseEvent): void {
+  applyRowSelection(
+    (viewerSection.value?.rows ?? []).map((item) => item.index),
+    row.index,
+    event,
+    viewerSelectedRows,
+    viewerSelectAnchor
+  );
+}
+
+/** 把选中的候选行**全部**加入待删除（点「保存改动」才真正删）。 */
+function queueViewerDeleteSelected(): void {
+  const section = viewerSection.value;
+  if (!section) return;
+  const rows = [...viewerSelectedRows.value];
+  if (rows.length === 0) {
+    message.warning("先选中要删的候选项：单击一行 · Ctrl+左键多选 · Shift+左键连选一片");
+    return;
+  }
+  const existing = new Set(viewerPendingDeleteRows.value);
+  const fresh = rows.filter((rowIndex) => !existing.has(rowIndex));
+  if (fresh.length === 0) {
+    message.info("选中的行都已经在待删除列表里了");
+    return;
+  }
+  pendingCandidateDeletes.value = [
+    ...pendingCandidateDeletes.value,
+    ...fresh.map((rowIndex) => ({
+      section: section.section,
+      occurrence: section.occurrence,
+      row: rowIndex,
+    })),
+  ];
+  clearViewerSelection();
+  message.success(`已把 ${fresh.length} 条候选加入待删除（点上方「保存改动」才真正删除）`);
 }
 
 /** 该处 `[list]` 排队中的候选（查看器里显示成"还没保存"的行）。 */
@@ -817,7 +910,9 @@ function submitViewerAdd(): void {
     },
   ];
   viewerAddVisible.value = false;
-  message.success("已加入待提交（点上方「保存改动」才写进归档内存）");
+  // 用户 2026-10-03：「原来是可以直接添加到列表里面去的」—— 所以这条会**立刻**以
+  // 高亮的「待保存」行出现在上面的表里（不再是只藏在下面一行小字里）。
+  message.success("已加到列表末尾（带「待保存」标记），点上方「保存改动」才写进归档内存");
 }
 
 // ---- 草稿里的 ref 值 → 中文名（实时解析） ----
@@ -1171,14 +1266,17 @@ function discardDrafts(): void {
   if (
     pendingEdits.value.size === 0 &&
     pendingInserts.value.length === 0 &&
-    pendingDeletes.value.length === 0
+    pendingDeletes.value.length === 0 &&
+    pendingCandidateDeletes.value.length === 0
   ) {
     return;
   }
   pendingEdits.value = new Map();
   pendingInserts.value = [];
   pendingDeletes.value = [];
+  pendingCandidateDeletes.value = [];
   clearSelection();
+  clearViewerSelection();
   message.info("已放弃未保存的改动");
 }
 
@@ -1188,7 +1286,15 @@ async function saveDrafts(): Promise<void> {
   const drafts = [...pendingEdits.value.values()];
   const queued = [...pendingInserts.value];
   const deletes = [...pendingDeletes.value];
-  if (drafts.length === 0 && queued.length === 0 && deletes.length === 0) return;
+  const candidateDeletes = [...pendingCandidateDeletes.value];
+  if (
+    drafts.length === 0 &&
+    queued.length === 0 &&
+    deletes.length === 0 &&
+    candidateDeletes.length === 0
+  ) {
+    return;
+  }
   if (fileOpenInEditor()) {
     message.warning(
       "该文件正在编辑区打开：请先关掉那个标签页，再保存（避免两处同时改同一份文本）"
@@ -1199,12 +1305,27 @@ async function saveDrafts(): Promise<void> {
   drafts.sort((left, right) => left.row - right.row || left.column - right.column);
   saving.value = true;
   try {
-    // ① 先执行排队中的**删除**：行号**从大到小**（删一行会让后面所有行号前移，倒着删才不错位）。
-    for (const rowIndex of [...deletes].sort((left, right) => right - left)) {
-      await DeleteIndependentDrop(formView.filePath.trim(), rowIndex);
+    // 顺序很关键（2026-10-03 顺手纠正）：**改格 → 新增 → 删除**。
+    //
+    // 排队时记的是"当时那一行的行号"，而删除会让后面的行号整体前移 ——
+    // 所以删除必须放最后；改格与新增都不改变已有行的行号，放前面最安全。
+    // （早先是"先删后改"，同一批里既删行又改行时，草稿可能落到错行上。）
+
+    // ① 改格草稿（只改 token 值，不动行数）
+    if (drafts.length > 0) {
+      await formView.applyEdits(
+        drafts.map((draft) => ({
+          section: draft.section,
+          occurrence: draft.occurrence,
+          row: draft.row,
+          column: draft.column,
+          value: draft.value,
+        }))
+      );
     }
-    pendingDeletes.value = [];
-    // ② 再执行排队中的新增（插入不是"改一格"，各走自己的通道）。
+    pendingEdits.value = new Map();
+
+    // ② 排队中的新增（都是"追加到末尾"，不影响已有行号）
     for (const item of queued) {
       if (item.kind === "drop") {
         await AddIndependentDrop(formView.filePath.trim(), item.entry);
@@ -1218,23 +1339,51 @@ async function saveDrafts(): Promise<void> {
       }
     }
     pendingInserts.value = [];
-    await formView.applyEdits(
-      drafts.map((draft) => ({
-        section: draft.section,
-        occurrence: draft.occurrence,
-        row: draft.row,
-        column: draft.column,
-        value: draft.value,
-      }))
-    );
-    // 只有新增、没有改格时，上面的 applyEdits 会空转（不会回传新投影），这里补一次重新解析。
-    if (drafts.length === 0) await formView.project();
-    pendingEdits.value = new Map();
+
+    // ③ 删除（放最后）：同一批里按行号**从大到小**执行，倒着删不会错位。
+    //    ③-a 主表：整条掉落（含它自带的 [list] 块）
+    for (const rowIndex of [...deletes].sort((left, right) => right - left)) {
+      await DeleteIndependentDrop(formView.filePath.trim(), rowIndex);
+    }
+    pendingDeletes.value = [];
+    //    ③-b 查看器里排队的**候选**删除：按（段, 出现序号）分组，组内同样从大到小
+    if (candidateDeletes.length > 0) {
+      const grouped = new Map<
+        string,
+        { section: string; occurrence: number; rows: number[] }
+      >();
+      for (const item of candidateDeletes) {
+        const key = `${item.section.toLowerCase()}#${item.occurrence}`;
+        const bucket = grouped.get(key) ?? {
+          section: item.section,
+          occurrence: item.occurrence,
+          rows: [],
+        };
+        bucket.rows.push(item.row);
+        grouped.set(key, bucket);
+      }
+      for (const bucket of grouped.values()) {
+        for (const rowIndex of [...bucket.rows].sort((left, right) => right - left)) {
+          await DeleteDropCandidate(
+            formView.filePath.trim(),
+            bucket.section,
+            bucket.occurrence,
+            rowIndex
+          );
+        }
+      }
+      pendingCandidateDeletes.value = [];
+      clearViewerSelection();
+    }
+
+    // 上面每个调用都会重新投影，但主投影未必被回写 ⇒ 这里统一再取一次，保证界面与归档一致。
+    await formView.project();
     editedCount.value += drafts.length;
     const parts: string[] = [];
     if (drafts.length > 0) parts.push(`${drafts.length} 格`);
     if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
     if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
+    if (candidateDeletes.length > 0) parts.push(`删除候选 ${candidateDeletes.length} 条`);
     message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
     // ⚠️ 红线（用户 2026-10-03 明确强调）：**写 PVF 文件只能由用户手动点主工具条
     // 「保存 PVF」**。可视化这边的「保存改动」等价于"装备文本的保存" —— 只把改动写进
@@ -2069,6 +2218,31 @@ function resetColumnWidths(): void {
             段 [{{ viewerSection.section }}] · 第 {{ viewerSection.occurrence }} 处 ·
             {{ viewerSection.rows.length }} 行 × {{ viewerSection.columns.length }} 列
           </div>
+
+          <!-- 候选的行操作（与主表同一套：单击选行 / Ctrl 多选 / Shift 连选 → 排队 → 保存改动才写） -->
+          <div class="fv-viewer-tools">
+            <NButton
+              size="tiny"
+              type="error"
+              ghost
+              :disabled="viewerSelectedRows.size === 0"
+              title="先选中要删的候选行：单击一行 · Ctrl+左键多选 · Shift+左键连选一片（删除时的格式处理与主表删除一致）"
+              @click="queueViewerDeleteSelected"
+            >
+              删除选中{{ viewerSelectedRows.size > 0 ? ` (${viewerSelectedRows.size})` : "" }}
+            </NButton>
+            <span v-if="viewerPendingDeleteRows.length" class="fv-tools-dirty">
+              待删除 {{ viewerPendingDeleteRows.length }} 条
+            </span>
+            <span v-if="pendingCandidates(viewerSection).length" class="fv-tools-dirty">
+              待保存新增 {{ pendingCandidates(viewerSection).length }} 条
+            </span>
+            <span class="fv-tools-gap" />
+            <span class="fv-viewer-tools-hint">
+              单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 都在点「保存改动」后才写进归档内存
+            </span>
+          </div>
+
           <div class="fv-viewer-table">
             <table class="fv-table">
               <thead>
@@ -2080,7 +2254,15 @@ function resetColumnWidths(): void {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in viewerSection.rows" :key="row.index">
+                <tr
+                  v-for="row in viewerSection.rows"
+                  :key="row.index"
+                  :class="{
+                    'fv-row-selected': viewerSelectedRows.has(row.index),
+                    'fv-row-deleting': viewerPendingDeleteRows.includes(row.index),
+                  }"
+                  @click="onViewerRowClick(row, $event)"
+                >
                   <td class="fv-td-index">{{ row.index + 1 }}</td>
                   <td
                     v-for="(_, index) in viewerSection.columns"
@@ -2121,21 +2303,34 @@ function resetColumnWidths(): void {
                     </span>
                   </td>
                 </tr>
+                <!-- 排队中的「添加候选」：**直接列在表里**（用户 2026-10-03：
+                     "原来是可以直接添加到列表里面去的，怎么变成现在这样了？改回来"）。
+                     以前只在下方的"待提交候选"一行里列出，太隐蔽 ✗ -->
+                <tr
+                  v-for="(item, position) in pendingCandidates(viewerSection)"
+                  :key="`pending-${position}`"
+                  class="fv-row-pending"
+                  title="这一条还没写进归档 —— 点上方「保存改动」才写"
+                >
+                  <td class="fv-td-index fv-pending-mark">+{{ position + 1 }}</td>
+                  <td v-for="(_, index) in viewerSection.columns" :key="index" class="fv-num">
+                    {{ index === 0 ? item.itemId : index === 1 ? item.weight : "" }}
+                    <NTag
+                      v-if="index === viewerSection.columns.length - 1"
+                      size="tiny"
+                      :bordered="false"
+                      type="warning"
+                    >
+                      待保存
+                    </NTag>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
           <div class="fv-viewer-hint">
-            双击格子可改（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档内存。
-          </div>
-          <div v-if="pendingCandidates(viewerSection).length" class="fv-viewer-hint">
-            待提交候选（还没写进归档）：
-            <span
-              v-for="(item, index) in pendingCandidates(viewerSection)"
-              :key="index"
-              class="fv-drop-name"
-            >
-              {{ item.itemId }} / {{ item.weight }}&nbsp;&nbsp;
-            </span>
+            双击格子可改（物品编号 / 权重）· 单击选行（Ctrl 多选 / Shift 连选）后点「删除选中」——
+            这些改动都先留在本地，点上方「保存改动」才写进归档内存。
           </div>
           <div class="fv-drop-row">
             <NButton size="tiny" type="primary" ghost @click="startViewerAdd">
@@ -2895,6 +3090,33 @@ function resetColumnWidths(): void {
 .fv-viewer-hint {
   font-size: 11px;
   color: var(--pvf-text-muted);
+}
+
+/* 候选的行操作条（删除选中 / 待删计数 / 待保存计数 / 操作提示） */
+.fv-viewer-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border: 1px solid var(--pvf-border-faint);
+  border-radius: 6px;
+  background: var(--pvf-surface-subtle);
+}
+
+.fv-viewer-tools-hint {
+  font-size: 11px;
+  color: var(--pvf-text-muted);
+}
+
+/* 排在列表里、还没写进归档的「添加候选」行（用户要求"加到列表里"看得见） */
+.fv-table tbody tr.fv-row-pending > td {
+  background: var(--pvf-warning-surface);
+}
+
+.fv-table tbody tr.fv-row-pending > td.fv-pending-mark {
+  color: var(--pvf-warning);
+  font-weight: 600;
 }
 
 .fv-viewer-table {

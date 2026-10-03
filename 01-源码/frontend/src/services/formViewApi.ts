@@ -181,6 +181,26 @@ export function AddDropCandidate(
 }
 
 /**
+ * 删除**某一处** `[list]` 里第 `rowIndex` 行（0 基）的候选，返回重新投影后的这一段。
+ *
+ * 与 `DeleteIndependentDrop` 同一套格式规则（删掉前面的空白、让下一条往前靠、
+ * 删完重新投影校验，不符就整体放弃）；同样只写归档内存、不落盘。
+ * fqn = pvfine/services.FormViewService.DeleteDropCandidate
+ *
+ * 方法 ID 同样复算 + 反验过（连同本文件里已有的 AddDropCandidate /
+ * DeleteIndependentDrop / ResolveRefNames / ApplyCellEdits / RuleText，
+ * 5 个已知 ID 全部命中 FNV-1a-32 后才取用）。
+ */
+export function DeleteDropCandidate(
+  filePath: string,
+  section: string,
+  occurrence: number,
+  rowIndex: number
+): $CancellablePromise<FormViewSection> {
+  return $Call.ByID(1599531457, filePath, section, occurrence, rowIndex);
+}
+
+/**
  * 把一批 ref 值（怪物 / 物品编号）翻成中文名，返回 `{ 编号: 名字 }`（查不到的键不出现）。
  *
  * **与表格里的名字同源**：走的是后端那个 `refNameResolver`（表格投影用的同一个）。
