@@ -26,6 +26,19 @@ type Cell struct {
 	End   int `json:"end"`
 }
 
+// RowLink 是一行关联到的另一段（如独立掉落的 [list]）：界面据此提供「双击查看」。
+type RowLink struct {
+	// Column 是触发链接的列下标（0 基），即规则里 Link.Column。
+	Column int `json:"column"`
+	// TargetSection 是被引用段的段名。
+	TargetSection string `json:"targetSection"`
+	// Occurrence 是被引用段在本文件里的第几次出现（1 基），与
+	// ProjectedSection.Occurrence 对应——界面靠这两个值在同名段里定位。
+	Occurrence int `json:"occurrence"`
+	// Title 是查看器标题（来自规则）。
+	Title string `json:"title,omitempty"`
+}
+
 // Row 是一行。
 type Row struct {
 	// Index 是行号（0 基）。
@@ -33,6 +46,8 @@ type Row struct {
 	// Complete 表示该行 token 数是否达到 rowTokens（false = 末行不完整 / 文件异常）。
 	Complete bool   `json:"complete"`
 	Cells    []Cell `json:"cells"`
+	// Link 是本行关联到的另一段（规则配了 links 且本行命中时才有）。
+	Link *RowLink `json:"link,omitempty"`
 }
 
 // ProjectedSection 是一段（一次出现）的投影结果。
@@ -53,6 +68,10 @@ type ProjectedSection struct {
 	TokenCount int `json:"tokenCount"`
 	// Warnings 是本段特有的告警。
 	Warnings []string `json:"warnings,omitempty"`
+
+	// start 是本段第一个 token 在编辑器文本里的偏移。不导出：只用于投影内部按
+	// 偏移顺序建立「行 → 被引用段」的关联。
+	start int
 }
 
 // Projection 是一个文件的投影结果（只读）。
@@ -152,7 +171,110 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 	for _, name := range unknownOrder {
 		warn(fmt.Sprintf("段 [%s] 未在规则中定义（%d 个 token 未投影）", name, unknown[name]))
 	}
+
+	// 4) 行 → 被引用段 的关联（只有规则里配了 links 的段才需要做）。
+	resolveLinks(projection, format)
 	return projection
+}
+
+// linkTarget 是被引用段的一次出现，供 resolveLinks 认领。
+type linkTarget struct {
+	sectionIndex int
+	start        int
+	claimed      bool
+}
+
+// resolveLinks 按规则的 links 定义，把每一行关联到**它后面的**目标段出现。
+//
+// 配对依据是文本偏移顺序，不是计数：取「起点在本行之后、尚未被认领、且最靠前」
+// 的那一次出现。这样某一行没有列表、或中间插了别的段，都不会整体错位。
+func resolveLinks(projection *Projection, format Format) {
+	targets := make(map[string][]*linkTarget)
+	for index := range projection.Sections {
+		section := &projection.Sections[index]
+		key := sectionKey(section.Section)
+		targets[key] = append(targets[key], &linkTarget{sectionIndex: index, start: section.start})
+	}
+
+	for _, rule := range format.Sections {
+		if len(rule.Links) == 0 {
+			continue
+		}
+		key := sectionKey(rule.Section)
+		for index := range projection.Sections {
+			section := &projection.Sections[index]
+			if sectionKey(section.Section) != key {
+				continue
+			}
+			for rowIndex := range section.Rows {
+				row := &section.Rows[rowIndex]
+				rowEnd := rowEndOffset(row)
+				for _, link := range rule.Links {
+					if !linkMatches(link, row) {
+						continue
+					}
+					claimed := claimTarget(targets[sectionKey(link.TargetSection)], rowEnd)
+					if claimed == nil {
+						continue
+					}
+					target := &projection.Sections[claimed.sectionIndex]
+					row.Link = &RowLink{
+						Column:        link.Column,
+						TargetSection: target.Section,
+						Occurrence:    target.Occurrence,
+						Title:         strings.TrimSpace(link.Title),
+					}
+				}
+			}
+		}
+	}
+}
+
+// claimTarget 取「出现在 after 之后、最靠前且尚未被认领」的一次出现。
+func claimTarget(list []*linkTarget, after int) *linkTarget {
+	var best *linkTarget
+	for _, item := range list {
+		if item.claimed || item.start < after {
+			continue
+		}
+		if best == nil || item.start < best.start {
+			best = item
+		}
+	}
+	if best != nil {
+		best.claimed = true
+	}
+	return best
+}
+
+// linkMatches 判断某一行是否命中链接的触发条件。
+func linkMatches(link Link, row *Row) bool {
+	if link.Column < 0 || link.Column >= len(row.Cells) {
+		return false
+	}
+	value := strings.TrimSpace(row.Cells[link.Column].Value)
+	for _, want := range link.When {
+		if value == strings.TrimSpace(want) {
+			return true
+		}
+	}
+	return false
+}
+
+// rowEndOffset 返回一行最后一个 token 的结束偏移。
+func rowEndOffset(row *Row) int {
+	end := 0
+	for _, cell := range row.Cells {
+		if cell.End > end {
+			end = cell.End
+		}
+	}
+	return end
+}
+
+// sectionKey 是段名比较用的归一化键。
+func sectionKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 // projectSection 把一组 token 按 RowTokens 切成行。
@@ -169,6 +291,7 @@ func projectSection(rule Section, group *tokenGroup, occurrence int) ProjectedSe
 		Columns:    rule.ColumnLabels(),
 		Rows:       make([]Row, 0, len(group.tokens)/rowTokens+1),
 		TokenCount: len(group.tokens),
+		start:      groupStart(group),
 	}
 
 	for start := 0; start < len(group.tokens) && len(projected.Rows) < maxSectionRows; start += rowTokens {
@@ -205,6 +328,14 @@ func projectSection(rule Section, group *tokenGroup, occurrence int) ProjectedSe
 		projected.Warnings = append(projected.Warnings, "本段没有任何 token（空段）")
 	}
 	return projected
+}
+
+// groupStart 返回一组 token 在文本里的起始偏移（空组返回 0）。
+func groupStart(group *tokenGroup) int {
+	if group == nil || len(group.tokens) == 0 {
+		return 0
+	}
+	return group.tokens[0].Start
 }
 
 // makeCell 生成一格，并按列类型补上可读文本。

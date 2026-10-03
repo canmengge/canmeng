@@ -218,3 +218,200 @@ func TestValidateRejectsBadRules(t *testing.T) {
 		})
 	}
 }
+
+// linkedIndependentDrop 是三行 + 两个 [list] 的片段：第 1 行内联、第 2 行单一物品、
+// 第 3 行内联。用来验证关联**按文本偏移配对**（第 3 行必须配到第 2 个 list，而不是
+// 被第 2 行"占位"后错位）。
+const linkedIndependentDrop = "[independent drop]\r\n" +
+	"\t0\t20\t0\t1000000\t1000000\t1000000\t1000000\t1000000\t1\t1\t1\t1\t1\t0\t0\t-1\t1\r\n" +
+	"\t[list]\r\n" +
+	"\t\t14400\t1000\r\n" +
+	"\t[/list]\r\n" +
+	"\t0\t21\t3015\t1000000\t1000000\t1000000\t1000000\t1000000\t1\t1\t1\t1\t1\t0\t0\t-1\t0\r\n" +
+	"\t0\t22\t0\t1000000\t1000000\t1000000\t1000000\t1000000\t1\t1\t1\t1\t1\t0\t0\t-1\t1\r\n" +
+	"\t[list]\r\n" +
+	"\t\t25500\t500\r\n" +
+	"\t[/list]\r\n" +
+	"[/independent drop]\r\n"
+
+// TestProjectLinksInlineList 用真实归档片段验证「掉落方式 = 内联列表」的行会关联到
+// 紧跟其后的 [list]。
+func TestProjectLinksInlineList(t *testing.T) {
+	format := mustFormat(t, "independent_drop")
+	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(realIndependentDropHead))
+
+	drop, list := findSections(t, projection)
+	if len(drop.Rows) != 1 {
+		t.Fatalf("独立掉落有 %d 行，期望 1 行", len(drop.Rows))
+	}
+	link := drop.Rows[0].Link
+	if link == nil {
+		t.Fatal("掉落方式 = 1（内联列表）的行应当关联到 [list]，实际没有 link")
+	}
+	if link.TargetSection != "list" || link.Occurrence != 1 {
+		t.Errorf("link 指向 %q #%d，期望 list #1", link.TargetSection, link.Occurrence)
+	}
+	if link.Column != 16 {
+		t.Errorf("link.Column = %d，期望 16（掉落方式列）", link.Column)
+	}
+	if link.Title != "掉落候选" {
+		t.Errorf("link.Title = %q，期望 %q", link.Title, "掉落候选")
+	}
+	if len(list.Rows) != 1 || list.Occurrence != 1 {
+		t.Fatalf("[list] 应当出现 1 次且 1 行，实际 %d 次 / %d 行", list.Occurrence, len(list.Rows))
+	}
+}
+
+// TestProjectLinksPairsByOffset 验证关联按**文本偏移**配对：中间那行是「单一物品」，
+// 不该抢占列表，第 3 行要配到第 2 个 [list]。
+func TestProjectLinksPairsByOffset(t *testing.T) {
+	format := mustFormat(t, "independent_drop")
+	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(linkedIndependentDrop))
+
+	drop, list := findSections(t, projection)
+	if len(drop.Rows) != 3 {
+		t.Fatalf("独立掉落有 %d 行，期望 3 行", len(drop.Rows))
+	}
+	if list.Occurrence != 1 {
+		t.Errorf("[list] 段应当只在此断言第一次出现，实际 Occurrence = %d", list.Occurrence)
+	}
+
+	if row := drop.Rows[0]; row.Link == nil || row.Link.Occurrence != 1 {
+		t.Errorf("第 1 行（内联）应关联 list #1，实际 %+v", row.Link)
+	}
+	if row := drop.Rows[1]; row.Link != nil {
+		t.Errorf("第 2 行（单一物品）不该有 link，实际 %+v", row.Link)
+	}
+	if row := drop.Rows[2]; row.Link == nil || row.Link.Occurrence != 2 {
+		t.Errorf("第 3 行（内联）应关联 list #2，实际 %+v", row.Link)
+	}
+
+	// 两个 [list] 各自成段，序号为 1 / 2。
+	occurrences := make([]int, 0, 2)
+	for i := range projection.Sections {
+		if strings.EqualFold(projection.Sections[i].Section, "list") {
+			occurrences = append(occurrences, projection.Sections[i].Occurrence)
+		}
+	}
+	if len(occurrences) != 2 || occurrences[0] != 1 || occurrences[1] != 2 {
+		t.Errorf("[list] 出现序号 = %v，期望 [1 2]", occurrences)
+	}
+	if len(projection.Warnings) != 0 {
+		t.Errorf("本片段不含未定义段，不该有告警，实际: %v", projection.Warnings)
+	}
+}
+
+// TestProjectLinkAbsentWhenSingleItem 保证「单一物品」的行不会凭空生成 link。
+func TestProjectLinkAbsentWhenSingleItem(t *testing.T) {
+	format := mustFormat(t, "independent_drop")
+	text := "[independent drop]\r\n" +
+		"\t0\t20\t3015\t1000000\t1000000\t1000000\t1000000\t1000000\t1\t1\t1\t1\t1\t0\t0\t-1\t0\r\n" +
+		"[/independent drop]\r\n"
+	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(text))
+
+	// 本片段本来就没有 [list]，所以不能用 findSections（它要求 list 存在）。
+	var drop *ProjectedSection
+	for i := range projection.Sections {
+		if strings.EqualFold(projection.Sections[i].Section, "independent drop") {
+			drop = &projection.Sections[i]
+		}
+	}
+	if drop == nil {
+		t.Fatal("没有投影出 [independent drop] 段")
+	}
+	if len(drop.Rows) != 1 {
+		t.Fatalf("独立掉落有 %d 行，期望 1 行", len(drop.Rows))
+	}
+	if drop.Rows[0].Link != nil {
+		t.Errorf("掉落方式 = 0（单一物品）不该有 link，实际 %+v", drop.Rows[0].Link)
+	}
+}
+
+// TestValidateRejectsBadLinks 保证 links 写错时在加载期就被拦下。
+func TestValidateRejectsBadLinks(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "link 列下标越界",
+			data: `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+			       {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],
+			        "links":[{"column":3,"when":["1"],"targetSection":"t"}]},
+			       {"section":"t","label":"T","rowTokens":1,"columns":[{"label":"B"}]}]}]}`,
+			want: "超出列范围",
+		},
+		{
+			name: "link 目标段未定义",
+			data: `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+			       {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],
+			        "links":[{"column":0,"when":["1"],"targetSection":"nope"}]}]}]}`,
+			want: "指向未定义的段",
+		},
+		{
+			name: "link when 为空",
+			data: `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+			       {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],
+			        "links":[{"column":0,"when":[],"targetSection":"t"}]},
+			       {"section":"t","label":"T","rowTokens":1,"columns":[{"label":"B"}]}]}]}`,
+			want: ".when 不能为空",
+		},
+		{
+			name: "link 指向本段自身",
+			data: `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+			       {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],
+			        "links":[{"column":0,"when":["1"],"targetSection":"s"}]}]}]}`,
+			want: "不能指向本段自身",
+		},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			_, err := Parse([]byte(item.data))
+			if err == nil {
+				t.Fatal("期望校验失败，实际通过")
+			}
+			if !strings.Contains(err.Error(), item.want) {
+				t.Errorf("错误信息应包含 %q，实际: %v", item.want, err)
+			}
+		})
+	}
+}
+
+// mustFormat 取出内置规则里的某个文件族。
+func mustFormat(t *testing.T, id string) Format {
+	t.Helper()
+	catalog, err := LoadDefault()
+	if err != nil {
+		t.Fatalf("内置规则校验失败: %v", err)
+	}
+	format, ok := catalog.Lookup(id)
+	if !ok {
+		t.Fatalf("内置规则里找不到 %s", id)
+	}
+	return format
+}
+
+// findSections 找出独立掉落片段里的 drop 与 list 段（第一次出现）。
+func findSections(t *testing.T, projection *Projection) (drop, list *ProjectedSection) {
+	t.Helper()
+	for i := range projection.Sections {
+		switch {
+		case strings.EqualFold(projection.Sections[i].Section, "independent drop"):
+			if drop == nil {
+				drop = &projection.Sections[i]
+			}
+		case strings.EqualFold(projection.Sections[i].Section, "list"):
+			if list == nil {
+				list = &projection.Sections[i]
+			}
+		}
+	}
+	if drop == nil {
+		t.Fatal("没有投影出 [independent drop] 段")
+	}
+	if list == nil {
+		t.Fatal("没有投影出 [list] 段")
+	}
+	return drop, list
+}

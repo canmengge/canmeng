@@ -1,29 +1,27 @@
 <script setup lang="ts">
 /**
- * 结构化视图（只读）。
+ * 可视化编辑区 —— 结构化视图（只读）。
  *
  * 按外部规则（config/formats.json）把**一个文件**投影成「段 → 行 → 列」表格，
  * 例如 etc/independent_drop.etc 的 17 列掉落配置行。
  *
- * 两处运行位置共用本组件：
- *   - 侧栏面板（主窗口内，`detached` 为 false）
- *   - **独立窗口**（`?view=formview`，`detached` 为 true）—— 17 列在侧栏里太挤，
- *     独立窗口可以左右拉宽。
+ * **只跑在独立窗口里**（`?view=formview` + FormViewWindow.vue）。侧栏那份已经在
+ * 2026-10-03 按用户要求整体删掉（UI 与功能都不保留），入口改为工具条
+ * 「可视化编辑区」下拉。
  *
  * 布局要点（修掉"不能下滑"）：头/工具栏/页脚固定，**中间只有一个滚动区**
  * （`.fv-body`），且 flex 链上每层都写 `min-height: 0` —— flex 子项默认
  * `min-height: auto`，不写就撑不出滚动条。
  *
+ * 关联：规则里配了 links 的列（如独立掉落的「掉落方式」= 内联列表 / 外部文件），
+ * 该格**双击**会打开被引用段（紧跟其后的 [list]）的只读查看器。
+ *
  * 本组件**只读**：不写回任何字节，也不改文档。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { NButton, NEmpty, NInput, NSelect, NSpin, NTag } from "naive-ui";
+import { NButton, NEmpty, NInput, NModal, NSelect, NSpin, NTag } from "naive-ui";
 import { useFormViewStore } from "../stores/formView";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
-
-const props = withDefaults(defineProps<{ detached?: boolean }>(), {
-  detached: false,
-});
 
 const formView = useFormViewStore();
 
@@ -38,11 +36,16 @@ const columnWidths = ref<Record<string, number[]>>({});
 
 onMounted(() => {
   void formView.loadFormats();
-  if (!props.detached) void formView.refreshWindowOpen();
 });
 
 onUnmounted(() => {
   stopResize();
+});
+
+/** 界面标题：文件族名 + 「编辑」（如 独立掉落 → 独立掉落编辑）。 */
+const viewTitle = computed(() => {
+  const label = formView.currentFormat?.label ?? formView.projection?.formatLabel ?? "";
+  return label === "" ? "可视化编辑" : `${label}编辑`;
 });
 
 /** 主表 = 行数最多的那一段（通常是主配置表，如「掉落配置行」）。 */
@@ -55,8 +58,27 @@ const mainSection = computed<FormViewSection | null>(() => {
   return best;
 });
 
+/**
+ * 被「行 → 关联」认领过的段：已在主表里可双击查看，不再重复堆到「其它段」。
+ * 键为 `段名小写#出现序号`。
+ */
+const linkedSectionKeys = computed(() => {
+  const keys = new Set<string>();
+  for (const section of formView.projection?.sections ?? []) {
+    for (const row of section.rows) {
+      if (!row.link) continue;
+      keys.add(`${row.link.targetSection.toLowerCase()}#${row.link.occurrence}`);
+    }
+  }
+  return keys;
+});
+
 const otherSections = computed<FormViewSection[]>(() =>
-  (formView.projection?.sections ?? []).filter((section) => section !== mainSection.value)
+  (formView.projection?.sections ?? []).filter(
+    (section) =>
+      section !== mainSection.value &&
+      !linkedSectionKeys.value.has(`${section.section.toLowerCase()}#${section.occurrence}`)
+  )
 );
 
 const pageCount = computed(() =>
@@ -68,10 +90,6 @@ const pagedRows = computed<FormViewRow[]>(() => {
   const start = (page.value - 1) * pageSize;
   return rows.slice(start, start + pageSize);
 });
-
-const openInWindowLabel = computed(() =>
-  formView.windowOpen ? "切到独立窗口" : "在独立窗口打开"
-);
 
 watch(
   () => formView.projection,
@@ -96,6 +114,46 @@ function isNumeric(value: string): boolean {
 function sectionTitle(section: FormViewSection): string {
   const suffix = section.occurrence > 1 ? ` #${section.occurrence}` : "";
   return `${section.label || section.section}${suffix}`;
+}
+
+// ---- 行 → 关联段（双击查看） ----
+
+const viewerVisible = ref(false);
+const viewerTitle = ref("");
+const viewerSection = ref<FormViewSection | null>(null);
+
+/** 该格是否是「触发关联」的列（规则里的 link.column）。 */
+function isLinkCell(row: FormViewRow, index: number): boolean {
+  return !!row.link && row.link.column === index;
+}
+
+function cellTitle(row: FormViewRow, index: number): string {
+  const raw = row.cells[index]?.value ?? "";
+  if (isLinkCell(row, index) && row.link) {
+    const name = row.link.title || row.link.targetSection;
+    return `双击查看关联的「${name}」（第 ${row.link.occurrence} 处）\n原值: ${raw}`;
+  }
+  return `原值: ${raw}`;
+}
+
+/** 打开关联段：按「段名 + 出现序号」在同名段里定位那一次出现。 */
+function openLink(row: FormViewRow): void {
+  const link = row.link;
+  if (!link) return;
+  const target = (formView.projection?.sections ?? []).find(
+    (item) =>
+      item.section.toLowerCase() === link.targetSection.toLowerCase() &&
+      item.occurrence === link.occurrence
+  );
+  const name = link.title || link.targetSection;
+  viewerTitle.value = `${name} · [${link.targetSection}] 第 ${link.occurrence} 处`;
+  viewerSection.value = target ?? null;
+  viewerVisible.value = true;
+}
+
+function onCellDblClick(row: FormViewRow, index: number): void {
+  if (!isLinkCell(row, index)) return;
+  openLink(row);
 }
 
 // ---- 列宽左右拉伸 ----
@@ -159,24 +217,17 @@ function resetColumnWidths(): void {
 </script>
 
 <template>
-  <div class="fv-root" :class="{ 'fv-root--detached': props.detached }">
+  <div class="fv-root">
     <!-- ① 标题栏（固定） -->
     <header class="fv-head">
       <div class="fv-head-title">
-        <span class="fv-title">结构化视图</span>
+        <span class="fv-crumbs">可视化编辑区</span>
+        <span class="fv-crumb-sep">›</span>
+        <span class="fv-title">{{ viewTitle }}</span>
         <NTag size="small" :bordered="false" type="info">只读</NTag>
       </div>
       <div class="fv-head-actions">
         <NButton size="tiny" quaternary @click="resetColumnWidths">重置列宽</NButton>
-        <NButton
-          v-if="!props.detached"
-          size="tiny"
-          type="primary"
-          secondary
-          @click="formView.openInWindow()"
-        >
-          {{ openInWindowLabel }}
-        </NButton>
       </div>
     </header>
 
@@ -258,7 +309,7 @@ function resetColumnWidths(): void {
               <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
               <span class="fv-section-meta">
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列 ·
-                拖表头右边缘可调列宽
+                拖表头右边缘调列宽 · 带 🔗 的格可双击查看关联列表
               </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
@@ -296,10 +347,15 @@ function resetColumnWidths(): void {
                   <td
                     v-for="(_, index) in mainSection.columns"
                     :key="index"
-                    :class="{ 'fv-num': isNumeric(cellText(row, index).raw) }"
-                    :title="'原值: ' + cellText(row, index).raw"
+                    :class="{
+                      'fv-num': isNumeric(cellText(row, index).raw),
+                      'fv-link-cell': isLinkCell(row, index),
+                    }"
+                    :title="cellTitle(row, index)"
+                    @dblclick="onCellDblClick(row, index)"
                   >
                     {{ cellText(row, index).text }}
+                    <span v-if="isLinkCell(row, index)" class="fv-link-badge">🔗</span>
                   </td>
                 </tr>
               </tbody>
@@ -374,8 +430,54 @@ function resetColumnWidths(): void {
         <span class="fv-pager-text">{{ page }} / {{ pageCount }}</span>
         <NButton size="tiny" :disabled="page >= pageCount" @click="page += 1">下一页</NButton>
       </div>
-      <span v-if="props.detached" class="fv-foot-hint">窗口可左右拉伸</span>
+      <span class="fv-foot-hint">窗口可左右拉伸</span>
     </footer>
+
+    <!-- ⑥ 关联段查看器（只读） -->
+    <NModal
+      v-model:show="viewerVisible"
+      preset="card"
+      :title="viewerTitle"
+      class="fv-viewer-modal"
+      :bordered="false"
+      size="small"
+    >
+      <div v-if="viewerSection" class="fv-viewer">
+        <div class="fv-viewer-meta">
+          段 [{{ viewerSection.section }}] · 第 {{ viewerSection.occurrence }} 处 ·
+          {{ viewerSection.rows.length }} 行 × {{ viewerSection.columns.length }} 列
+        </div>
+        <div class="fv-viewer-table">
+          <table class="fv-table">
+            <thead>
+              <tr>
+                <th class="fv-th-index">#</th>
+                <th v-for="(column, index) in viewerSection.columns" :key="index">
+                  {{ column }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in viewerSection.rows" :key="row.index">
+                <td class="fv-td-index">{{ row.index + 1 }}</td>
+                <td
+                  v-for="(_, index) in viewerSection.columns"
+                  :key="index"
+                  :class="{ 'fv-num': isNumeric(cellText(row, index).raw) }"
+                  :title="'原值: ' + cellText(row, index).raw"
+                >
+                  {{ cellText(row, index).text }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="fv-viewer-hint">
+          只读查看。要改内容请到「归档编辑」里改这个文件的原文。
+        </div>
+      </div>
+      <NEmpty v-else description="找不到被引用的段" />
+    </NModal>
   </div>
 </template>
 
@@ -392,10 +494,6 @@ function resetColumnWidths(): void {
   background: var(--pvf-surface-panel);
 }
 
-.fv-root--detached {
-  padding: 0 2px;
-}
-
 /* ① 标题栏 */
 .fv-head {
   display: flex;
@@ -410,6 +508,16 @@ function resetColumnWidths(): void {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.fv-crumbs {
+  font-size: 11px;
+  color: var(--pvf-text-muted);
+}
+
+.fv-crumb-sep {
+  font-size: 11px;
+  color: var(--pvf-text-faint);
 }
 
 .fv-title {
@@ -565,7 +673,6 @@ function resetColumnWidths(): void {
   background: var(--pvf-surface-elevated);
   color: var(--pvf-text-secondary);
   font-weight: 600;
-  /* 表头右侧留出拖拽手柄的位置 */
   padding-right: 10px;
 }
 
@@ -577,7 +684,7 @@ function resetColumnWidths(): void {
   vertical-align: bottom;
 }
 
-/* 列宽拖拽手柄 */
+/* 列宽拖拽手柄（th 是 sticky，本身就是定位父级） */
 .fv-th-grip {
   position: absolute;
   top: 0;
@@ -602,12 +709,6 @@ function resetColumnWidths(): void {
   opacity: 1;
 }
 
-/* 手柄定位需要 th 作为定位父级 */
-.fv-table thead th {
-  position: sticky;
-  top: 0;
-}
-
 .fv-table tbody tr:nth-child(even) td {
   background: var(--pvf-surface-subtle);
 }
@@ -630,6 +731,19 @@ function resetColumnWidths(): void {
 
 .fv-row-incomplete td {
   background: var(--pvf-surface-warning);
+}
+
+/* 可双击查看关联的格 */
+.fv-link-cell {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.fv-link-badge {
+  font-size: 9px;
+  margin-left: 3px;
+  opacity: 0.75;
 }
 
 .fv-table--compact th,
@@ -696,5 +810,25 @@ function resetColumnWidths(): void {
   font-size: 11px;
   color: var(--pvf-text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* ⑥ 查看器 */
+.fv-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fv-viewer-meta,
+.fv-viewer-hint {
+  font-size: 11px;
+  color: var(--pvf-text-muted);
+}
+
+.fv-viewer-table {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--pvf-border-faint);
+  border-radius: 4px;
 }
 </style>

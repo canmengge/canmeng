@@ -48,11 +48,28 @@ export interface FormViewCell {
   end: number;
 }
 
+/**
+ * 对应 Go `formview.RowLink`：本行关联到的**另一段**（如独立掉落的 [list]）。
+ * 规则里配了 links 且本行命中时才有。
+ */
+export interface FormViewRowLink {
+  /** 触发链接的列下标（0 基）。 */
+  column: number;
+  /** 被引用段的段名。 */
+  targetSection: string;
+  /** 被引用段在本文件里的第几次出现（1 基），与 FormViewSection.occurrence 对应。 */
+  occurrence: number;
+  /** 查看器标题（来自规则）。 */
+  title?: string;
+}
+
 /** 对应 Go `formview.Row`。 */
 export interface FormViewRow {
   index: number;
   complete: boolean;
   cells: FormViewCell[];
+  /** 本行关联到的另一段（规则配了 links 且命中时才有）。 */
+  link?: FormViewRowLink;
 }
 
 /** 对应 Go `formview.ProjectedSection`。 */

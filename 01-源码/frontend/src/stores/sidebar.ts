@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-export type SidebarPanel = "filesets" | "objectview" | "formview" | "search" | "doctor" | "ai";
+export type SidebarPanel = "filesets" | "objectview" | "search" | "doctor" | "ai";
 
 /** 右侧工作区侧栏状态。 */
 export const useSidebarStore = defineStore("sidebar", () => {

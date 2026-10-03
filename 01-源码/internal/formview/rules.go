@@ -47,6 +47,24 @@ type Column struct {
 	NoneValue string `json:"noneValue,omitempty"`
 }
 
+// Link 描述「某一列取到某些值时，本行关联同一文件里的另一段」。
+//
+// 真实例子：etc/independent_drop.etc 的「掉落方式」= 内联列表(1) / 外部文件(2) 时，
+// 第 3 列（掉落物品）没有意义，真正的候选列表是**紧跟在该行之后**的 [list] 段。
+//
+// 关联关系由**文本偏移顺序**确定（目标段出现在本行之后），不靠"第 N 个配第 N 个"
+// 的计数——这样即使某一行没有列表、或中间插了别的段，也不会错位。
+type Link struct {
+	// Column 是触发列的下标（0 基，对应 Columns 的下标）。
+	Column int `json:"column"`
+	// When 是触发取值：与该列 token 的原样文本比较（去首尾空白）。
+	When []string `json:"when"`
+	// TargetSection 是被引用段的段名（如 list），必须在本文件族里定义。
+	TargetSection string `json:"targetSection"`
+	// Title 是界面上查看器用的标题（如「掉落候选」）。
+	Title string `json:"title,omitempty"`
+}
+
 // Section 是一段的定义。
 type Section struct {
 	// Section 是段名，写法与 ScriptElement.Section 一致（不带方括号）。
@@ -59,6 +77,8 @@ type Section struct {
 	RowTokens int `json:"rowTokens"`
 	// Columns 必须与 RowTokens 等长：第 i 个元素描述每行第 i 个 token。
 	Columns []Column `json:"columns"`
+	// Links 是「本段的行 → 另一段」的关联定义（可选）。
+	Links []Link `json:"links,omitempty"`
 	// Optional 为 true 时，本段在本文件里未出现也不告警（用于只在部分客户端存在的段）。
 	Optional bool `json:"optional,omitempty"`
 }
@@ -287,6 +307,36 @@ func Validate(catalog Catalog) error {
 					}
 				default:
 					problems = append(problems, columnPrefix+".type 不支持: "+column.Type)
+				}
+			}
+			for k, link := range section.Links {
+				linkPrefix := fmt.Sprintf("%s.links[%d]", sectionPrefix, k)
+				if link.Column < 0 || link.Column >= len(section.Columns) {
+					problems = append(problems, fmt.Sprintf(
+						"%s.column(%d) 超出列范围 0..%d",
+						linkPrefix, link.Column, len(section.Columns)-1))
+				}
+				if len(link.When) == 0 {
+					problems = append(problems, linkPrefix+".when 不能为空")
+				}
+				if strings.TrimSpace(link.TargetSection) == "" {
+					problems = append(problems, linkPrefix+".targetSection 不能为空")
+				} else if strings.EqualFold(strings.TrimSpace(link.TargetSection), name) {
+					problems = append(problems, linkPrefix+".targetSection 不能指向本段自身")
+				}
+			}
+		}
+		// links 的目标段必须在本文件族里有定义（此时 seenSections 才收齐）。
+		for j, section := range format.Sections {
+			for k, link := range section.Links {
+				target := strings.ToLower(strings.TrimSpace(link.TargetSection))
+				if target == "" {
+					continue
+				}
+				if !seenSections[target] {
+					problems = append(problems, fmt.Sprintf(
+						"%s.sections[%d].links[%d].targetSection 指向未定义的段: %s",
+						prefix, j, k, link.TargetSection))
 				}
 			}
 		}

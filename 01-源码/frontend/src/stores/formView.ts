@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
+import { Events } from "@wailsio/runtime";
 import {
   ListFormats,
   ProjectFile,
@@ -73,6 +74,11 @@ export const useFormViewStore = defineStore("formView", () => {
     }
   });
 
+  // 独立窗口关掉后复位标记（工具条「可视化编辑区」按钮的已打开状态）。
+  Events.On("form-view:closed", () => {
+    windowOpen.value = false;
+  });
+
   /** 读取文件族目录（不依赖已打开的归档）。 */
   async function loadFormats(force = false): Promise<void> {
     if (formatsLoading.value) return;
@@ -140,8 +146,21 @@ export const useFormViewStore = defineStore("formView", () => {
     if (filePath.value.trim() !== "") await project();
   }
 
-  /** 在独立窗口里打开当前这个「文件族 + 路径」。 */
-  async function openInWindow(): Promise<void> {
+  /**
+   * 打开独立窗口。
+   *
+   * `preferredFormatId` 由入口指定（工具条「可视化编辑区」菜单给的是对应文件族）；
+   * 缺省沿用当前选择。入口不一定挂过面板，所以这里先确保规则已加载，并给文件族
+   * 兜底一个文件，避免开出一个空窗口。
+   */
+  async function openInWindow(preferredFormatId = ""): Promise<void> {
+    await loadFormats();
+    const target = preferredFormatId || formatId.value || formats.value[0]?.id || "";
+    if (target !== "") formatId.value = target;
+    const format = formats.value.find((entry) => entry.id === formatId.value);
+    if (format && format.files.length > 0 && filePath.value.trim() === "") {
+      filePath.value = format.files[0];
+    }
     await OpenFormViewWindow({
       formatId: formatId.value,
       filePath: filePath.value.trim(),

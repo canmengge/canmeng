@@ -13,7 +13,7 @@ const (
 	// 窗口同理：名字必须显式设置，否则 Wails 会命名成 "window-N"，按名字永远找不到。
 	FormViewWindowName = "form-view"
 
-	formViewWindowTitle = "结构化视图 — pvfine"
+	formViewWindowTitle = "可视化编辑区 — pvfine"
 
 	// FormViewWindowClosedEvent tells the main window the detached view is gone.
 	FormViewWindowClosedEvent = "form-view:closed"

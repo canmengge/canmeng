@@ -84,7 +84,7 @@ onUnmounted(() => {
       <NDialogProvider>
         <div class="fv-window-root">
           <div v-if="bootError" class="fv-window-error">{{ bootError }}</div>
-          <FormView v-else detached />
+          <FormView v-else />
         </div>
       </NDialogProvider>
     </NMessageProvider>

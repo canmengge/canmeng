@@ -16,7 +16,6 @@ import {
   Save24Regular,
   Search24Regular,
   ShieldCheckmark24Regular,
-  Table24Regular,
 } from "@vicons/fluent";
 import {
   NButton,
@@ -40,7 +39,6 @@ import { useBatchStore } from "../stores/batch";
 import { useSidebarStore, type SidebarPanel } from "../stores/sidebar";
 import { useSettingsStore } from "../stores/settings";
 import ObjectView from "./ObjectView.vue";
-import FormView from "./FormView.vue";
 import DoctorPanel from "./DoctorPanel.vue";
 import SearchWindowPanel from "./SearchWindowPanel.vue";
 import AiPanel from "./AiPanel.vue";
@@ -523,8 +521,6 @@ watch(
 
       <ObjectView v-else-if="sidebar.activePanel === 'objectview'" />
 
-      <FormView v-else-if="sidebar.activePanel === 'formview'" />
-
       <SearchWindowPanel v-else-if="sidebar.activePanel === 'search'" />
 
       <DoctorPanel v-else-if="sidebar.activePanel === 'doctor'" />
@@ -564,23 +560,6 @@ watch(
           </button>
         </template>
         对象视图（按对象 ID 聚合脚本 / 显示文本 / 登记项）
-      </NTooltip>
-
-      <NTooltip placement="left">
-        <template #trigger>
-          <button
-            type="button"
-            role="tab"
-            class="sidebar-rail-item"
-            :class="{ 'sidebar-rail-item--active': sidebar.activePanel === 'formview' }"
-            aria-label="表格视图"
-            :aria-selected="sidebar.activePanel === 'formview'"
-            @click="selectPanel('formview')"
-          >
-            <NIcon :size="18"><Table24Regular /></NIcon>
-          </button>
-        </template>
-        结构化视图（按规则把文件切成表格，如独立掉落 17 列；只读）
       </NTooltip>
 
       <NTooltip placement="left">

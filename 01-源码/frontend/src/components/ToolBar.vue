@@ -25,6 +25,7 @@ import IndexHashRegistrationModal from "./IndexHashRegistrationModal.vue";
 import BookmarkPopup from "./BookmarkPopup.vue";
 import DevPanel from "./DevPanel.vue";
 import { useDevStore } from "../stores/dev";
+import { useFormViewStore } from "../stores/formView";
 import { DEV_TOOLS } from "../buildInfo";
 import { ArchiveService } from "../../bindings/pvfine/services";
 import { Events } from "@wailsio/runtime";
@@ -44,6 +45,7 @@ const script = useScriptStore();
 const sidebar = useSidebarStore();
 const bookmarks = useBookmarkStore();
 const dev = useDevStore();
+const formView = useFormViewStore();
 const message = useMessage();
 const dialog = useDialog();
 const hashRegistrationVisible = ref(false);
@@ -198,7 +200,20 @@ const openMenuOptions = computed<DropdownOption[]>(() => [
   },
 ]);
 
-/** 「更多」下拉：收纳次级入口。 */
+/**
+ * 「可视化编辑区」下拉：把文件内容做成可视化界面的编辑器入口都收在这里。
+ * 新增可视化编辑器时**往下面排**即可（一项 = 一个编辑区）。
+ */
+const visualMenuOptions = computed<DropdownOption[]>(() => [
+  {
+    label: "独立掉落编辑",
+    key: "independent-drop",
+    icon: renderEmoji("🎯"),
+    disabled: !archive.open,
+  },
+]);
+
+/** 「更多UI」下拉：收纳次级入口（原「脚本工作区」按钮挪到了这里）。 */
 const moreMenuOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     {
@@ -211,6 +226,12 @@ const moreMenuOptions = computed<DropdownOption[]>(() => {
       label: "对象视图",
       key: "objectview",
       icon: renderEmoji("🧱"),
+      disabled: !archive.open,
+    },
+    {
+      label: script.workspaceDetached ? "脚本工作区（已在独立窗口）" : "脚本工作区",
+      key: "script-workspace",
+      icon: renderEmoji("⌨️"),
       disabled: !archive.open,
     },
   ];
@@ -434,10 +455,19 @@ function onMoreMenuSelect(key: string | number): void {
     case "objectview":
       sidebar.show("objectview");
       break;
+    case "script-workspace":
+      // 原工具条上的「脚本工作区」分段按钮：改到「更多UI」下面（用户 2026-10-03 要求）。
+      script.showWorkspace();
+      break;
     case "register-hash":
       hashRegistrationVisible.value = true;
       break;
   }
+}
+
+/** 「可视化编辑区」下拉的选择处理。 */
+function onVisualMenuSelect(key: string | number): void {
+  if (key === "independent-drop") void formView.openInWindow("independent_drop");
 }
 
 function onUnpack() {
@@ -671,28 +701,28 @@ async function doCloseArchive(): Promise<void> {
           <span class="ic">📄</span>
           <span>归档编辑</span>
         </button>
-        <NTooltip trigger="hover" :disabled="archive.open">
-          <template #trigger>
-            <button
-              type="button"
-              role="tab"
-              :aria-selected="script.workspaceVisible"
-              :disabled="!archive.open"
-              class="seg-i"
-              :class="{ on: script.workspaceVisible }"
-              :title="script.workspaceDetached ? '聚焦独立脚本窗口' : archive.open ? '切换到脚本工作区' : ''"
-              @click="archive.open && script.showWorkspace()"
-            >
-              <span class="ic">⌨️</span>
-              <span>脚本工作区</span>
-              <span v-if="script.workspaceDetached" class="seg-dot seg-dot--running" title="已在独立窗口中打开" />
-              <span v-else-if="script.running" class="seg-dot seg-dot--running" title="脚本运行中" />
-              <span v-else-if="script.hasPreview" class="seg-dot seg-dot--success" title="有待应用的预览" />
-              <span v-else-if="script.dirty" class="seg-dot seg-dot--warning" title="脚本未保存" />
-            </button>
-          </template>
-          {{ script.workspaceDetached ? "脚本工作区已在独立窗口中打开，点击聚焦该窗口" : "需先打开 PVF 归档" }}
-        </NTooltip>
+        <NDropdown
+          trigger="click"
+          placement="bottom-start"
+          :options="visualMenuOptions"
+          @select="onVisualMenuSelect"
+        >
+          <button
+            type="button"
+            role="tab"
+            class="seg-i"
+            :class="{ on: formView.windowOpen }"
+            :title="
+              formView.windowOpen
+                ? '可视化编辑区（已有独立窗口在打开）'
+                : '可视化编辑区：把文件内容做成可视化界面来编辑'
+            "
+          >
+            <span class="ic">🧩</span>
+            <span>可视化编辑区</span>
+            <span class="caret">▾</span>
+          </button>
+        </NDropdown>
       </div>
 
       <NTooltip trigger="hover">

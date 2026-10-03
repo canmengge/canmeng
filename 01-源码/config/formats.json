@@ -15,13 +15,21 @@
       "files": [
         "etc/independent_drop.etc"
       ],
-      "notes": "第 3 列（掉落物品）仅在掉落方式 = 0 时有效；= 1 时改看 [list] 内联候选，= 2 时 [list] 内是外部文件编号（etc/independentdrop.lst）。",
+      "notes": "第 3 列（掉落物品）仅在掉落方式 = 0 时有效；= 1 时改看 [list] 内联候选，= 2 时 [list] 内是外部文件编号（etc/independentdrop.lst）。掉落方式 = 1 / 2 时本行与**紧跟其后的 [list]** 建立关联（links），界面上双击「掉落方式」格即可查看那份列表。",
       "sections": [
         {
           "section": "independent drop",
           "label": "掉落配置行",
           "kind": "table",
           "rowTokens": 17,
+          "links": [
+            {
+              "column": 16,
+              "when": ["1", "2"],
+              "targetSection": "list",
+              "title": "掉落候选"
+            }
+          ],
           "columns": [
             { "label": "类型", "type": "enum", "values": { "0": "怪物", "1": "APC" } },
             { "label": "怪物/APC", "type": "ref", "ref": "monster" },
