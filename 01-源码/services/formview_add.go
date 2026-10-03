@@ -106,15 +106,15 @@ func (s *FormViewService) AddIndependentDrop(
 	if err != nil {
 		return nil, err
 	}
-	// 缩进照抄**该段最后一条数据行**（不能拿"上一行"：上一行可能是它那处 [list] 的 [/list]，
-	// 少一层缩进，照抄就错了）。用户 2026-10-03：格式是红线。
-	// 插入点 = 最后一个条目之后（含该条目自带的 [list] 块），不在闭合标签之前。
-	indent := plan.rowIndent
-	if indent == "" {
-		indent = dropRowIndent
+	// 新条目"前面那段空白"**照抄上一条目**（separator）：邻居连排就跟连排、一条一行就跟一行。
+	// 用户 2026-10-03 原话："注意空格和 22 要一样，前面的要变，后面的不要变" ——
+	// 前面的（缩进/换行）跟邻居一致，后面的（那 17 个值）原样不动。
+	// 行文本本身不带缩进、也不带行尾换行（见 buildDropRowText）。
+	separator := plan.separator
+	if separator == "" {
+		separator = "\r\n" + dropRowIndent
 	}
-	rowText = indent + strings.TrimPrefix(rowText, dropRowIndent)
-	updatedText := text[:plan.offset] + rowText + text[plan.offset:]
+	updatedText := text[:plan.offset] + separator + rowText + text[plan.offset:]
 
 	// 校验：重新投影，确认**新追加的那一行**每一格都等于期望值。
 	view := pvf.ParseScriptView(updatedText)
@@ -240,19 +240,19 @@ func buildDropRowText(section formview.Section, entry FormViewDropEntry) (string
 			section.RowTokens, len(tokens))
 	}
 
-	// 注意：**不要**再补一个换行 —— 插入点前面那一行自带行尾（\r\n），
-	// 多写一个就会在归档里留下空行（用户 2026-10-03 实测截图发现）。
+	// 数据行本身**不带行首缩进、也不带行尾换行** —— 这两样全由插入点的 separator 决定
+	// （separator 照抄上一条目前面的空白 ⇒ 邻居连排就跟着连排、一条一行就跟着一行）。
 	var builder strings.Builder
-	builder.WriteString(dropRowIndent)
 	builder.WriteString(strings.Join(tokens, "\t"))
-	builder.WriteString("\r\n")
 
 	if entry.UseList {
 		if len(entry.List) == 0 {
 			return "", fmt.Errorf("选择「掉落物列表」时至少要有一条候选")
 		}
+		// [list] 块按真实归档（已按字节核对）：标签 1 个制表符、候选 2 个、闭合 1 个。
+		builder.WriteString("\r\n")
 		builder.WriteString(dropListIndent)
-		builder.WriteString("[list]\r\n")
+		builder.WriteString("[list]")
 		for i, candidate := range entry.List {
 			id, err := requireUnsignedInt(fmt.Sprintf("候选第 %d 条的物品编号", i+1), candidate.ItemID)
 			if err != nil {
@@ -265,14 +265,15 @@ func buildDropRowText(section formview.Section, entry FormViewDropEntry) (string
 			if _, err := strconv.ParseInt(weight, 10, 64); err != nil {
 				return "", fmt.Errorf("候选第 %d 条的权重必须是整数: %q", i+1, candidate.Weight)
 			}
+			builder.WriteString("\r\n")
 			builder.WriteString(dropItemIndent)
 			builder.WriteString(id)
 			builder.WriteString("\t")
 			builder.WriteString(weight)
-			builder.WriteString("\r\n")
 		}
+		builder.WriteString("\r\n")
 		builder.WriteString(dropListIndent)
-		builder.WriteString("[/list]\r\n")
+		builder.WriteString("[/list]")
 	}
 	return builder.String(), nil
 }

@@ -79,13 +79,14 @@ func (s *FormViewService) AddDropCandidate(
 	if err != nil {
 		return nil, err
 	}
-	// 缩进照抄该段最后一条数据行（对 [list] 就是最后一条候选）。
-	indent := plan.rowIndent
-	if indent == "" {
-		indent = dropItemIndent
+	// 候选行本身**不带缩进**：缩进由 separator 照抄上一条候选决定
+	//（文件里候选是"\r\n + 2 个制表符"，照抄就还是那样；连排的也一样跟着连排）。
+	separator := plan.separator
+	if separator == "" {
+		separator = "\r\n" + dropItemIndent
 	}
-	line := indent + id + "\t" + weight + "\r\n"
-	updatedText := text[:plan.offset] + line + text[plan.offset:]
+	line := id + "\t" + weight
+	updatedText := text[:plan.offset] + separator + line + text[plan.offset:]
 
 	// 校验：这一处 `[list]` 重新投影后，最后一行必须正好是刚追加的那条。
 	view := pvf.ParseScriptView(updatedText)
@@ -138,12 +139,31 @@ func (s *FormViewService) AddDropCandidate(
 	return &holder[0], nil
 }
 
-// sectionAppendPlan 是「追加到某段末尾」的落点与缩进。
+// sectionAppendPlan 是「追加到某段末尾」的落点、分隔符与缩进。
 type sectionAppendPlan struct {
-	// offset = **最后一个条目**所在行的行尾之后（新内容插在这里）。
+	// offset = 最后一个条目**最后一个 token 之后**（新内容插在这里，不含行尾换行）。
 	offset int
-	// rowIndent = 该段最后一条**数据行**的行首缩进（新行照抄它，格式才一致）。
+	// separator = 上一条目**前面**那段空白（可能含换行）。新条目照抄它 ⇒
+	// 文件怎么排邻居，新条目就怎么排（用户 2026-10-03：格式是红线）。
+	separator string
+	// rowIndent = 该段最后一条**数据行**的行首缩进（仅用于没有 separator 时的兜底）。
 	rowIndent string
+}
+
+// whitespaceBefore 取 offset 之前那一段空白：先吃掉行首缩进（空格 / 制表符），再吃掉换行。
+// 结果就是"上一条目与本条目之间"的分隔符。
+func whitespaceBefore(text string, offset int) string {
+	if offset > len(text) {
+		offset = len(text)
+	}
+	start := offset
+	for start > 0 && (text[start-1] == ' ' || text[start-1] == '\t') {
+		start--
+	}
+	for start > 0 && (text[start-1] == '\r' || text[start-1] == '\n') {
+		start--
+	}
+	return text[start:offset]
 }
 
 // planSectionAppend 找到第 occurrence 次出现的 `[section]` 段里「最后一个条目之后」的位置。
@@ -205,9 +225,14 @@ func planSectionAppend(text, section string, occurrence int) (sectionAppendPlan,
 			return plan, nil
 		default:
 			if inTarget && trimmed != "" {
-				// 任何非空行都把插入点往后推（含 [list] 的 [/list]，它属于最后一个条目）。
-				plan.offset = next
+				// 插入点 = 最后一个条目**最后一个 token 之后**（不含行尾换行）——
+				// 分隔交给 separator，这样新条目既能"跟邻居一样"，又不会留下空行。
+				plan.offset = lineStart + len(line)
 				if len(stack) == 0 {
+					// 上一条目**前面**那段空白 = 新条目要照抄的分隔符：
+					// 文件是"整段连排"（行间只有制表符）就跟着连排；
+					// 是"一条一行"（\r\n + 缩进）就跟一条一行（用户 2026-10-03 要求）。
+					plan.separator = whitespaceBefore(text, lineStart)
 					plan.rowIndent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 					foundRow = true
 				}
