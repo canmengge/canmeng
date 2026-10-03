@@ -75,12 +75,17 @@ func (s *FormViewService) AddDropCandidate(
 	}
 	s.c.mu.RUnlock()
 
-	closeAt, err := sectionOccurrenceCloseOffset(text, section, occurrence)
+	plan, err := planSectionAppend(text, section, occurrence)
 	if err != nil {
 		return nil, err
 	}
-	line := dropItemIndent + id + "\t" + weight + "\r\n"
-	updatedText := text[:closeAt] + line + text[closeAt:]
+	// 缩进照抄该段最后一条数据行（对 [list] 就是最后一条候选）。
+	indent := plan.rowIndent
+	if indent == "" {
+		indent = dropItemIndent
+	}
+	line := indent + id + "\t" + weight + "\r\n"
+	updatedText := text[:plan.offset] + line + text[plan.offset:]
 
 	// 校验：这一处 `[list]` 重新投影后，最后一行必须正好是刚追加的那条。
 	view := pvf.ParseScriptView(updatedText)
@@ -131,16 +136,32 @@ func (s *FormViewService) AddDropCandidate(
 	return &holder[0], nil
 }
 
-// sectionOccurrenceCloseOffset 返回**第 occurrence 次**出现的 `[section]` 段其
-// `[/section]` 所在行的起始偏移（新内容插在它之前 = 追加到该次出现的末尾）。
+// sectionAppendPlan 是「追加到某段末尾」的落点与缩进。
+type sectionAppendPlan struct {
+	// offset = **最后一个条目**所在行的行尾之后（新内容插在这里）。
+	offset int
+	// rowIndent = 该段最后一条**数据行**的行首缩进（新行照抄它，格式才一致）。
+	rowIndent string
+}
+
+// planSectionAppend 找到第 occurrence 次出现的 `[section]` 段里「最后一个条目之后」的位置。
 //
-// 用段名栈判层级：嵌套的子段（如 `[independent drop]` 里的 `[list]`）不会把计数带偏。
-func sectionOccurrenceCloseOffset(text, section string, occurrence int) (int, error) {
+// 「最后一个条目」= 闭合标签之前**最后一行非空行**（对 `[independent drop]` 来说，
+// 最后一条数据行若带 `[list]`，那就是它那处 `[/list]`；对 `[list]` 来说就是最后一条候选）。
+//
+// 为什么不插在"闭合标签之前"（2026-10-03 用户实测踩到）：文件里闭合标签前
+// **本来就可能有空行**，插在它之前会把新条目塞到空行之上，看起来像凭空多出一段空白。
+//
+// 缩进另取：栈深度为 0 的**数据行**的缩进 —— 不能拿"上一行"的缩进（上一行可能是
+// `[/list]`，缩进少一层，照抄就错了）。
+func planSectionAppend(text, section string, occurrence int) (sectionAppendPlan, error) {
 	name := strings.TrimSpace(section)
 	open := "[" + name + "]"
 	seen := 0
 	inTarget := false
 	var stack []string
+	plan := sectionAppendPlan{}
+	foundRow := false
 
 	for lineStart := 0; lineStart <= len(text); {
 		lineRest := text[lineStart:]
@@ -175,7 +196,20 @@ func sectionOccurrenceCloseOffset(text, section string, occurrence int) (int, er
 				stack = stack[:len(stack)-1]
 				break
 			}
-			return lineStart, nil
+			if !foundRow {
+				return sectionAppendPlan{}, fmt.Errorf(
+					"段 [%s] 的第 %d 次出现里没有任何条目（无可插入位置）", name, occurrence)
+			}
+			return plan, nil
+		default:
+			if inTarget && trimmed != "" {
+				// 任何非空行都把插入点往后推（含 [list] 的 [/list]，它属于最后一个条目）。
+				plan.offset = next
+				if len(stack) == 0 {
+					plan.rowIndent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+					foundRow = true
+				}
+			}
 		}
 
 		if next <= lineStart {
@@ -183,5 +217,5 @@ func sectionOccurrenceCloseOffset(text, section string, occurrence int) (int, er
 		}
 		lineStart = next
 	}
-	return 0, fmt.Errorf("文件里找不到段 [%s] 的第 %d 次出现", name, occurrence)
+	return sectionAppendPlan{}, fmt.Errorf("文件里找不到段 [%s] 的第 %d 次出现", name, occurrence)
 }

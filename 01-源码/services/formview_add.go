@@ -102,16 +102,19 @@ func (s *FormViewService) AddIndependentDrop(
 	}
 	s.c.mu.RUnlock()
 
-	insertAt, err := lastSectionCloseOffset(text, dropSectionName)
+	plan, err := planSectionAppend(text, dropSectionName, 1)
 	if err != nil {
 		return nil, err
 	}
-	// 行缩进**照抄紧邻上一行**：真实归档里首行 1 个制表符、其余行 2 个（手写文件并不统一），
-	// 只有"跟邻居一致"才算真的格式一致（用户 2026-10-03：格式是红线）。
-	if indent := previousLineIndent(text, insertAt); indent != dropRowIndent {
-		rowText = indent + strings.TrimPrefix(rowText, dropRowIndent)
+	// 缩进照抄**该段最后一条数据行**（不能拿"上一行"：上一行可能是它那处 [list] 的 [/list]，
+	// 少一层缩进，照抄就错了）。用户 2026-10-03：格式是红线。
+	// 插入点 = 最后一个条目之后（含该条目自带的 [list] 块），不在闭合标签之前。
+	indent := plan.rowIndent
+	if indent == "" {
+		indent = dropRowIndent
 	}
-	updatedText := text[:insertAt] + rowText + text[insertAt:]
+	rowText = indent + strings.TrimPrefix(rowText, dropRowIndent)
+	updatedText := text[:plan.offset] + rowText + text[plan.offset:]
 
 	// 校验：重新投影，确认**新追加的那一行**每一格都等于期望值。
 	view := pvf.ParseScriptView(updatedText)
