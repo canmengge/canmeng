@@ -197,6 +197,18 @@ export function ResolveRefNames(
 }
 
 /**
+ * 删除 `[independent drop]` 段里第 `rowIndex` 行（0 基）的**整条**掉落配置
+ * （该行 + 它自带的 `[list]` 块），并把后面那一条"往前靠"，返回重新投影后的结果。
+ * fqn = pvfine/services.FormViewService.DeleteIndependentDrop（ID 同样反验过）
+ */
+export function DeleteIndependentDrop(
+  filePath: string,
+  rowIndex: number
+): $CancellablePromise<FormViewProjection> {
+  return $Call.ByID(1159749652, filePath, rowIndex);
+}
+
+/**
  * 返回规则文件里定义的全部文件族。
  * fqn = pvfine/services.FormViewService.ListFormats
  */

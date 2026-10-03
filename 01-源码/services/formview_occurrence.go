@@ -57,64 +57,72 @@ func sectionTokenSpans(text, section string, occurrence int) ([]tokenSpan, error
 	}
 	open := "[" + name + "]"
 
-	seen := 0
-	inTarget := false
-	var spans []tokenSpan
-	// 段名栈：目标段内部再出现任何 `[xxx]`（例如独立掉落里的两个 `[list]`）都算子层，
-	// 子层里的 token **不算**目标段的直接 token（与投影的 directTokens 一致）。
-	var stack []string
+	closeTag := "[/" + name + "]"
 
+	// 先按行收集（换行三种都认），再**按行号推理** —— 不再用"段名栈"判层级：
+	// 栈那套遇到嵌套子段（[independent drop] 里的 862 个 [list]）会算错，
+	// 实测表现为"在第一个 [/list] 处就把整段算完"（外层只剩 17 个 token）。
+	// 这里改用**层级计数**：见到 `[xxx]` 计 +1、`[/xxx]` 计 -1，回到 0 就是本层数据行。
+	type lineRef struct {
+		trimmed string
+		spans   []tokenSpan
+	}
+	var lines []lineRef
 	for lineStart := 0; lineStart <= len(text); {
-		lineEnd, nextLine := nextLineBreak(text, lineStart)
+		lineEnd, next := nextLineBreak(text, lineStart)
 		line := text[lineStart:lineEnd]
-		trimmed := strings.TrimSpace(line)
-
-		switch {
-		case isSectionOpenTag(trimmed):
-			if inTarget {
-				stack = append(stack, strings.ToLower(trimmed))
-			} else if strings.EqualFold(trimmed, open) {
-				seen++
-				if seen == occurrence {
-					inTarget = true
-					stack = stack[:0]
-				}
-			}
-		case isSectionCloseTag(trimmed):
-			if !inTarget {
+		item := lineRef{trimmed: strings.TrimSpace(line)}
+		for pos := 0; pos < len(line); {
+			if line[pos] == ' ' || line[pos] == '\t' {
+				pos++
 				continue
 			}
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-				continue
+			start := pos
+			for pos < len(line) && line[pos] != ' ' && line[pos] != '\t' {
+				pos++
 			}
-			// 目标段自己闭合 ⇒ 第 occurrence 次出现已完整走完。
-			return spans, nil
-		case inTarget && len(stack) == 0 && trimmed != "":
-			// 直接层级的数据行：按空白切 token（与编辑器里的制表符分隔一致）。
-			for pos := 0; pos < len(line); {
-				if line[pos] == ' ' || line[pos] == '\t' {
-					pos++
-					continue
-				}
-				start := pos
-				for pos < len(line) && line[pos] != ' ' && line[pos] != '\t' {
-					pos++
-				}
-				spans = append(spans, tokenSpan{start: lineStart + start, end: lineStart + pos})
-			}
+			item.spans = append(item.spans, tokenSpan{start: lineStart + start, end: lineStart + pos})
 		}
-
-		if nextLine <= lineStart {
+		lines = append(lines, item)
+		if next <= lineStart {
 			break
 		}
-		lineStart = nextLine
+		lineStart = next
 	}
 
-	if inTarget {
-		return nil, fmt.Errorf("段 [%s] 的第 %d 次出现没有正常闭合", name, occurrence)
+	// 第 occurrence 个开始标签
+	startIndex := -1
+	seenOpen := 0
+	for index := range lines {
+		if strings.EqualFold(lines[index].trimmed, open) {
+			seenOpen++
+			if seenOpen == occurrence {
+				startIndex = index
+				break
+			}
+		}
 	}
-	return nil, fmt.Errorf("文件里没有段 [%s] 的第 %d 次出现", name, occurrence)
+	if startIndex < 0 {
+		return nil, fmt.Errorf("文件里没有段 [%s] 的第 %d 次出现", name, occurrence)
+	}
+
+	depth := 0
+	var spans []tokenSpan
+	for index := startIndex + 1; index < len(lines); index++ {
+		trimmed := lines[index].trimmed
+		switch {
+		case strings.EqualFold(trimmed, closeTag) && depth == 0:
+			// 本层闭合 ⇒ 第 occurrence 次出现已完整走完。
+			return spans, nil
+		case isSectionOpenTag(trimmed):
+			depth++
+		case isSectionCloseTag(trimmed):
+			depth--
+		case depth == 0 && trimmed != "":
+			spans = append(spans, lines[index].spans...)
+		}
+	}
+	return nil, fmt.Errorf("段 [%s] 的第 %d 次出现没有正常闭合", name, occurrence)
 }
 
 // occurrenceEdit 是"改某次出现里某一格"的请求（已归一化）。

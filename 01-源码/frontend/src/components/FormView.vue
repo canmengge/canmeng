@@ -26,6 +26,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   AddDropCandidate,
   AddIndependentDrop,
+  DeleteIndependentDrop,
   ResolveRefNames,
   type FormViewDropItem,
 } from "../services/formViewApi";
@@ -627,6 +628,36 @@ type PendingInsert =
 const pendingInserts = ref<PendingInsert[]>([]);
 const pendingInsertCount = computed(() => pendingInserts.value.length);
 
+/**
+ * 排队中的「删除选中」：存的是**段里的行号**（0 基）。
+ *
+ * 提交时按**行号从大到小**执行 —— 删一行会让后面所有行号前移，倒着删才不会错位。
+ */
+const pendingDeletes = ref<number[]>([]);
+const pendingDeleteCount = computed(() => pendingDeletes.value.length);
+
+/** 当前选中的行（点行选中；点已选中的行取消选中）。 */
+const selectedRow = ref<number | null>(null);
+
+function toggleSelectRow(row: FormViewRow): void {
+  selectedRow.value = selectedRow.value === row.index ? null : row.index;
+}
+
+function queueDeleteSelected(): void {
+  const index = selectedRow.value;
+  if (index === null) {
+    message.warning("先点一行选中它");
+    return;
+  }
+  if (pendingDeletes.value.includes(index)) {
+    message.info("这一行已经在待删除列表里了");
+    return;
+  }
+  pendingDeletes.value = [...pendingDeletes.value, index].sort((left, right) => left - right);
+  selectedRow.value = null;
+  message.success("已加入待删除（点上方「保存改动」才真正删除）");
+}
+
 /** 该处 `[list]` 排队中的候选（查看器里显示成"还没保存"的行）。 */
 function pendingCandidates(section: FormViewSection | null): FormViewDropItem[] {
   if (!section) return [];
@@ -694,6 +725,42 @@ function isNamePending(section: FormViewSection | null, index: number, value: st
   const id = value.trim();
   if (ref === "" || id === "") return false;
   return pendingNameLookups.has(`${ref}|${id}`);
+}
+
+/**
+ * 该格在本次搜索里要**标出来**的那段文字（没有命中就返回空串）。
+ *
+ * 只有"当前搜索范围里的列 + 当前搜索字段"才参与标记 —— 搜 ID 就只标编号里的命中，
+ * 搜名称就只标名字里的命中（用户 2026-10-03：搜 28 时希望把 `281` 里的 `28` 标出来）。
+ */
+function cellHitQuery(row: FormViewRow, index: number): string {
+  if (!searchActive.value || !searchColumns.value.includes(index)) return "";
+  const query = searchQuery.value.trim().toLowerCase();
+  if (query === "") return "";
+  const target = (
+    searchField.value === "name"
+      ? rowName(mainSection.value, row, index)
+      : cellCurrent(row, index)
+  )
+    .trim()
+    .toLowerCase();
+  if (searchExact.value) return target === query ? query : "";
+  return target.includes(query) ? query : "";
+}
+
+/** 把文本按命中片段切成「前 / 命中 / 后」三段（大小写不敏感，取第一处）。 */
+function splitHit(
+  text: string,
+  query: string
+): { before: string; hit: string; after: string } {
+  if (query === "" || text === "") return { before: text, hit: "", after: "" };
+  const at = text.toLowerCase().indexOf(query);
+  if (at < 0) return { before: text, hit: "", after: "" };
+  return {
+    before: text.slice(0, at),
+    hit: text.slice(at, at + query.length),
+    after: text.slice(at + query.length),
+  };
 }
 
 /** 取草稿值的中文名；没有就问一次后端（问过就缓存，含"查不到"的空结果）。 */
@@ -984,20 +1051,29 @@ function stageEdits(items: StageEditInput[]): number {
   return staged;
 }
 
-/** 放弃全部草稿（不动归档），含排队中的新增。 */
+/** 放弃全部草稿（不动归档），含排队中的新增与删除。 */
 function discardDrafts(): void {
-  if (pendingEdits.value.size === 0 && pendingInserts.value.length === 0) return;
+  if (
+    pendingEdits.value.size === 0 &&
+    pendingInserts.value.length === 0 &&
+    pendingDeletes.value.length === 0
+  ) {
+    return;
+  }
   pendingEdits.value = new Map();
   pendingInserts.value = [];
+  pendingDeletes.value = [];
+  selectedRow.value = null;
   message.info("已放弃未保存的改动");
 }
 
-/** 把草稿 + 排队中的新增一起提交给后端（写进归档内存，**不落盘**）。 */
+/** 把草稿 + 排队中的新增/删除一起提交给后端（写进归档内存，**不落盘**）。 */
 async function saveDrafts(): Promise<void> {
   // 草稿**自带段信息**：主表的改动与各处内联列表（[list]）的改动可以混在一起一次提交。
   const drafts = [...pendingEdits.value.values()];
   const queued = [...pendingInserts.value];
-  if (drafts.length === 0 && queued.length === 0) return;
+  const deletes = [...pendingDeletes.value];
+  if (drafts.length === 0 && queued.length === 0 && deletes.length === 0) return;
   if (fileOpenInEditor()) {
     message.warning(
       "该文件正在编辑区打开：请先关掉那个标签页，再保存（避免两处同时改同一份文本）"
@@ -1008,7 +1084,12 @@ async function saveDrafts(): Promise<void> {
   drafts.sort((left, right) => left.row - right.row || left.column - right.column);
   saving.value = true;
   try {
-    // ① 先执行排队中的新增（插入不是"改一格"，各走自己的通道）。
+    // ① 先执行排队中的**删除**：行号**从大到小**（删一行会让后面所有行号前移，倒着删才不错位）。
+    for (const rowIndex of [...deletes].sort((left, right) => right - left)) {
+      await DeleteIndependentDrop(formView.filePath.trim(), rowIndex);
+    }
+    pendingDeletes.value = [];
+    // ② 再执行排队中的新增（插入不是"改一格"，各走自己的通道）。
     for (const item of queued) {
       if (item.kind === "drop") {
         await AddIndependentDrop(formView.filePath.trim(), item.entry);
@@ -1038,6 +1119,7 @@ async function saveDrafts(): Promise<void> {
     const parts: string[] = [];
     if (drafts.length > 0) parts.push(`${drafts.length} 格`);
     if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
+    if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
     message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
     // 查看器里那份（某处 [list]）不在主投影里，得单独重取一次，否则它还停在被改之前的旧值。
     if (viewerVisible.value && viewerSection.value) {
@@ -1386,16 +1468,29 @@ function resetColumnWidths(): void {
               <NButton size="tiny" type="primary" @click="dropFormVisible = true">
                 添加掉落
               </NButton>
+              <NButton
+                size="tiny"
+                type="error"
+                ghost
+                :disabled="selectedRow === null"
+                title="先在表里点一行选中，再点这里（会把这整条掉落删掉，含它自带的候选列表）"
+                @click="queueDeleteSelected"
+              >
+                删除选中
+              </NButton>
               <span class="fv-tools-gap" />
-              <span v-if="pendingCount + pendingInsertCount > 0" class="fv-tools-dirty">
+              <span
+                v-if="pendingCount + pendingInsertCount + pendingDeleteCount > 0"
+                class="fv-tools-dirty"
+              >
                 未保存 {{ pendingCount }} 格{{
                   pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
-                }}
+                }}{{ pendingDeleteCount > 0 ? ` + 删除 ${pendingDeleteCount} 条` : "" }}
               </span>
               <NButton
                 size="tiny"
                 quaternary
-                :disabled="pendingCount + pendingInsertCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount === 0"
                 @click="discardDrafts"
               >
                 放弃改动
@@ -1403,7 +1498,7 @@ function resetColumnWidths(): void {
               <NButton
                 size="tiny"
                 type="primary"
-                :disabled="pendingCount + pendingInsertCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount === 0"
                 :loading="saving"
                 @click="saveDrafts"
               >
@@ -1499,7 +1594,12 @@ function resetColumnWidths(): void {
                 <tr
                   v-for="row in pagedRows"
                   :key="row.index"
-                  :class="{ 'fv-row-incomplete': !row.complete }"
+                  :class="{
+                    'fv-row-incomplete': !row.complete,
+                    'fv-row-selected': selectedRow === row.index,
+                    'fv-row-deleting': pendingDeletes.includes(row.index),
+                  }"
+                  @click="toggleSelectRow(row)"
                 >
                   <td class="fv-td-index">{{ row.index + 1 }}</td>
                   <td
@@ -1543,12 +1643,30 @@ function resetColumnWidths(): void {
                         </span>
                       </template>
                       <template v-else>
+                        <!-- 搜索命中的那一段标出来（搜 ID 标编号里那段、搜名称标名字里那段） -->
                         <span v-if="rowName(mainSection, row, index)" class="fv-name">
-                          {{ rowName(mainSection, row, index) }}
+                          {{ splitHit(rowName(mainSection, row, index), cellHitQuery(row, index)).before
+                          }}<span v-if="cellHitQuery(row, index)" class="fv-hit">{{
+                            splitHit(rowName(mainSection, row, index), cellHitQuery(row, index)).hit
+                          }}</span>{{
+                            splitHit(rowName(mainSection, row, index), cellHitQuery(row, index)).after
+                          }}
                         </span>
-                        <span v-else>{{ cellText(row, index).text }}</span>
+                        <span v-else>
+                          {{ splitHit(cellText(row, index).text, cellHitQuery(row, index)).before
+                          }}<span v-if="cellHitQuery(row, index)" class="fv-hit">{{
+                            splitHit(cellText(row, index).text, cellHitQuery(row, index)).hit
+                          }}</span>{{
+                            splitHit(cellText(row, index).text, cellHitQuery(row, index)).after
+                          }}
+                        </span>
                         <span v-if="rowName(mainSection, row, index)" class="fv-id">
-                          {{ cellText(row, index).text }}
+                          {{ splitHit(cellText(row, index).text, cellHitQuery(row, index)).before
+                          }}<span v-if="cellHitQuery(row, index)" class="fv-hit">{{
+                            splitHit(cellText(row, index).text, cellHitQuery(row, index)).hit
+                          }}</span>{{
+                            splitHit(cellText(row, index).text, cellHitQuery(row, index)).after
+                          }}
                         </span>
                       </template>
                     </span>
@@ -2240,6 +2358,26 @@ function resetColumnWidths(): void {
   margin-right: 4px;
   vertical-align: -2px;
   background: var(--pvf-warning);
+}
+
+/* 选中行 / 待删除行（点行选中，再点「删除选中」） */
+.fv-table tbody tr.fv-row-selected > td {
+  background: var(--pvf-surface-selected);
+  box-shadow: inset 3px 0 0 0 var(--pvf-text-primary);
+}
+
+.fv-table tbody tr.fv-row-deleting > td {
+  background: var(--pvf-surface-error);
+  text-decoration: line-through;
+}
+
+/* 搜索命中的那一段（用户 2026-10-03：搜 28 时把 281 里的 28 标出来） */
+.fv-hit {
+  background: var(--pvf-warning-surface);
+  color: var(--pvf-warning);
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 600;
 }
 
 .fv-tools-dirty {
