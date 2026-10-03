@@ -331,17 +331,28 @@ func planSectionAppend(text, section string, occurrence, rowTokens int) (section
 		rowIndent: rowIndent,
 		tailIsTag: tailIsTag,
 	}
-	// 分隔符完全跟着"收官行的排法"走（用户 2026-10-03：文件里两种排法都有）：
-	//   ① 收官行是标签（`[/list]`）⇒ 另起一行；
-	//   ② 收官行里**连排了多行数据** ⇒ 新条目接在这一行**后面**（用行内的制表符）；
-	//   ③ 收官行只有一行数据 ⇒ 另起一行（换行 + 缩进）。
+	// 分隔符按"收官行是什么"决定（用户 2026-10-03 的实测结论）：
+	//
+	//   收官行是**数据**（不论这一行里连排了几行）⇒ **直接接在最后一个 token 之后**，
+	//     用一个制表符。这份归档本质是"一个 token 流"，换行只是顺带的 ——
+	//     所以新条目要接着写，而不是另起一行（用户给的正确样例就是这个形状）。
+	//
+	//   收官行是**标签**（`[/list]`）⇒ 必须另起一行，缩进照抄**上一非空行**
+	//     （真实归档里 `[/list]` 前是候选行、缩进 2 个制表符，与后面的数据行一致；
+	//      原来我照抄"段内第一行"的 1 个制表符是错的）。
 	switch {
 	case tailIsTag:
-		plan.separator = detectEOL(text) + rowIndent
-	case rowTokens > 0 && tail.tokens > rowTokens && tail.lastTokenStart >= 0:
-		plan.separator = whitespaceBefore(text, tail.lastTokenStart)
+		plannedIndent := rowIndent
+		for index := tailIndex - 1; index >= regionStart; index-- {
+			if lines[index].trimmed != "" {
+				plannedIndent = lines[index].indent
+				break
+			}
+		}
+		plan.rowIndent = plannedIndent
+		plan.separator = detectEOL(text) + plannedIndent
 	default:
-		plan.separator = whitespaceBefore(text, tail.start+len(tail.indent))
+		plan.separator = "\t"
 	}
 	return plan, nil
 }

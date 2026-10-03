@@ -22,23 +22,23 @@ func TestPlanSectionAppendLayout(t *testing.T) {
 			wantSep:   "\t",
 		},
 		{
-			name:      "收官行只有一行数据 ⇒ 另起一行（换行 + 缩进）",
+			name:      "收官行只有一行数据 ⇒ 同样接在行内（文件是 token 流，换行只是顺带的）",
 			text:      "[independent drop]\n\t0\t20\t1\n\t0\t21\t1\n[/independent drop]\n",
 			rowTokens: 3,
-			wantSep:   "\n\t",
+			wantSep:   "\t",
 		},
 		{
-			name:      "收官行是 [/list] ⇒ 另起一行",
+			name:      "收官行是 [/list] ⇒ 另起一行，缩进照抄上一非空行",
 			text:      "[independent drop]\n\t0\t20\t1\n\t[list]\n\t\t14400\t1000\n\t[/list]\n[/independent drop]\n",
 			rowTokens: 3,
-			wantSep:   "\n\t",
+			wantSep:   "\n\t\t",
 			tailIsTag: true,
 		},
 		{
 			name:      "CRLF 文件同样识别（别把换行写死）",
 			text:      "[independent drop]\r\n\t0\t20\t1\r\n[/independent drop]\r\n",
 			rowTokens: 3,
-			wantSep:   "\r\n\t",
+			wantSep:   "\t",
 		},
 	}
 	for _, item := range cases {
