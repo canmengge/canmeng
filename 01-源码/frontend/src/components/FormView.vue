@@ -24,6 +24,7 @@ import {
   NEmpty,
   NInput,
   NModal,
+  NCheckbox,
   NSelect,
   NSpin,
   NTag,
@@ -108,15 +109,230 @@ const otherSections = computed<FormViewSection[]>(() =>
   )
 );
 
+// ---- 搜索（怪物 / 掉落物品：ID 与中文名视为同一个目标）----
+//
+// 用户要求（2026-10-03）：加两个搜索 —— ① 怪物 ID / 名称 ② 掉落物品名 / ID；
+// 「搜名称和搜 ID 要显示是一个」。做法：按列的 ref（规则里声明的对象类型）圈定列，
+// 再把该格的**原值（编号）与解析出的中文名一起比**，任一命中即算命中。
+// 分组入口由 ref 自动生成（怪物 = monster，掉落物品 = equipment|stackable…），
+// 所以规则改了、文件族换了都不用改这段代码。
+
+/** 可选搜索范围：一列（或一组同 ref 的列）= 一个范围。 */
+type SearchScope = { ref: string; label: string };
+
+const searchScopes = computed<SearchScope[]>(() => {
+  const section = mainSection.value;
+  if (!section) return [];
+  const refs = section.columnRefs ?? [];
+  const scopes: SearchScope[] = [];
+  const seen = new Set<string>();
+  (section.columns ?? []).forEach((label, index) => {
+    const ref = (refs[index] ?? "").trim();
+    if (ref === "" || seen.has(ref)) return;
+    seen.add(ref);
+    scopes.push({ ref, label: label.trim() === "" ? ref : label });
+  });
+  return scopes;
+});
+
+const searchRef = ref("");
+const searchQuery = ref("");
+
+/** 命中搜索范围那些列的下标（规则里可能有多列共用一个 ref）。 */
+const searchColumns = computed<number[]>(() => {
+  const section = mainSection.value;
+  const ref = searchRef.value.trim();
+  if (!section || ref === "") return [];
+  const refs = section.columnRefs ?? [];
+  const indexes: number[] = [];
+  refs.forEach((value, index) => {
+    if ((value ?? "").trim() === ref) indexes.push(index);
+  });
+  return indexes;
+});
+
+/** 一行的目标列里，编号或中文名任一含关键字即命中（都按小写子串比）。 */
+function rowMatchesSearch(row: FormViewRow, query: string): boolean {
+  for (const index of searchColumns.value) {
+    const cell = row.cells[index];
+    if (!cell) continue;
+    const id = (cell.value ?? "").trim().toLowerCase();
+    const name = (cell.name ?? "").trim().toLowerCase();
+    if (id.includes(query) || name.includes(query)) return true;
+  }
+  return false;
+}
+
+/** 命中的**行号**集合（行号 = 投影里的 index，改值就用它定位）。 */
+const searchHits = computed<Set<number>>(() => {
+  const hits = new Set<number>();
+  const query = searchQuery.value.trim().toLowerCase();
+  if (searchRef.value.trim() === "" || query === "") return hits;
+  for (const row of mainSection.value?.rows ?? []) {
+    if (rowMatchesSearch(row, query)) hits.add(row.index);
+  }
+  return hits;
+});
+
+const searchActive = computed(
+  () => searchRef.value.trim() !== "" && searchQuery.value.trim() !== ""
+);
+
+/** 表格实际展示的行：搜索激活时只留命中行。 */
+const visibleRows = computed<FormViewRow[]>(() => {
+  const rows = mainSection.value?.rows ?? [];
+  if (!searchActive.value) return rows;
+  return rows.filter((row) => searchHits.value.has(row.index));
+});
+
+function clearSearch(): void {
+  searchRef.value = "";
+  searchQuery.value = "";
+}
+
 const pageCount = computed(() =>
-  Math.max(1, Math.ceil((mainSection.value?.rows.length ?? 0) / pageSize))
+  Math.max(1, Math.ceil(visibleRows.value.length / pageSize))
 );
 
 const pagedRows = computed<FormViewRow[]>(() => {
-  const rows = mainSection.value?.rows ?? [];
   const start = (page.value - 1) * pageSize;
-  return rows.slice(start, start + pageSize);
+  return visibleRows.value.slice(start, start + pageSize);
 });
+
+watch([searchRef, searchQuery], () => {
+  page.value = 1;
+});
+
+// ---- 批量改（整列 / 命中行做数值运算）----
+//
+// 不新增后端接口：直接复用已有的「按（段, 出现序号, 行, 列）改一格」通道
+// （ApplyCellEdits：唯一段守卫 → 克隆改写 → 逐格校验 → core.setText，**不落盘**）。
+// 一条 op 只改一个 token，所以"整列 ×N"就是**每行一条** —— 1834 行 = 1834 条，
+// 一次提交、一次校验、一次回写。
+
+const batchVisible = ref(false);
+const batchColumn = ref(-1);
+const batchOperator = ref("×");
+const batchOperand = ref("1");
+/** 只改「当前搜索命中的行」（没搜索时该开关无效，等于全表）。 */
+const batchOnlyHits = ref(true);
+const batchRunning = ref(false);
+
+const batchColumns = computed(() =>
+  (mainSection.value?.columns ?? []).map((label, index) => ({
+    label: label.trim() === "" ? `第 ${index + 1} 列` : label,
+    value: index,
+  }))
+);
+
+/** 本次批量要作用到的行号（升序）。 */
+const batchTargets = computed<number[]>(() => {
+  const rows = mainSection.value?.rows ?? [];
+  if (batchOnlyHits.value && searchActive.value) {
+    return [...searchHits.value].sort((left, right) => left - right);
+  }
+  return rows.map((row) => row.index);
+});
+
+/** 与改写引擎（applyBatchNumericOperator）同名同义，保证"算出来 = 引擎会算的"。 */
+function applyNumericOperator(current: number, operator: string, operand: number): number {
+  switch (operator) {
+    case "=":
+      return operand;
+    case "+":
+      return current + operand;
+    case "-":
+      return current - operand;
+    case "×":
+      return current * operand;
+    case "÷":
+      return operand === 0 ? Number.NaN : current / operand;
+    default:
+      return Number.NaN;
+  }
+}
+
+/** 归档里是整数或 float32：整数写成整数，其余最多留 6 位小数。 */
+function formatNumeric(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  if (Number.isInteger(value)) return String(value);
+  return String(Math.round(value * 1e6) / 1e6);
+}
+
+async function runBatch(): Promise<void> {
+  const section = mainSection.value;
+  if (!section || batchColumn.value < 0) {
+    message.warning("先选一列");
+    return;
+  }
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再回来改（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  const operand = Number(batchOperand.value);
+  if (!Number.isFinite(operand)) {
+    message.warning("运算数必须是数字");
+    return;
+  }
+  const rows = batchTargets.value;
+  if (rows.length === 0) {
+    message.warning("没有要改的行");
+    return;
+  }
+
+  const column = batchColumn.value;
+  const edits: {
+    section: string;
+    occurrence: number;
+    row: number;
+    column: number;
+    value: string;
+  }[] = [];
+  let skipped = 0;
+  for (const rowIndex of rows) {
+    const cell = section.rows[rowIndex]?.cells[column];
+    if (!cell) {
+      skipped += 1;
+      continue;
+    }
+    const current = Number(cell.value);
+    if (!Number.isFinite(current)) {
+      // 非数值格（空值 / 文本）不参与数值运算，跳过并如实报数。
+      skipped += 1;
+      continue;
+    }
+    const text = formatNumeric(applyNumericOperator(current, batchOperator.value, operand));
+    if (text === "" || text === cell.value) continue;
+    edits.push({
+      section: section.section,
+      occurrence: section.occurrence,
+      row: rowIndex,
+      column,
+      value: text,
+    });
+  }
+  if (edits.length === 0) {
+    message.warning(skipped > 0 ? `没有可改的数值格（跳过 ${skipped} 格）` : "数值没有变化");
+    return;
+  }
+
+  batchRunning.value = true;
+  try {
+    await formView.applyEdits(edits);
+    editedCount.value += edits.length;
+    batchVisible.value = false;
+    message.success(
+      `批量改：${edits.length} 格已更新（归档内存已改，点主工具条「保存 PVF」落盘）` +
+        (skipped > 0 ? `；跳过 ${skipped} 格（非数值）` : "")
+    );
+  } catch (issue: any) {
+    message.error(String(issue?.message ?? issue));
+  } finally {
+    batchRunning.value = false;
+  }
+}
 
 watch(
   () => formView.projection,
@@ -412,7 +628,14 @@ function resetColumnWidths(): void {
         <span class="fv-crumbs">可视化编辑区</span>
         <span class="fv-crumb-sep">›</span>
         <span class="fv-title">{{ viewTitle }}</span>
-        <NTag size="small" :bordered="false" type="info">只读</NTag>
+        <NTag
+          size="small"
+          :bordered="false"
+          type="warning"
+          title="主表可双击改值 / 批量改；改的是归档内存，点主工具条「保存 PVF」才落盘。关联的内联列表只读。"
+        >
+          可编辑
+        </NTag>
       </div>
       <div class="fv-head-actions">
         <NButton size="tiny" quaternary @click="resetColumnWidths">重置列宽</NButton>
@@ -501,7 +724,7 @@ function resetColumnWidths(): void {
               <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
               <span class="fv-section-meta">
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列 ·
-                拖表头右边缘调列宽 · 带 🔗 的格可双击查看关联列表
+                拖表头右边缘调列宽 · 双击格改值 · 带 🔗 的格双击查看关联列表（关联列表只读）
               </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
@@ -509,6 +732,91 @@ function resetColumnWidths(): void {
                 {{ warning }}
               </li>
             </ul>
+
+            <!-- 搜索 + 批量改（都作用在下方这张主表上） -->
+            <div class="fv-tools">
+              <span class="fv-tools-label">搜索</span>
+              <NSelect
+                v-model:value="searchRef"
+                :options="searchScopes.map((scope) => ({ label: scope.label, value: scope.ref }))"
+                size="small"
+                clearable
+                placeholder="选列：怪物 / 掉落物品…"
+                class="fv-tools-scope"
+              />
+              <NInput
+                v-model:value="searchQuery"
+                size="small"
+                clearable
+                placeholder="输入编号或中文名（两者都匹配）"
+                class="fv-tools-query"
+              />
+              <span v-if="searchActive" class="fv-tools-hit">
+                命中 {{ searchHits.size }} / {{ mainSection.rows.length }} 行
+              </span>
+              <NButton v-if="searchActive" size="tiny" quaternary @click="clearSearch">
+                清除
+              </NButton>
+              <span class="fv-tools-gap" />
+              <NButton size="tiny" ghost type="primary" @click="batchVisible = !batchVisible">
+                {{ batchVisible ? "收起批量改" : "批量改…" }}
+              </NButton>
+            </div>
+
+            <div v-if="batchVisible" class="fv-batch">
+              <div class="fv-batch-row">
+                <span class="fv-tools-label">列</span>
+                <NSelect
+                  v-model:value="batchColumn"
+                  :options="batchColumns"
+                  size="small"
+                  placeholder="要改哪一列"
+                  class="fv-batch-col"
+                />
+                <span class="fv-tools-label">运算</span>
+                <NSelect
+                  v-model:value="batchOperator"
+                  :options="[
+                    { label: '= 设为', value: '=' },
+                    { label: '+ 加', value: '+' },
+                    { label: '- 减', value: '-' },
+                    { label: '× 乘', value: '×' },
+                    { label: '÷ 除', value: '÷' },
+                  ]"
+                  size="small"
+                  class="fv-batch-op"
+                />
+                <NInput
+                  v-model:value="batchOperand"
+                  size="small"
+                  placeholder="数值"
+                  class="fv-batch-num"
+                />
+              </div>
+              <div class="fv-batch-row">
+                <NCheckbox v-model:checked="batchOnlyHits" :disabled="!searchActive">
+                  只改搜索命中的行
+                </NCheckbox>
+                <span class="fv-batch-count">
+                  将作用于 <b>{{ batchTargets.length }}</b> 行{{
+                    searchActive ? `（命中 ${searchHits.size} 行）` : "（全表）"
+                  }}
+                </span>
+                <span class="fv-tools-gap" />
+                <NButton
+                  size="small"
+                  type="primary"
+                  :loading="batchRunning"
+                  :disabled="batchColumn < 0"
+                  @click="runBatch"
+                >
+                  执行
+                </NButton>
+              </div>
+              <div class="fv-batch-hint">
+                改的是归档内存，点主工具条「保存 PVF」才落盘；非数值格自动跳过。
+              </div>
+            </div>
 
             <table class="fv-table" :style="{ minWidth: 0 }">
               <colgroup>
@@ -1133,6 +1441,82 @@ function resetColumnWidths(): void {
 }
 
 /* ⑥ 查看器 */
+.fv-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  border: 1px solid var(--pvf-border, #e0e0e6);
+  border-radius: 6px;
+  background: var(--pvf-surface-2, #fafafc);
+  flex-wrap: wrap;
+}
+
+.fv-tools-label {
+  color: var(--pvf-text-3, #909399);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fv-tools-scope {
+  width: 190px;
+}
+
+.fv-tools-query {
+  width: 240px;
+}
+
+.fv-tools-hit {
+  color: var(--pvf-primary, #2080f0);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fv-tools-gap {
+  flex: 1;
+}
+
+.fv-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px dashed var(--pvf-border, #e0e0e6);
+  border-radius: 6px;
+  background: var(--pvf-surface-2, #fafafc);
+}
+
+.fv-batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fv-batch-col {
+  width: 170px;
+}
+
+.fv-batch-op {
+  width: 110px;
+}
+
+.fv-batch-num {
+  width: 120px;
+}
+
+.fv-batch-count {
+  font-size: 12px;
+  color: var(--pvf-text-2, #606266);
+}
+
+.fv-batch-hint {
+  font-size: 12px;
+  color: var(--pvf-text-3, #909399);
+}
+
 .fv-viewer {
   display: flex;
   flex-direction: column;

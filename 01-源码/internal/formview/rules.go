@@ -152,6 +152,17 @@ func (s Section) OccurrenceLimit() int {
 }
 
 // LookupSection 按段名（大小写与首尾空白不敏感）取段定义。
+// sectionColumnRefs 返回每列声明的对象类型（Column.Ref），与 ColumnLabels 等长；
+// 没写 ref 的列给空串。界面靠它认「哪一列是怪物 / 哪一列是掉落物品」——搜索时把
+// ID 与中文名当作同一个目标（用户 2026-10-03 要求：搜名称和搜 ID 结果一致）。
+func sectionColumnRefs(s Section) []string {
+	refs := make([]string, 0, len(s.Columns))
+	for _, column := range s.Columns {
+		refs = append(refs, strings.TrimSpace(column.Ref))
+	}
+	return refs
+}
+
 func (f Format) LookupSection(name string) (Section, bool) {
 	key := strings.TrimSpace(name)
 	for _, section := range f.Sections {

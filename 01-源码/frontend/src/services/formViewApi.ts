@@ -90,6 +90,11 @@ export interface FormViewSection {
   kind: string;
   occurrence: number;
   columns: string[];
+  /**
+   * 每列声明的对象类型（来自规则 `Column.Ref`，与 columns 等长；没写 ref 的列为空串）。
+   * 界面靠它认「哪一列是怪物 / 哪一列是掉落物品」，从而把编号与中文名当同一个搜索目标。
+   */
+  columnRefs?: string[];
   rows: FormViewRow[];
   tokenCount: number;
   warnings?: string[];

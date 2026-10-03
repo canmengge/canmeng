@@ -68,6 +68,9 @@ type ProjectedSection struct {
 	Occurrence int `json:"occurrence"`
 	// Columns 是表头（来自规则，与 RowTokens 等长）。
 	Columns []string `json:"columns"`
+	// ColumnRefs 是每列的对象类型（来自规则 Column.Ref，与 Columns 等长；无 ref 的列为空串）。
+	// 界面靠它认「哪一列是怪物 / 哪一列是掉落物品」，从而把 ID 与中文名当作同一个搜索目标。
+	ColumnRefs []string `json:"columnRefs,omitempty"`
 	// Rows 是按 RowTokens 切出来的行。
 	Rows []Row `json:"rows"`
 	// TokenCount 是本段的 token 总数。
@@ -376,6 +379,7 @@ func projectSection(rule Section, group *tokenGroup, occurrence int) ProjectedSe
 		Kind:       rule.SectionKind(),
 		Occurrence: occurrence,
 		Columns:    rule.ColumnLabels(),
+		ColumnRefs: sectionColumnRefs(rule),
 		Rows:       make([]Row, 0, len(group.tokens)/rowTokens+1),
 		TokenCount: len(group.tokens),
 		start:      groupStart(group),
