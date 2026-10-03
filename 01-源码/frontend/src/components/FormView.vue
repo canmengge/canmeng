@@ -14,9 +14,11 @@
  * `min-height: auto`，不写就撑不出滚动条。
  *
  * 关联：规则里配了 links 的列（如独立掉落的「掉落方式」= 内联列表 / 外部文件），
- * 该格**双击**会打开被引用段（紧跟其后的 [list]）的只读查看器。
+ * 该格**双击**会打开被引用段（紧跟其后的 [list]）—— 那里的候选（物品 / 权重）**也能改**
+ * （用户 2026-10-03 要求：内联列表不能只读，否则可视化没意义）。
  *
- * 本组件**只读**：不写回任何字节，也不改文档。
+ * 编辑模型（对齐装备文本编辑）：**先改前端草稿、立刻显示；点「保存改动」才写进归档内存；
+ * 主工具条「保存 PVF」才落盘**。草稿自带段信息，所以主表与各处内联列表可以混在一次提交里。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
@@ -379,7 +381,15 @@ function isDirtyCell(row: FormViewRow, index: number): boolean {
  * 掉落率 1000000 应显示 100%，改成 10000 应立刻显示 1%）。
  */
 function formatCellValue(index: number, raw: string): string {
-  const section = mainSection.value;
+  return formatByRule(mainSection.value, index, raw);
+}
+
+/** 按某个段的列规则渲染原始值（草稿态与主表/查看器共用同一套换算）。 */
+function formatByRule(
+  section: FormViewSection | null,
+  index: number,
+  raw: string
+): string {
   const type = (section?.columnTypes?.[index] ?? "").trim().toLowerCase();
   const scale = section?.columnScales?.[index] ?? 0;
   if (type === "rate" && scale > 0) {
@@ -489,6 +499,73 @@ async function openLink(row: FormViewRow): Promise<void> {
   } finally {
     viewerLoading.value = false;
   }
+}
+
+// ---- 查看器（内联列表）里的编辑：同一套草稿 ----
+//
+// 用户 2026-10-03 要求：内联列表（掉落候选 `[list]`）必须能改，不能只是"可看"。
+// 后端已经支持按（段名, 出现序号, 行, 列）定位到某一处 `[list]`（同名段有 862 次），
+// 所以这里只需把查看器的格子接上跟主表一样的编辑 + 草稿。
+
+type ViewerEditState = { row: number; column: number };
+
+const viewerEditing = ref<ViewerEditState | null>(null);
+const viewerEditText = ref("");
+
+/** 查看器某格当前应显示的值（草稿优先）。 */
+function viewerCellCurrent(row: FormViewRow, index: number): string {
+  const draft = draftValue(viewerSection.value, row.index, index);
+  if (draft !== null) return draft;
+  return row.cells[index]?.value ?? "";
+}
+
+/** 查看器某格是否有未保存草稿。 */
+function viewerCellDirty(row: FormViewRow, index: number): boolean {
+  const section = viewerSection.value;
+  if (!section) return false;
+  return pendingEdits.value.has(
+    draftKey(section.section, section.occurrence, row.index, index)
+  );
+}
+
+function viewerCellText(row: FormViewRow, index: number): { text: string; raw: string } {
+  const cell = row.cells[index];
+  if (!cell) return { text: "", raw: "" };
+  if (viewerCellDirty(row, index)) {
+    const current = viewerCellCurrent(row, index);
+    return { text: formatByRule(viewerSection.value, index, current), raw: current };
+  }
+  return {
+    text: cell.display && cell.display !== "" ? cell.display : cell.value,
+    raw: cell.value,
+  };
+}
+
+function startViewerEdit(row: FormViewRow, index: number): void {
+  if (!row.cells[index]) return;
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再回来改（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  viewerEditText.value = viewerCellCurrent(row, index);
+  viewerEditing.value = { row: row.index, column: index };
+}
+
+function cancelViewerEdit(): void {
+  viewerEditing.value = null;
+}
+
+/** 回车 / 失焦都落到草稿（与主表同一规则）。 */
+function commitViewerEdit(): void {
+  const state = viewerEditing.value;
+  const section = viewerSection.value;
+  if (!state || !section) return;
+  stageEdits([
+    { section, row: state.row, column: state.column, value: viewerEditText.value },
+  ]);
+  viewerEditing.value = null;
 }
 
 // ---- 单元格编辑（双击改值 → 本地草稿 → 点「保存改动」才进归档） ----
@@ -649,6 +726,16 @@ async function saveDrafts(): Promise<void> {
     pendingEdits.value = new Map();
     editedCount.value += drafts.length;
     message.success(`已保存 ${drafts.length} 格到归档内存（点主工具条「保存 PVF」才落盘）`);
+    // 查看器里那份（某处 [list]）不在主投影里，得单独重取一次，否则它还停在被改之前的旧值。
+    if (viewerVisible.value && viewerSection.value) {
+      const target = viewerSection.value;
+      try {
+        const fresh = await formView.loadLinkedSection(target.section, target.occurrence);
+        if (fresh) viewerSection.value = fresh;
+      } catch {
+        // 取不到就保持原样（不覆盖、不报错：主表那边已经刷新成功）。
+      }
+    }
   } catch (issue: any) {
     message.error(String(issue?.message ?? issue));
   } finally {
@@ -1108,11 +1195,12 @@ function resetColumnWidths(): void {
                         </span>
                       </template>
                       <template v-else>
-                        <span v-if="cellName(row, index)" class="fv-name">
+                        <!-- 有草稿的格子只显示"新值"：名称是后端按旧编号解析的，挂着会误导 -->
+                        <span v-if="cellName(row, index) && !isDirtyCell(row, index)" class="fv-name">
                           {{ cellName(row, index) }}
                         </span>
                         <span v-else>{{ cellText(row, index).text }}</span>
-                        <span v-if="cellName(row, index)" class="fv-id">
+                        <span v-if="cellName(row, index) && !isDirtyCell(row, index)" class="fv-id">
                           {{ cellText(row, index).text }}
                         </span>
                       </template>
@@ -1242,15 +1330,39 @@ function resetColumnWidths(): void {
                   <td
                     v-for="(_, index) in viewerSection.columns"
                     :key="index"
-                    :class="{ 'fv-num': isNumeric(cellText(row, index).raw) }"
-                    :title="cellTitle(row, index)"
+                    :class="{
+                      'fv-num': isNumeric(viewerCellText(row, index).raw),
+                      'fv-cell-dirty': viewerCellDirty(row, index),
+                      'fv-cell-editing':
+                        viewerEditing !== null &&
+                        viewerEditing.row === row.index &&
+                        viewerEditing.column === index,
+                    }"
+                    title="双击改值（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档"
+                    @dblclick="startViewerEdit(row, index)"
                   >
-                    <span v-if="cellName(row, index)" class="fv-name">
-                      {{ cellName(row, index) }}
-                    </span>
-                    <span v-else>{{ cellText(row, index).text }}</span>
-                    <span v-if="cellName(row, index)" class="fv-id">
-                      {{ cellText(row, index).text }}
+                    <NInput
+                      v-if="
+                        viewerEditing !== null &&
+                        viewerEditing.row === row.index &&
+                        viewerEditing.column === index
+                      "
+                      v-model:value="viewerEditText"
+                      size="tiny"
+                      autofocus
+                      class="fv-edit-input"
+                      @keyup.enter="commitViewerEdit()"
+                      @keyup.esc="cancelViewerEdit()"
+                      @blur="commitViewerEdit()"
+                    />
+                    <span v-else class="fv-cell">
+                      <span v-if="cellName(row, index) && !viewerCellDirty(row, index)" class="fv-name">
+                        {{ cellName(row, index) }}
+                      </span>
+                      <span v-else>{{ viewerCellText(row, index).text }}</span>
+                      <span v-if="cellName(row, index) && !viewerCellDirty(row, index)" class="fv-id">
+                        {{ viewerCellText(row, index).text }}
+                      </span>
                     </span>
                   </td>
                 </tr>
@@ -1258,7 +1370,7 @@ function resetColumnWidths(): void {
             </table>
           </div>
           <div class="fv-viewer-hint">
-            只读查看。候选列表（物品 / 权重）的修改请到「归档编辑」里改这个文件的原文。
+            双击格子可改（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档内存。
           </div>
         </div>
         <NEmpty v-else description="正在取这一段的投影…" />
