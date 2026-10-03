@@ -270,7 +270,9 @@ type FormViewCellEdit struct {
 //
 // 流程（每一步都为"改错地方"设了闸）：
 //  1. 重新投影，按（段, 出现序号, 行, 列）定位目标格 —— 偏移与内容都以"现在"为准；
-//  2. 只允许改**在本文件里唯一出现**的段（改写引擎按段名匹配，同名多次会一起改）；
+//  2. 段在本文件里**唯一出现**时走结构化改写引擎（按段名匹配，安全）；
+//     出现多次时（如 `[list]` 有 862 次）改走**文本层按出现序号定位**
+//     （见 formview_occurrence.go）—— 否则同名段会被一起改掉；
 //  3. 在**克隆**上做结构化改写（与批量预览同一手法），不碰真归档；
 //  4. 校验：把改后的文本重新投影，逐个确认目标格真的等于期望值，不符则**整体放弃**；
 //  5. 通过后经 core.setText 提交（自带写保护 / 版本快照 / 搜索索引同步）—— **不落盘**，
@@ -317,19 +319,25 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 		edit  FormViewCellEdit
 		value string
 	}
+	// 段在本文件里出现多次时（`[list]` 有 862 次），结构化引擎按**段名**匹配会把同名的一起改，
+	// 所以只能改用「按出现序号定位」的文本路径；同一次保存里只要涉及这种段，就整体走文本路径
+	// （两条路都有同一套"改完重新投影逐格校验"的兜底，见 ④）。
+	useTextPath := false
+	for _, edit := range edits {
+		if countSectionOccurrences(view, edit.Section) > 1 {
+			useTextPath = true
+			break
+		}
+	}
+
 	operations := make([]pvf.StructuredBatchOperation, 0, len(edits))
+	occurrenceEdits := make([]occurrenceEdit, 0, len(edits))
 	expected := make([]expectation, 0, len(edits))
 	for _, edit := range edits {
 		rule, ok := format.LookupSection(edit.Section)
 		if !ok {
 			s.c.mu.RUnlock()
 			return nil, fmt.Errorf("规则里没有段 [%s]", edit.Section)
-		}
-		if countSectionOccurrences(view, edit.Section) != 1 {
-			s.c.mu.RUnlock()
-			return nil, fmt.Errorf(
-				"段 [%s] 在本文件里不是唯一出现（%d 次）；结构化改写按段名匹配会把同名的一起改，为避免改错，本功能只支持唯一出现的段",
-				edit.Section, countSectionOccurrences(view, edit.Section))
 		}
 		if edit.Row < 0 || edit.Row >= rowCountOf(current, edit.Section, edit.Occurrence) {
 			s.c.mu.RUnlock()
@@ -347,40 +355,66 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 		if existing, ok := cellValueIn(current, edit.Section, edit.Occurrence, edit.Row, edit.Column); ok && existing == value {
 			continue // 值没变，不必写
 		}
-		operations = append(operations, pvf.StructuredBatchOperation{
-			Kind:       "set",
-			Section:    edit.Section,
-			TokenIndex: edit.Row*rule.RowTokens + edit.Column,
-			Value:      value,
-		})
+		if useTextPath {
+			occurrenceEdits = append(occurrenceEdits, occurrenceEdit{
+				section:    edit.Section,
+				occurrence: edit.Occurrence,
+				tokenIndex: edit.Row*rowTokensOf(format, edit.Section) + edit.Column,
+				value:      value,
+			})
+		} else {
+			operations = append(operations, pvf.StructuredBatchOperation{
+				Kind:       "set",
+				Section:    edit.Section,
+				TokenIndex: edit.Row*rule.RowTokens + edit.Column,
+				Value:      value,
+			})
+		}
 		expected = append(expected, expectation{edit: edit, value: value})
 	}
-	if len(operations) == 0 {
+	if len(operations) == 0 && len(occurrenceEdits) == 0 {
 		s.c.mu.RUnlock()
 		return current, nil
 	}
-	raw, err := a.RawBytes(index)
-	if err != nil {
-		s.c.mu.RUnlock()
-		return nil, fmt.Errorf("读取原始内容失败（%s）: %w", filePath, err)
-	}
-	stage := a.CloneForBatch()
-	s.c.mu.RUnlock()
 
-	// ③ 在克隆上改写（与「批量处理」同一引擎：UTF-16 / 换行都交给它，不自己切字符串）。
-	transformed, err := stage.TransformStructuredBatch(raw, operations)
-	if err != nil {
-		return nil, fmt.Errorf("改写失败: %w", err)
-	}
-	if !transformed.Changed() {
-		return nil, fmt.Errorf("改写引擎没有产生任何改动：%s", strings.Join(transformed.Warnings(), "；"))
-	}
-	if err := stage.SetRawBytes(index, transformed.Raw()); err != nil {
-		return nil, fmt.Errorf("暂存改写结果失败: %w", err)
-	}
-	updatedText, err := stage.Text(index)
-	if err != nil {
-		return nil, fmt.Errorf("读回改写结果失败: %w", err)
+	// ③-a 文本路径：按（段名, 出现序号, token 下标）在文本上替换 —— 完全不动内核
+	// （`internal/pvf/` 是冻结层），也不怕同名段有几百个。
+	var updatedText string
+	if useTextPath {
+		s.c.mu.RUnlock()
+		next, changed, applyErr := applyOccurrenceEdits(text, occurrenceEdits)
+		if applyErr != nil {
+			return nil, applyErr
+		}
+		if !changed {
+			return nil, fmt.Errorf("改写没有产生任何改动")
+		}
+		updatedText = next
+	} else {
+		raw, err := a.RawBytes(index)
+		if err != nil {
+			s.c.mu.RUnlock()
+			return nil, fmt.Errorf("读取原始内容失败（%s）: %w", filePath, err)
+		}
+		stage := a.CloneForBatch()
+		s.c.mu.RUnlock()
+
+		// ③-b 在克隆上改写（与「批量处理」同一引擎：UTF-16 / 换行都交给它，不自己切字符串）。
+		transformed, err := stage.TransformStructuredBatch(raw, operations)
+		if err != nil {
+			return nil, fmt.Errorf("改写失败: %w", err)
+		}
+		if !transformed.Changed() {
+			return nil, fmt.Errorf("改写引擎没有产生任何改动：%s", strings.Join(transformed.Warnings(), "；"))
+		}
+		if err := stage.SetRawBytes(index, transformed.Raw()); err != nil {
+			return nil, fmt.Errorf("暂存改写结果失败: %w", err)
+		}
+		innerText, err := stage.Text(index)
+		if err != nil {
+			return nil, fmt.Errorf("读回改写结果失败: %w", err)
+		}
+		updatedText = innerText
 	}
 
 	// ④ 校验：重新投影，逐个确认目标格真的变成了期望值；不符就整体放弃（不写入）。

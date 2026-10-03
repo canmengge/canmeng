@@ -71,6 +71,12 @@ type ProjectedSection struct {
 	// ColumnRefs 是每列的对象类型（来自规则 Column.Ref，与 Columns 等长；无 ref 的列为空串）。
 	// 界面靠它认「哪一列是怪物 / 哪一列是掉落物品」，从而把 ID 与中文名当作同一个搜索目标。
 	ColumnRefs []string `json:"columnRefs,omitempty"`
+	// ColumnTypes 是每列的规则类型（text/int/rate/enum/ref，与 Columns 等长）。
+	ColumnTypes []string `json:"columnTypes,omitempty"`
+	// ColumnScales 是 rate 列的满值刻度（如 1000000 表示 100%）。
+	// 界面靠 Type+Scale 把**草稿里的原始数值**按同一套换算显示（1000000 → 100%），
+	// 否则改完未保存的那一格会露出原始大数字（用户 2026-10-03 指出）。
+	ColumnScales []int64 `json:"columnScales,omitempty"`
 	// Rows 是按 RowTokens 切出来的行。
 	Rows []Row `json:"rows"`
 	// TokenCount 是本段的 token 总数。
@@ -379,7 +385,9 @@ func projectSection(rule Section, group *tokenGroup, occurrence int) ProjectedSe
 		Kind:       rule.SectionKind(),
 		Occurrence: occurrence,
 		Columns:    rule.ColumnLabels(),
-		ColumnRefs: sectionColumnRefs(rule),
+		ColumnRefs:   sectionColumnRefs(rule),
+		ColumnTypes:  sectionColumnTypes(rule),
+		ColumnScales: sectionColumnScales(rule),
 		Rows:       make([]Row, 0, len(group.tokens)/rowTokens+1),
 		TokenCount: len(group.tokens),
 		start:      groupStart(group),

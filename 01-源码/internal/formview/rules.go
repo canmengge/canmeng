@@ -163,6 +163,24 @@ func sectionColumnRefs(s Section) []string {
 	return refs
 }
 
+// sectionColumnTypes 返回每列声明的类型（Column.Type），与 ColumnLabels 等长。
+func sectionColumnTypes(s Section) []string {
+	types := make([]string, 0, len(s.Columns))
+	for _, column := range s.Columns {
+		types = append(types, strings.TrimSpace(column.Type))
+	}
+	return types
+}
+
+// sectionColumnScales 返回每列的 rate 刻度（非 rate 列为 0），与 ColumnLabels 等长。
+func sectionColumnScales(s Section) []int64 {
+	scales := make([]int64, 0, len(s.Columns))
+	for _, column := range s.Columns {
+		scales = append(scales, column.Scale)
+	}
+	return scales
+}
+
 func (f Format) LookupSection(name string) (Section, bool) {
 	key := strings.TrimSpace(name)
 	for _, section := range f.Sections {

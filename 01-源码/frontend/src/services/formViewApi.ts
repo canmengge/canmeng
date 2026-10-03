@@ -95,6 +95,10 @@ export interface FormViewSection {
    * 界面靠它认「哪一列是怪物 / 哪一列是掉落物品」，从而把编号与中文名当同一个搜索目标。
    */
   columnRefs?: string[];
+  /** 每列的规则类型（text/int/rate/enum/ref），与 columns 等长。 */
+  columnTypes?: string[];
+  /** rate 列的满值刻度（如 1000000 表示 100%）；非 rate 列为 0。 */
+  columnScales?: number[];
   rows: FormViewRow[];
   tokenCount: number;
   warnings?: string[];

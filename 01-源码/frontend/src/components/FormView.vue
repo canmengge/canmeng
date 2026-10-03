@@ -357,7 +357,7 @@ watch(
  * 不再走"提交后端 → 等重新投影 → 才显示新值"那条慢路径。
  */
 function cellCurrent(row: FormViewRow, index: number): string {
-  const draft = draftValue(row, index);
+  const draft = draftValue(mainSection.value, row.index, index);
   if (draft !== null) return draft;
   return row.cells[index]?.value ?? "";
 }
@@ -366,7 +366,33 @@ function cellCurrent(row: FormViewRow, index: number): string {
 function isDirtyCell(row: FormViewRow, index: number): boolean {
   const section = mainSection.value;
   if (!section) return false;
-  return pendingEdits.value.has(draftKey(section, row.index, index));
+  return pendingEdits.value.has(
+    draftKey(section.section, section.occurrence, row.index, index)
+  );
+}
+
+/**
+ * 按列规则把原始值渲染成可读文本（后端算 `display` 用的是同一套规则）。
+ *
+ * 用途：**草稿 / 编辑态**没有后端给的 `display`，必须前端自己按 Type+Scale 换算 ——
+ * 否则改完还没保存的那一格会露出原始大数字（用户 2026-10-03 指出：
+ * 掉落率 1000000 应显示 100%，改成 10000 应立刻显示 1%）。
+ */
+function formatCellValue(index: number, raw: string): string {
+  const section = mainSection.value;
+  const type = (section?.columnTypes?.[index] ?? "").trim().toLowerCase();
+  const scale = section?.columnScales?.[index] ?? 0;
+  if (type === "rate" && scale > 0) {
+    const value = Number(raw);
+    if (Number.isFinite(value)) {
+      const percent = (value / scale) * 100;
+      const text = Number.isInteger(percent)
+        ? String(percent)
+        : String(Math.round(percent * 100) / 100);
+      return `${text}%`;
+    }
+  }
+  return raw;
 }
 
 function cellText(row: FormViewRow, index: number): { text: string; raw: string } {
@@ -374,7 +400,7 @@ function cellText(row: FormViewRow, index: number): { text: string; raw: string 
   if (!cell) return { text: "", raw: "" };
   if (isDirtyCell(row, index)) {
     const current = cellCurrent(row, index);
-    return { text: current, raw: current };
+    return { text: formatCellValue(index, current), raw: current };
   }
   return {
     text: cell.display && cell.display !== "" ? cell.display : cell.value,
@@ -471,7 +497,13 @@ async function openLink(row: FormViewRow): Promise<void> {
 // 才写进归档内存**。所以这里不再"每改一格都去后端转一圈"—— 改的是草稿，显示走 cellText
 // 里的草稿优先，提交只在 saveDrafts() 时发生一次（批量改也是先落草稿）。
 
-type EditState = { row: number; column: number; label: string };
+type EditState = {
+  /** 正在改的是哪个段（主表 = independent drop；查看器 = 某一处 [list]）。 */
+  section: FormViewSection;
+  row: number;
+  column: number;
+  label: string;
+};
 
 const editing = ref<EditState | null>(null);
 /** 正在编辑的文本（单独一个 ref，模板里就不必对 editing 判空）。 */
@@ -481,21 +513,61 @@ const editedCount = ref(0);
 /** 正在把草稿提交给后端。 */
 const saving = ref(false);
 
-type DraftEdit = { row: number; column: number; value: string };
+/**
+ * 一条草稿：**自带所在段**（段名 + 出现序号）。
+ *
+ * 之所以带上段：内联列表（`[list]`，本文件 862 次）也在同一张草稿簿里 ——
+ * 主表改的是 `[independent drop]`，查看器改的是某一处 `[list]`，
+ * 两者必须能区分开，保存时才能各自定位到正确的那一次出现。
+ */
+type DraftEdit = {
+  section: string;
+  occurrence: number;
+  row: number;
+  column: number;
+  value: string;
+};
 
 /** 草稿键：段名#出现序号:行:列（同一格只留最后一次改动）。 */
-function draftKey(section: FormViewSection, row: number, column: number): string {
-  return `${section.section.toLowerCase()}#${section.occurrence}:${row}:${column}`;
+function draftKey(
+  section: string,
+  occurrence: number,
+  row: number,
+  column: number
+): string {
+  return `${section.toLowerCase()}#${occurrence}:${row}:${column}`;
 }
 
 /** 本地草稿（未提交）：改了立刻显示，点「保存改动」才写进归档内存。 */
 const pendingEdits = ref<Map<string, DraftEdit>>(new Map());
 const pendingCount = computed(() => pendingEdits.value.size);
 
-function draftValue(row: FormViewRow, index: number): string | null {
-  const section = mainSection.value;
+/** 按（段名, 出现序号）找投影里的段；主表找不到就看查看器里那份（内联列表）。 */
+function sectionOf(name: string, occurrence: number): FormViewSection | null {
+  const main = mainSection.value;
+  if (main && main.section.toLowerCase() === name.toLowerCase() && main.occurrence === occurrence) {
+    return main;
+  }
+  const viewer = viewerSection.value;
+  if (
+    viewer &&
+    viewer.section.toLowerCase() === name.toLowerCase() &&
+    viewer.occurrence === occurrence
+  ) {
+    return viewer;
+  }
+  return null;
+}
+
+function draftValue(
+  section: FormViewSection | null,
+  row: number,
+  index: number
+): string | null {
   if (!section) return null;
-  const draft = pendingEdits.value.get(draftKey(section, row.index, index));
+  const draft = pendingEdits.value.get(
+    draftKey(section.section, section.occurrence, row, index)
+  );
   return draft ? draft.value : null;
 }
 
@@ -504,20 +576,39 @@ function draftValue(row: FormViewRow, index: number): string | null {
  *
  * 值改回归档原样就从草稿里删掉 —— 不制造"改了又改回来"的假未保存标记。
  */
-function stageEdits(items: DraftEdit[]): number {
-  const section = mainSection.value;
-  if (!section || items.length === 0) return 0;
+/** stageEdits 的入参：段可以直接给对象（主表/查看器各持有自己那份），也可以给「段名+出现序号」。 */
+type StageEditInput = {
+  section: FormViewSection | string;
+  occurrence?: number;
+  row: number;
+  column: number;
+  value: string;
+};
+
+function stageEdits(items: StageEditInput[]): number {
+  if (items.length === 0) return 0;
   const next = new Map(pendingEdits.value);
   let staged = 0;
   for (const item of items) {
-    const key = draftKey(section, item.row, item.column);
+    const section =
+      typeof item.section === "string"
+        ? sectionOf(item.section, item.occurrence ?? 0)
+        : item.section;
+    if (!section) continue;
+    const key = draftKey(section.section, section.occurrence, item.row, item.column);
     const original = (section.rows[item.row]?.cells[item.column]?.value ?? "").trim();
     const value = item.value.trim();
     if (value === original) {
       next.delete(key);
       continue;
     }
-    next.set(key, { row: item.row, column: item.column, value });
+    next.set(key, {
+      section: section.section,
+      occurrence: section.occurrence,
+      row: item.row,
+      column: item.column,
+      value,
+    });
     staged += 1;
   }
   pendingEdits.value = next;
@@ -533,9 +624,9 @@ function discardDrafts(): void {
 
 /** 把草稿提交给后端（写进归档内存，**不落盘**）。 */
 async function saveDrafts(): Promise<void> {
-  const section = mainSection.value;
+  // 草稿**自带段信息**：主表的改动与各处内联列表（[list]）的改动可以混在一起一次提交。
   const drafts = [...pendingEdits.value.values()];
-  if (!section || drafts.length === 0) return;
+  if (drafts.length === 0) return;
   if (fileOpenInEditor()) {
     message.warning(
       "该文件正在编辑区打开：请先关掉那个标签页，再保存（避免两处同时改同一份文本）"
@@ -548,8 +639,8 @@ async function saveDrafts(): Promise<void> {
   try {
     await formView.applyEdits(
       drafts.map((draft) => ({
-        section: section.section,
-        occurrence: section.occurrence,
+        section: draft.section,
+        occurrence: draft.occurrence,
         row: draft.row,
         column: draft.column,
         value: draft.value,
@@ -593,6 +684,7 @@ function startEdit(row: FormViewRow, index: number, section: FormViewSection): v
   // 续改时取草稿里的值：别把用户刚打的字又顶回归档里的旧值。
   editText.value = cellCurrent(row, index);
   editing.value = {
+    section,
     row: row.index,
     column: index,
     label: section.columns[index] ?? "",
@@ -611,7 +703,14 @@ function cancelEdit(): void {
 function commitEdit(): void {
   const state = editing.value;
   if (!state) return;
-  stageEdits([{ row: state.row, column: state.column, value: editText.value }]);
+  stageEdits([
+    {
+      section: state.section,
+      row: state.row,
+      column: state.column,
+      value: editText.value,
+    },
+  ]);
   editing.value = null;
 }
 
@@ -995,7 +1094,7 @@ function resetColumnWidths(): void {
                       class="fv-edit-input"
                       @keyup.enter="commitEdit()"
                       @keyup.esc="cancelEdit()"
-                      @blur="cancelEdit()"
+                      @blur="commitEdit()"
                     />
                     <span
                       v-else
