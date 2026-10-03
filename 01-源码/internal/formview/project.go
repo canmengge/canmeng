@@ -11,8 +11,9 @@ import (
 // 投影上限：避免把上千次段出现 / 上万行一次性塞给界面（这是界面预算，不是游戏事实，
 // 因此在代码里定，并在超出时明确告警；要全量时改这里即可）。
 const (
-	maxSectionOccurrences = 50
-	maxSectionRows        = 2000
+	// defaultMaxSectionOccurrences 是段出现次数的默认上限（规则可用 maxOccurrences 放宽）。
+	defaultMaxSectionOccurrences = 50
+	maxSectionRows               = 2000
 )
 
 // Cell 是表格里的一格。
@@ -21,6 +22,9 @@ type Cell struct {
 	Value string `json:"value"`
 	// Display 是给人看的文本（枚举翻译 / 百分比换算 / 「不限」）；与 Value 相同则留空。
 	Display string `json:"display,omitempty"`
+	// Name 是 ref 列解析出的**目标名称**（如怪物 ID → 中文名）；解析不到时为空。
+	// 与 Display 分开：Display 是"取值本身的翻译"，Name 是"这个引用指向谁"。
+	Name string `json:"name,omitempty"`
 	// Start / End 是该 token 在编辑器文本里的偏移（UTF-16 单位，与 CodeMirror 一致）。
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -81,7 +85,9 @@ type Projection struct {
 	File        string             `json:"file"`
 	TokenCount  int                `json:"tokenCount"`
 	Sections    []ProjectedSection `json:"sections"`
-	Warnings    []string           `json:"warnings"`
+	// LinkedTargets 是因被行关联认领、已从 Sections 里移除的目标段次数。
+	LinkedTargets int      `json:"linkedTargets,omitempty"`
+	Warnings      []string `json:"warnings"`
 }
 
 // tokenGroup 是同一段一次出现里的 token 序列。
@@ -107,22 +113,11 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 	}
 
 	// 1) 按「段的一次出现」（SectionID）收集 token，保持首次出现顺序。
-	groups := make([]*tokenGroup, 0)
-	byID := make(map[int]*tokenGroup)
-	occurrence := make(map[string]int)
-	for _, element := range view.Elements {
-		if element.Kind != pvf.ScriptElementToken {
-			continue
-		}
-		projection.TokenCount++
-		group, ok := byID[element.SectionID]
-		if !ok {
-			group = &tokenGroup{section: element.Section, id: element.SectionID}
-			byID[element.SectionID] = group
-			groups = append(groups, group)
-		}
-		group.tokens = append(group.tokens, element)
+	groups := collectGroups(view)
+	for _, group := range groups {
+		projection.TokenCount += len(group.tokens)
 	}
+	occurrence := make(map[string]int)
 
 	// 2) 逐个规则段切表。一段在本文件里可能出现多次（如每个配置行后面跟一个 [list]），
 	//    每次出现单独成表，用 Occurrence 区分。
@@ -130,6 +125,7 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 	for _, rule := range format.Sections {
 		found := false
 		skipped := 0
+		limit := rule.OccurrenceLimit()
 		for _, group := range groups {
 			if !strings.EqualFold(strings.TrimSpace(group.section), strings.TrimSpace(rule.Section)) {
 				continue
@@ -137,7 +133,7 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 			found = true
 			matchedGroups[group.id] = true
 			occurrence[rule.Section]++
-			if occurrence[rule.Section] > maxSectionOccurrences {
+			if occurrence[rule.Section] > limit {
 				skipped++
 				continue
 			}
@@ -148,7 +144,7 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 		}
 		if skipped > 0 {
 			warn(fmt.Sprintf("段 [%s]（%s）共出现 %d 次，只投影前 %d 次（其余已略过）",
-				rule.Section, rule.Label, occurrence[rule.Section], maxSectionOccurrences))
+				rule.Section, rule.Label, occurrence[rule.Section], limit))
 		}
 	}
 
@@ -174,7 +170,91 @@ func Project(filePath string, format Format, view pvf.ScriptView) *Projection {
 
 	// 4) 行 → 被引用段 的关联（只有规则里配了 links 的段才需要做）。
 	resolveLinks(projection, format)
+
+	// 5) 已被关联认领的目标段从输出里移除：它们能通过行里的 link 按需取（ProjectSection），
+	//    全量留在 Sections 里会让 payload 随文件规模线性膨胀（实测该文件有 862 次 [list]）。
+	projection.LinkedTargets = stripClaimedTargets(projection)
 	return projection
+}
+
+// collectGroups 把内核投影按「段的一次出现」分组，保持首次出现顺序。
+func collectGroups(view pvf.ScriptView) []*tokenGroup {
+	groups := make([]*tokenGroup, 0)
+	byID := make(map[int]*tokenGroup)
+	for _, element := range view.Elements {
+		if element.Kind != pvf.ScriptElementToken {
+			continue
+		}
+		group, ok := byID[element.SectionID]
+		if !ok {
+			group = &tokenGroup{section: element.Section, id: element.SectionID}
+			byID[element.SectionID] = group
+			groups = append(groups, group)
+		}
+		group.tokens = append(group.tokens, element)
+	}
+	return groups
+}
+
+// stripClaimedTargets 移除已被行关联认领的目标段，返回移除的条数。
+func stripClaimedTargets(projection *Projection) int {
+	claimed := make(map[string]bool)
+	for index := range projection.Sections {
+		for rowIndex := range projection.Sections[index].Rows {
+			link := projection.Sections[index].Rows[rowIndex].Link
+			if link == nil {
+				continue
+			}
+			claimed[linkKey(link.TargetSection, link.Occurrence)] = true
+		}
+	}
+	if len(claimed) == 0 {
+		return 0
+	}
+	kept := make([]ProjectedSection, 0, len(projection.Sections))
+	removed := 0
+	for _, section := range projection.Sections {
+		if claimed[linkKey(section.Section, section.Occurrence)] {
+			removed++
+			continue
+		}
+		kept = append(kept, section)
+	}
+	projection.Sections = kept
+	return removed
+}
+
+// linkKey 是「段名 + 出现序号」的定位键。
+func linkKey(section string, occurrence int) string {
+	return fmt.Sprintf("%s#%d", sectionKey(section), occurrence)
+}
+
+// ProjectSection 只投影「某段第 occurrence 次出现」（1 基）；找不到返回 nil。
+//
+// 主投影会把已被行关联认领的目标段从输出里去掉，界面双击某行的关联格时用本函数
+// 按需取那一次出现 —— 只为看一眼列表，不必把上千个段全传过去。
+func ProjectSection(format Format, view pvf.ScriptView, section string, occurrence int) *ProjectedSection {
+	if occurrence < 1 {
+		return nil
+	}
+	rule, ok := format.LookupSection(section)
+	if !ok {
+		return nil
+	}
+	key := sectionKey(section)
+	seen := 0
+	for _, group := range collectGroups(view) {
+		if sectionKey(group.section) != key {
+			continue
+		}
+		seen++
+		if seen != occurrence {
+			continue
+		}
+		projected := projectSection(rule, group, occurrence)
+		return &projected
+	}
+	return nil
 }
 
 // linkTarget 是被引用段的一次出现，供 resolveLinks 认领。

@@ -43,7 +43,13 @@ export interface FormViewFormatListResult {
 export interface FormViewCell {
   value: string;
   display?: string;
-  /** UTF-16 偏移，与 CodeMirror 一致。 */
+  /** ref 列解析出的目标名称（如怪物 ID → 中文名）；解析不到时为空。 */
+  name?: string;
+  /**
+   * 偏移。**注意单位**：Go 侧 `ScriptView` 说明为"归一化换行后的 UTF-16 单元"，
+   * 不能拿去切原始文本（非 ASCII / CRLF 会切错），所以回写一律走
+   * `ApplyCellEdits`（结构化改写引擎），不用这两个值。
+   */
   start: number;
   end: number;
 }
@@ -91,7 +97,18 @@ export interface FormViewProjection {
   file: string;
   tokenCount: number;
   sections: FormViewSection[];
+  /** 因被行关联认领、已从 sections 里移除的目标段次数。 */
+  linkedTargets?: number;
   warnings: string[];
+}
+
+/** 对应 Go `services.FormViewCellEdit`：把某段某行某列改成什么。 */
+export interface FormViewCellEdit {
+  section: string;
+  occurrence: number;
+  row: number;
+  column: number;
+  value: string;
 }
 
 /**
@@ -116,4 +133,28 @@ export function ProjectFile(filePath: string): $CancellablePromise<FormViewProje
  */
 export function ReloadRules(): $CancellablePromise<FormViewFormatListResult> {
   return $Call.ByID(38255038);
+}
+
+/**
+ * 只取「某段第 N 次出现」的投影（1 基）。被行关联认领的段不在主投影里，界面双击时按需取。
+ * fqn = pvfine/services.FormViewService.ProjectSectionOccurrence
+ */
+export function ProjectSectionOccurrence(
+  filePath: string,
+  section: string,
+  occurrence: number
+): $CancellablePromise<FormViewSection> {
+  return $Call.ByID(3685630439, filePath, section, occurrence);
+}
+
+/**
+ * 应用一批单元格改动，返回**重新投影后**的结果（服务端做完定位、校验、写回）。
+ * 只写归档内存，落盘仍走主工具条的「保存 PVF」。
+ * fqn = pvfine/services.FormViewService.ApplyCellEdits
+ */
+export function ApplyCellEdits(
+  filePath: string,
+  edits: FormViewCellEdit[]
+): $CancellablePromise<FormViewProjection> {
+  return $Call.ByID(394327007, filePath, edits);
 }

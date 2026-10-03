@@ -79,6 +79,11 @@ type Section struct {
 	Columns []Column `json:"columns"`
 	// Links 是「本段的行 → 另一段」的关联定义（可选）。
 	Links []Link `json:"links,omitempty"`
+	// MaxOccurrences 是本段最多投影多少次出现（0 = 用默认上限）。
+	//
+	// 有些段每行数据后面跟一次（实测 etc/independent_drop.etc 的 [list] 出现 862 次），
+	// 默认上限会把绝大多数挡掉 —— 那正是"内联列表打不开"的根因，所以需要在规则里放宽。
+	MaxOccurrences int `json:"maxOccurrences,omitempty"`
 	// Optional 为 true 时，本段在本文件里未出现也不告警（用于只在部分客户端存在的段）。
 	Optional bool `json:"optional,omitempty"`
 }
@@ -128,6 +133,25 @@ func (s Section) SectionKind() string {
 		return kind
 	}
 	return SectionKindTable
+}
+
+// OccurrenceLimit 返回本段允许投影的最大出现次数（0 或负值用默认上限）。
+func (s Section) OccurrenceLimit() int {
+	if s.MaxOccurrences > 0 {
+		return s.MaxOccurrences
+	}
+	return defaultMaxSectionOccurrences
+}
+
+// LookupSection 按段名（大小写与首尾空白不敏感）取段定义。
+func (f Format) LookupSection(name string) (Section, bool) {
+	key := strings.TrimSpace(name)
+	for _, section := range f.Sections {
+		if strings.EqualFold(strings.TrimSpace(section.Section), key) {
+			return section, true
+		}
+	}
+	return Section{}, false
 }
 
 // normalizeArchivePath 统一归档内路径写法，便于比较。
@@ -279,6 +303,9 @@ func Validate(catalog Catalog) error {
 			}
 			if section.RowTokens < 1 {
 				problems = append(problems, sectionPrefix+".rowTokens 必须 ≥ 1")
+			}
+			if section.MaxOccurrences < 0 {
+				problems = append(problems, sectionPrefix+".maxOccurrences 不能为负")
 			}
 			// 列定义必须与 rowTokens 一一对应 —— 这是「表格分列」的命名契约。
 			if len(section.Columns) != section.RowTokens {

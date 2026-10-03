@@ -2,11 +2,15 @@ import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
 import { Events } from "@wailsio/runtime";
 import {
+  ApplyCellEdits,
   ListFormats,
   ProjectFile,
+  ProjectSectionOccurrence,
   ReloadRules,
+  type FormViewCellEdit,
   type FormViewFormatInfo,
   type FormViewProjection,
+  type FormViewSection,
 } from "../services/formViewApi";
 import {
   IsFormViewWindowOpen,
@@ -39,6 +43,8 @@ export const useFormViewStore = defineStore("formView", () => {
 
   const projection = ref<FormViewProjection | null>(null);
   const projecting = ref(false);
+  /** 正在应用单元格改动。 */
+  const applying = ref(false);
   const error = ref("");
 
   /** 本实例是否跑在独立窗口里。 */
@@ -177,6 +183,36 @@ export const useFormViewStore = defineStore("formView", () => {
     }
   }
 
+  /**
+   * 按需取「某段第 occurrence 次出现」。
+   *
+   * 主投影会把被行关联认领的目标段从输出里移除（实测该文件有 862 次 [list]），
+   * 界面双击关联格时用本方法单独取那一次，避免为看一眼列表传整包。
+   */
+  async function loadLinkedSection(
+    section: string,
+    occurrence: number
+  ): Promise<FormViewSection | null> {
+    const path = filePath.value.trim();
+    if (path === "") return null;
+    return ProjectSectionOccurrence(path, section, occurrence);
+  }
+
+  /**
+   * 应用单元格改动：服务端定位 / 校验 / 写回后回传新投影，本地直接替换。
+   * 只写归档内存 —— 落盘仍走主工具条的「保存 PVF」。
+   */
+  async function applyEdits(edits: FormViewCellEdit[]): Promise<void> {
+    if (edits.length === 0) return;
+    applying.value = true;
+    try {
+      projection.value = await ApplyCellEdits(filePath.value.trim(), edits);
+      error.value = "";
+    } finally {
+      applying.value = false;
+    }
+  }
+
   /** 清空当前结果（归档切换、或用户手动清空）。 */
   function reset(): void {
     sessionId.value += 1;
@@ -194,6 +230,7 @@ export const useFormViewStore = defineStore("formView", () => {
     filePath,
     projection,
     projecting,
+    applying,
     error,
     ready,
     detached,
@@ -204,6 +241,8 @@ export const useFormViewStore = defineStore("formView", () => {
     loadFormats,
     reloadRules,
     project,
+    loadLinkedSection,
+    applyEdits,
     initFromSession,
     openInWindow,
     refreshWindowOpen,

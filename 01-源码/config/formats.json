@@ -15,7 +15,7 @@
       "files": [
         "etc/independent_drop.etc"
       ],
-      "notes": "第 3 列（掉落物品）仅在掉落方式 = 0 时有效；= 1 时改看 [list] 内联候选，= 2 时 [list] 内是外部文件编号（etc/independentdrop.lst）。掉落方式 = 1 / 2 时本行与**紧跟其后的 [list]** 建立关联（links），界面上双击「掉落方式」格即可查看那份列表。",
+      "notes": "第 3 列（掉落物品）仅在掉落方式 = 0 时有效；= 1 时改看 [list] 内联候选，= 2 时 [list] 内是外部文件编号。掉落方式 = 1 / 2 时本行与**紧跟其后的 [list]** 建立关联（links），界面上双击「掉落方式」格即可查看那份列表。【2026-10-03 实测】本客户端（110 版）etc/independent_drop.etc 共 1834 行：掉落方式 = 0 有 971 行、= 1 有 854 行、= 5 有 9 行（规则未定义该取值，界面按原样显示原值）；**没有任何 = 2 的行**，且 etc/independentdrop/ 目录下的 .etc 全是 0 字节空文件、也不存在 independentdrop.lst —— 即\"外部文件\"这一层在当前客户端没有数据可跟，故未实现跨文件解析。",
       "sections": [
         {
           "section": "independent drop",
@@ -55,6 +55,7 @@
           "label": "掉落候选（物品 / 权重）",
           "kind": "table",
           "rowTokens": 2,
+          "maxOccurrences": 2000,
           "columns": [
             { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
             { "label": "权重", "type": "int" }

@@ -18,12 +18,24 @@
  *
  * 本组件**只读**：不写回任何字节，也不改文档。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { NButton, NEmpty, NInput, NModal, NSelect, NSpin, NTag } from "naive-ui";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import {
+  NButton,
+  NEmpty,
+  NInput,
+  NModal,
+  NSelect,
+  NSpin,
+  NTag,
+  useMessage,
+} from "naive-ui";
+import { useEditorStore } from "../stores/editor";
 import { useFormViewStore } from "../stores/formView";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
 
 const formView = useFormViewStore();
+const editor = useEditorStore();
+const message = useMessage();
 
 /** 主表分页大小（一次渲染上万行会拖慢界面）。 */
 const pageSize = 200;
@@ -116,44 +128,148 @@ function sectionTitle(section: FormViewSection): string {
   return `${section.label || section.section}${suffix}`;
 }
 
-// ---- 行 → 关联段（双击查看） ----
-
-const viewerVisible = ref(false);
-const viewerTitle = ref("");
-const viewerSection = ref<FormViewSection | null>(null);
-
 /** 该格是否是「触发关联」的列（规则里的 link.column）。 */
 function isLinkCell(row: FormViewRow, index: number): boolean {
   return !!row.link && row.link.column === index;
 }
 
+/** 名称解析结果（ref 列才有）。 */
+function cellName(row: FormViewRow, index: number): string {
+  return row.cells[index]?.name ?? "";
+}
+
 function cellTitle(row: FormViewRow, index: number): string {
   const raw = row.cells[index]?.value ?? "";
+  const name = cellName(row, index);
   if (isLinkCell(row, index) && row.link) {
-    const name = row.link.title || row.link.targetSection;
-    return `双击查看关联的「${name}」（第 ${row.link.occurrence} 处）\n原值: ${raw}`;
+    const target = row.link.title || row.link.targetSection;
+    return `双击查看关联的「${target}」（第 ${row.link.occurrence} 处）\n原值: ${raw}`;
   }
-  return `原值: ${raw}`;
+  if (name !== "") {
+    return `${name}\n编号: ${raw}\n双击可改（改的是归档内存，点主工具条「保存 PVF」落盘）`;
+  }
+  return `原值: ${raw}\n双击可改（改的是归档内存，点主工具条「保存 PVF」落盘）`;
 }
 
-/** 打开关联段：按「段名 + 出现序号」在同名段里定位那一次出现。 */
-function openLink(row: FormViewRow): void {
+// ---- 行 → 关联段（双击查看） ----
+
+const viewerVisible = ref(false);
+const viewerLoading = ref(false);
+const viewerTitle = ref("");
+const viewerSection = ref<FormViewSection | null>(null);
+const viewerError = ref("");
+
+/**
+ * 打开关联段。
+ *
+ * 被行关联认领的段**不在主投影里**（一个文件有 862 次 [list]，全带上会让 payload 膨胀），
+ * 所以这里按「段名 + 出现序号」向服务端单独取那一次出现。
+ */
+async function openLink(row: FormViewRow): Promise<void> {
   const link = row.link;
   if (!link) return;
-  const target = (formView.projection?.sections ?? []).find(
-    (item) =>
-      item.section.toLowerCase() === link.targetSection.toLowerCase() &&
-      item.occurrence === link.occurrence
-  );
   const name = link.title || link.targetSection;
   viewerTitle.value = `${name} · [${link.targetSection}] 第 ${link.occurrence} 处`;
-  viewerSection.value = target ?? null;
+  viewerSection.value = null;
+  viewerError.value = "";
   viewerVisible.value = true;
+  viewerLoading.value = true;
+  try {
+    viewerSection.value = await formView.loadLinkedSection(
+      link.targetSection,
+      link.occurrence
+    );
+  } catch (issue: any) {
+    viewerError.value = String(issue?.message ?? issue);
+  } finally {
+    viewerLoading.value = false;
+  }
 }
 
-function onCellDblClick(row: FormViewRow, index: number): void {
-  if (!isLinkCell(row, index)) return;
-  openLink(row);
+// ---- 单元格编辑（双击改值） ----
+
+type EditState = { row: number; column: number; label: string };
+
+const editing = ref<EditState | null>(null);
+/** 正在编辑的文本（单独一个 ref，模板里就不必对 editing 判空）。 */
+const editText = ref("");
+/** 本次会话改过多少格（未落盘）。 */
+const editedCount = ref(0);
+
+function normalizePath(value: string): string {
+  return (value ?? "").replace(/\\/g, "/").trim().toLowerCase();
+}
+
+/**
+ * 该文件是否正在编辑区打开。
+ *
+ * 开着就不让在这里改：编辑区标签页自己持有一份文本副本，两处同时改同一份文件
+ * 会出现"这边改完、那边保存时把它覆盖回去"。宁可拦住，也不制造这种事故。
+ */
+function fileOpenInEditor(): boolean {
+  const want = normalizePath(formView.filePath);
+  if (want === "") return false;
+  return editor.tabs.some((tab) => normalizePath(tab.path ?? "") === want);
+}
+
+function startEdit(row: FormViewRow, index: number, section: FormViewSection): void {
+  const cell = row.cells[index];
+  if (!cell) return;
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再回来改（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  editText.value = cell.value;
+  editing.value = {
+    row: row.index,
+    column: index,
+    label: section.columns[index] ?? "",
+  };
+  void nextTick();
+}
+
+function cancelEdit(): void {
+  editing.value = null;
+}
+
+async function commitEdit(): Promise<void> {
+  const state = editing.value;
+  const section = mainSection.value;
+  if (!state || !section) return;
+  const value = editText.value.trim();
+  const original = section.rows[state.row]?.cells[state.column]?.value ?? "";
+  if (value === original) {
+    editing.value = null;
+    return;
+  }
+  try {
+    await formView.applyEdits([
+      {
+        section: section.section,
+        occurrence: section.occurrence,
+        row: state.row,
+        column: state.column,
+        value,
+      },
+    ]);
+    editing.value = null;
+    editedCount.value += 1;
+    message.success(
+      `已改「${state.label}」为 ${value}（归档内存已更新，点主工具条「保存 PVF」落盘）`
+    );
+  } catch (issue: any) {
+    message.error(String(issue?.message ?? issue));
+  }
+}
+
+function onCellDblClick(row: FormViewRow, index: number, section: FormViewSection): void {
+  if (isLinkCell(row, index)) {
+    void openLink(row);
+    return;
+  }
+  startEdit(row, index, section);
 }
 
 // ---- 列宽左右拉伸 ----
@@ -350,12 +466,38 @@ function resetColumnWidths(): void {
                     :class="{
                       'fv-num': isNumeric(cellText(row, index).raw),
                       'fv-link-cell': isLinkCell(row, index),
+                      'fv-cell-editing':
+                        editing !== null &&
+                        editing.row === row.index &&
+                        editing.column === index,
                     }"
                     :title="cellTitle(row, index)"
-                    @dblclick="onCellDblClick(row, index)"
+                    @dblclick="onCellDblClick(row, index, mainSection)"
                   >
-                    {{ cellText(row, index).text }}
-                    <span v-if="isLinkCell(row, index)" class="fv-link-badge">🔗</span>
+                    <NInput
+                      v-if="
+                        editing !== null &&
+                        editing.row === row.index &&
+                        editing.column === index
+                      "
+                      v-model:value="editText"
+                      size="tiny"
+                      autofocus
+                      class="fv-edit-input"
+                      @keyup.enter="commitEdit()"
+                      @keyup.esc="cancelEdit()"
+                      @blur="cancelEdit()"
+                    />
+                    <template v-else>
+                      <span v-if="cellName(row, index)" class="fv-name">
+                        {{ cellName(row, index) }}
+                      </span>
+                      <span v-else>{{ cellText(row, index).text }}</span>
+                      <span v-if="cellName(row, index)" class="fv-id">
+                        {{ cellText(row, index).text }}
+                      </span>
+                      <span v-if="isLinkCell(row, index)" class="fv-link-badge">🔗</span>
+                    </template>
                   </td>
                 </tr>
               </tbody>
@@ -424,13 +566,21 @@ function resetColumnWidths(): void {
     <footer v-if="formView.projection && mainSection" class="fv-foot">
       <span class="fv-foot-info">
         共 {{ mainSection.rows.length }} 行 · 每页 {{ pageSize }} 行
+        <template v-if="formView.projection?.linkedTargets">
+          · 已关联 {{ formView.projection?.linkedTargets }} 段（双击带 🔗 的格查看）
+        </template>
       </span>
       <div class="fv-pager" v-if="pageCount > 1">
         <NButton size="tiny" :disabled="page <= 1" @click="page -= 1">上一页</NButton>
         <span class="fv-pager-text">{{ page }} / {{ pageCount }}</span>
         <NButton size="tiny" :disabled="page >= pageCount" @click="page += 1">下一页</NButton>
       </div>
-      <span class="fv-foot-hint">窗口可左右拉伸</span>
+      <span class="fv-foot-hint">
+        <template v-if="editedCount > 0">
+          已改 {{ editedCount }} 格 · 未落盘（点主工具条「保存 PVF」）
+        </template>
+        <template v-else>窗口可左右拉伸 · 双击格子可改值</template>
+      </span>
     </footer>
 
     <!-- ⑥ 关联段查看器（只读） -->
@@ -442,41 +592,50 @@ function resetColumnWidths(): void {
       :bordered="false"
       size="small"
     >
-      <div v-if="viewerSection" class="fv-viewer">
-        <div class="fv-viewer-meta">
-          段 [{{ viewerSection.section }}] · 第 {{ viewerSection.occurrence }} 处 ·
-          {{ viewerSection.rows.length }} 行 × {{ viewerSection.columns.length }} 列
+      <NSpin :show="viewerLoading">
+        <div v-if="viewerError" class="fv-error">{{ viewerError }}</div>
+        <div v-else-if="viewerSection" class="fv-viewer">
+          <div class="fv-viewer-meta">
+            段 [{{ viewerSection.section }}] · 第 {{ viewerSection.occurrence }} 处 ·
+            {{ viewerSection.rows.length }} 行 × {{ viewerSection.columns.length }} 列
+          </div>
+          <div class="fv-viewer-table">
+            <table class="fv-table">
+              <thead>
+                <tr>
+                  <th class="fv-th-index">#</th>
+                  <th v-for="(column, index) in viewerSection.columns" :key="index">
+                    {{ column }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in viewerSection.rows" :key="row.index">
+                  <td class="fv-td-index">{{ row.index + 1 }}</td>
+                  <td
+                    v-for="(_, index) in viewerSection.columns"
+                    :key="index"
+                    :class="{ 'fv-num': isNumeric(cellText(row, index).raw) }"
+                    :title="cellTitle(row, index)"
+                  >
+                    <span v-if="cellName(row, index)" class="fv-name">
+                      {{ cellName(row, index) }}
+                    </span>
+                    <span v-else>{{ cellText(row, index).text }}</span>
+                    <span v-if="cellName(row, index)" class="fv-id">
+                      {{ cellText(row, index).text }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="fv-viewer-hint">
+            只读查看。候选列表（物品 / 权重）的修改请到「归档编辑」里改这个文件的原文。
+          </div>
         </div>
-        <div class="fv-viewer-table">
-          <table class="fv-table">
-            <thead>
-              <tr>
-                <th class="fv-th-index">#</th>
-                <th v-for="(column, index) in viewerSection.columns" :key="index">
-                  {{ column }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in viewerSection.rows" :key="row.index">
-                <td class="fv-td-index">{{ row.index + 1 }}</td>
-                <td
-                  v-for="(_, index) in viewerSection.columns"
-                  :key="index"
-                  :class="{ 'fv-num': isNumeric(cellText(row, index).raw) }"
-                  :title="'原值: ' + cellText(row, index).raw"
-                >
-                  {{ cellText(row, index).text }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="fv-viewer-hint">
-          只读查看。要改内容请到「归档编辑」里改这个文件的原文。
-        </div>
-      </div>
-      <NEmpty v-else description="找不到被引用的段" />
+        <NEmpty v-else description="正在取这一段的投影…" />
+      </NSpin>
     </NModal>
   </div>
 </template>
@@ -744,6 +903,33 @@ function resetColumnWidths(): void {
   font-size: 9px;
   margin-left: 3px;
   opacity: 0.75;
+}
+
+/* ref 列解析出的名称：名称在前、编号在后（编号淡一点，便于对照） */
+.fv-name {
+  color: var(--pvf-text-primary);
+}
+
+.fv-id {
+  margin-left: 5px;
+  font-size: 10px;
+  color: var(--pvf-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 正在编辑的格 */
+.fv-cell-editing {
+  padding: 1px 3px;
+}
+
+.fv-edit-input {
+  width: 100%;
+  min-width: 72px;
+}
+
+.fv-edit-input :deep(.n-input__input-el) {
+  font-size: 11px;
+  padding: 0 4px;
 }
 
 .fv-table--compact th,

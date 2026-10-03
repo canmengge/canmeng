@@ -70,26 +70,26 @@ func TestProjectRealIndependentDropHead(t *testing.T) {
 		t.Fatal("内置规则里找不到 independent_drop")
 	}
 
-	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(realIndependentDropHead))
+	view := pvf.ParseScriptView(realIndependentDropHead)
+	projection := Project("etc/independent_drop.etc", format, view)
 
 	if projection.TokenCount != 19 {
 		t.Fatalf("token 总数 = %d，期望 19（17 + 2）", projection.TokenCount)
 	}
 
-	var drop, list *ProjectedSection
+	var drop *ProjectedSection
 	for i := range projection.Sections {
-		switch {
-		case strings.EqualFold(projection.Sections[i].Section, "independent drop"):
+		if strings.EqualFold(projection.Sections[i].Section, "independent drop") {
 			drop = &projection.Sections[i]
-		case strings.EqualFold(projection.Sections[i].Section, "list"):
-			list = &projection.Sections[i]
 		}
 	}
 	if drop == nil {
 		t.Fatal("没有投影出 [independent drop] 段")
 	}
+	// [list] 已被行关联认领、从输出里移除，改为按需取（与界面双击同一路径）。
+	list := ProjectSection(format, view, "list", 1)
 	if list == nil {
-		t.Fatal("没有投影出 [list] 段")
+		t.Fatal("ProjectSection 取不到 [list] 第 1 次出现")
 	}
 
 	// 独立掉落：1 行、17 格、完整。
@@ -238,9 +238,10 @@ const linkedIndependentDrop = "[independent drop]\r\n" +
 // 紧跟其后的 [list]。
 func TestProjectLinksInlineList(t *testing.T) {
 	format := mustFormat(t, "independent_drop")
-	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(realIndependentDropHead))
+	view := pvf.ParseScriptView(realIndependentDropHead)
+	projection := Project("etc/independent_drop.etc", format, view)
 
-	drop, list := findSections(t, projection)
+	drop := mustSection(t, projection, "independent drop")
 	if len(drop.Rows) != 1 {
 		t.Fatalf("独立掉落有 %d 行，期望 1 行", len(drop.Rows))
 	}
@@ -257,8 +258,27 @@ func TestProjectLinksInlineList(t *testing.T) {
 	if link.Title != "掉落候选" {
 		t.Errorf("link.Title = %q，期望 %q", link.Title, "掉落候选")
 	}
-	if len(list.Rows) != 1 || list.Occurrence != 1 {
-		t.Fatalf("[list] 应当出现 1 次且 1 行，实际 %d 次 / %d 行", list.Occurrence, len(list.Rows))
+
+	// 被认领的目标段要从输出里移除（体积），改由 ProjectSection 按需取。
+	if projection.LinkedTargets != 1 {
+		t.Errorf("LinkedTargets = %d，期望 1", projection.LinkedTargets)
+	}
+	assertNoSection(t, projection, "list")
+
+	list := ProjectSection(format, view, "list", 1)
+	if list == nil {
+		t.Fatal("ProjectSection 取不到 [list] 第 1 次出现")
+	}
+	if len(list.Rows) != 1 || len(list.Rows[0].Cells) != 2 {
+		t.Fatalf("[list] 期望 1 行 2 格，实际 %d 行", len(list.Rows))
+	}
+	if list.Rows[0].Cells[0].Value != "14400" || list.Rows[0].Cells[1].Value != "1000" {
+		t.Errorf("[list] 第 1 行 = %q / %q，期望 14400 / 1000",
+			list.Rows[0].Cells[0].Value, list.Rows[0].Cells[1].Value)
+	}
+	// 超范围的出现序号返回 nil，不 panic。
+	if ProjectSection(format, view, "list", 99) != nil {
+		t.Error("ProjectSection 取不存在的出现序号应当返回 nil")
 	}
 }
 
@@ -266,14 +286,12 @@ func TestProjectLinksInlineList(t *testing.T) {
 // 不该抢占列表，第 3 行要配到第 2 个 [list]。
 func TestProjectLinksPairsByOffset(t *testing.T) {
 	format := mustFormat(t, "independent_drop")
-	projection := Project("etc/independent_drop.etc", format, pvf.ParseScriptView(linkedIndependentDrop))
+	view := pvf.ParseScriptView(linkedIndependentDrop)
+	projection := Project("etc/independent_drop.etc", format, view)
 
-	drop, list := findSections(t, projection)
+	drop := mustSection(t, projection, "independent drop")
 	if len(drop.Rows) != 3 {
 		t.Fatalf("独立掉落有 %d 行，期望 3 行", len(drop.Rows))
-	}
-	if list.Occurrence != 1 {
-		t.Errorf("[list] 段应当只在此断言第一次出现，实际 Occurrence = %d", list.Occurrence)
 	}
 
 	if row := drop.Rows[0]; row.Link == nil || row.Link.Occurrence != 1 {
@@ -286,15 +304,19 @@ func TestProjectLinksPairsByOffset(t *testing.T) {
 		t.Errorf("第 3 行（内联）应关联 list #2，实际 %+v", row.Link)
 	}
 
-	// 两个 [list] 各自成段，序号为 1 / 2。
-	occurrences := make([]int, 0, 2)
-	for i := range projection.Sections {
-		if strings.EqualFold(projection.Sections[i].Section, "list") {
-			occurrences = append(occurrences, projection.Sections[i].Occurrence)
-		}
+	// 两个 [list] 都被认领 → 都从输出里移除，但按序号仍能按需取到各自内容。
+	if projection.LinkedTargets != 2 {
+		t.Errorf("LinkedTargets = %d，期望 2", projection.LinkedTargets)
 	}
-	if len(occurrences) != 2 || occurrences[0] != 1 || occurrences[1] != 2 {
-		t.Errorf("[list] 出现序号 = %v，期望 [1 2]", occurrences)
+	assertNoSection(t, projection, "list")
+
+	first := ProjectSection(format, view, "list", 1)
+	second := ProjectSection(format, view, "list", 2)
+	if first == nil || len(first.Rows) == 0 || first.Rows[0].Cells[0].Value != "14400" {
+		t.Errorf("list #1 期望首格 14400，实际 %+v", first)
+	}
+	if second == nil || len(second.Rows) == 0 || second.Rows[0].Cells[0].Value != "25500" {
+		t.Errorf("list #2 期望首格 25500，实际 %+v", second)
 	}
 	if len(projection.Warnings) != 0 {
 		t.Errorf("本片段不含未定义段，不该有告警，实际: %v", projection.Warnings)
@@ -378,6 +400,48 @@ func TestValidateRejectsBadLinks(t *testing.T) {
 	}
 }
 
+// TestProjectHonoursMaxOccurrences 保证规则里的 maxOccurrences 能放宽段出现上限。
+//
+// 回归背景（2026-10-03 实测）：etc/independent_drop.etc 的 [list] 出现 **862 次**，
+// 而默认上限 50 会让 854 个「内联列表」行里只有 50 个能双击查看 —— 那正是用户报的
+// "内联列表打不开"的根因。
+func TestProjectHonoursMaxOccurrences(t *testing.T) {
+	rule := `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+	          {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],"maxOccurrences":2}]}]}`
+	catalog, err := Parse([]byte(rule))
+	if err != nil {
+		t.Fatalf("规则解析失败: %v", err)
+	}
+	format, _ := catalog.Lookup("x")
+
+	text := "[s]\r\n\t1\r\n\t[/s]\r\n\t[s]\r\n\t2\r\n\t[/s]\r\n\t[s]\r\n\t3\r\n\t[/s]\r\n"
+	projection := Project("a.etc", format, pvf.ParseScriptView(text))
+
+	if len(projection.Sections) != 2 {
+		t.Fatalf("maxOccurrences=2 时应当只投影 2 次出现，实际 %d", len(projection.Sections))
+	}
+	found := false
+	for _, warning := range projection.Warnings {
+		if strings.Contains(warning, "只投影前 2 次") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("应当告警「只投影前 2 次」，实际: %v", projection.Warnings)
+	}
+}
+
+// TestValidateRejectsNegativeMaxOccurrences 保证上限写负数被拦下。
+func TestValidateRejectsNegativeMaxOccurrences(t *testing.T) {
+	data := `{"version":1,"formats":[{"id":"x","label":"X","files":["a.etc"],"sections":[
+	         {"section":"s","label":"S","rowTokens":1,"columns":[{"label":"A"}],"maxOccurrences":-1}]}]}`
+	if _, err := Parse([]byte(data)); err == nil {
+		t.Fatal("maxOccurrences 为负应当校验失败")
+	} else if !strings.Contains(err.Error(), "maxOccurrences") {
+		t.Errorf("错误信息应提到 maxOccurrences，实际: %v", err)
+	}
+}
+
 // mustFormat 取出内置规则里的某个文件族。
 func mustFormat(t *testing.T, id string) Format {
 	t.Helper()
@@ -392,26 +456,25 @@ func mustFormat(t *testing.T, id string) Format {
 	return format
 }
 
-// findSections 找出独立掉落片段里的 drop 与 list 段（第一次出现）。
-func findSections(t *testing.T, projection *Projection) (drop, list *ProjectedSection) {
+// mustSection 取出某个段第一次出现（不存在直接失败）。
+func mustSection(t *testing.T, projection *Projection, name string) *ProjectedSection {
 	t.Helper()
 	for i := range projection.Sections {
-		switch {
-		case strings.EqualFold(projection.Sections[i].Section, "independent drop"):
-			if drop == nil {
-				drop = &projection.Sections[i]
-			}
-		case strings.EqualFold(projection.Sections[i].Section, "list"):
-			if list == nil {
-				list = &projection.Sections[i]
-			}
+		if strings.EqualFold(projection.Sections[i].Section, name) {
+			return &projection.Sections[i]
 		}
 	}
-	if drop == nil {
-		t.Fatal("没有投影出 [independent drop] 段")
+	t.Fatalf("没有投影出 [%s] 段", name)
+	return nil
+}
+
+// assertNoSection 断言某个段没有出现在输出里（被认领的目标段应当被移除）。
+func assertNoSection(t *testing.T, projection *Projection, name string) {
+	t.Helper()
+	for i := range projection.Sections {
+		if strings.EqualFold(projection.Sections[i].Section, name) {
+			t.Errorf("段 [%s] #%d 不该留在输出里（应已随关联移除）",
+				name, projection.Sections[i].Occurrence)
+		}
 	}
-	if list == nil {
-		t.Fatal("没有投影出 [list] 段")
-	}
-	return drop, list
 }
