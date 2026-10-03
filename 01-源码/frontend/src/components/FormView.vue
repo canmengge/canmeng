@@ -34,6 +34,7 @@ import {
   DeleteDropCandidate,
   DeleteIndependentDrop,
   ResolveRefNames,
+  type FormViewDropEntry,
   type FormViewDropItem,
 } from "../services/formViewApi";
 import {
@@ -156,6 +157,9 @@ const ruleLines = computed(() => {
     parts: ruleLineParts(line, query),
   }));
 });
+
+/** 面板顶部显示的行数 / 命中行数（模板里要显示，必须单独算出来）。 */
+const ruleLineCount = computed(() => ruleLines.value.length);
 
 /** 主表 = 行数最多的那一段（通常是主配置表，如「掉落配置行」）。 */
 const mainSection = computed<FormViewSection | null>(() => {
@@ -1051,6 +1055,28 @@ const dropAdding = ref(false);
 const dropIsAPC = ref(false);
 const dropMonsterId = ref("");
 const dropUseList = ref(false);
+
+/**
+ * 下拉框的取值适配层。
+ *
+ * naive-ui 的 `NSelect` 的 value **只接受字符串 / 数字**，塞布尔值过不了 `vue-tsc`
+ * （2026-10-03 生产构建抓到：`Type 'boolean' is not assignable to type 'Value | null'`）。
+ * 逻辑内部仍用布尔（`dropIsAPC` / `dropUseList`，v-if 与提交都用它），
+ * 只在界面上映射成字符串，两边互不污染。
+ */
+const dropKindOption = computed({
+  get: () => (dropIsAPC.value ? "apc" : "monster"),
+  set: (value: string) => {
+    dropIsAPC.value = value === "apc";
+  },
+});
+
+const dropItemModeOption = computed({
+  get: () => (dropUseList.value ? "list" : "single"),
+  set: (value: string) => {
+    dropUseList.value = value === "list";
+  },
+});
 const dropItemId = ref("");
 const dropItems = ref<FormViewDropItem[]>([{ itemId: "", weight: "1000" }]);
 const dropRates = ref<string[]>(["100", "100", "100", "100", "100"]);
@@ -2089,10 +2115,10 @@ function resetColumnWidths(): void {
         <div class="fv-drop-row">
           <span class="fv-drop-label">类型</span>
           <NSelect
-            v-model:value="dropIsAPC"
+            v-model:value="dropKindOption"
             :options="[
-              { label: '怪物', value: false },
-              { label: 'APC', value: true },
+              { label: '怪物', value: 'monster' },
+              { label: 'APC', value: 'apc' },
             ]"
             size="small"
             class="fv-drop-small"
@@ -2125,10 +2151,10 @@ function resetColumnWidths(): void {
         <div class="fv-drop-row">
           <span class="fv-drop-label">掉落物品</span>
           <NSelect
-            v-model:value="dropUseList"
+            v-model:value="dropItemModeOption"
             :options="[
-              { label: '单一物品', value: false },
-              { label: '掉落物列表（内联）', value: true },
+              { label: '单一物品', value: 'single' },
+              { label: '掉落物列表（内联）', value: 'list' },
             ]"
             size="small"
             class="fv-drop-way"
