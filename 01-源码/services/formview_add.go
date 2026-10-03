@@ -106,6 +106,11 @@ func (s *FormViewService) AddIndependentDrop(
 	if err != nil {
 		return nil, err
 	}
+	// 行缩进**照抄紧邻上一行**：真实归档里首行 1 个制表符、其余行 2 个（手写文件并不统一），
+	// 只有"跟邻居一致"才算真的格式一致（用户 2026-10-03：格式是红线）。
+	if indent := previousLineIndent(text, insertAt); indent != dropRowIndent {
+		rowText = indent + strings.TrimPrefix(rowText, dropRowIndent)
+	}
 	updatedText := text[:insertAt] + rowText + text[insertAt:]
 
 	// 校验：重新投影，确认**新追加的那一行**每一格都等于期望值。
@@ -117,7 +122,13 @@ func (s *FormViewService) AddIndependentDrop(
 	if len(projected.Rows) == 0 {
 		return nil, fmt.Errorf("追加后重新投影失败：段 [%s] 没有任何行", dropSectionName)
 	}
-	want := strings.Split(strings.TrimSpace(strings.Trim(rowText, "\r\n")), "\t")
+	// 只比对**数据行**：rowText 后面可能还紧跟 [list] 块，整段切分会把 "list" 也当成一列
+	// （2026-10-03 实测报过"第 18 列缺失（期望 list）"）。
+	rowLine := rowText
+	if cut := strings.Index(rowLine, "\r\n"); cut >= 0 {
+		rowLine = rowLine[:cut]
+	}
+	want := strings.Split(strings.TrimSpace(rowLine), "\t")
 	got := projected.Rows[len(projected.Rows)-1].Cells
 	for i := 0; i < len(want); i++ {
 		if i >= len(got) {
@@ -274,6 +285,22 @@ func requireUnsignedInt(label, value string) (string, error) {
 		return "", fmt.Errorf("%s 必须是非负整数: %q", label, value)
 	}
 	return strconv.FormatInt(parsed, 10), nil
+}
+
+// previousLineIndent 取插入点**上一行**的行首空白（用于照抄邻居的缩进）。
+func previousLineIndent(text string, offset int) string {
+	if offset > len(text) {
+		offset = len(text)
+	}
+	head := strings.TrimRight(text[:offset], "\r\n")
+	if cut := strings.LastIndexAny(head, "\r\n"); cut >= 0 {
+		head = head[cut+1:]
+	}
+	indent := head[:len(head)-len(strings.TrimLeft(head, " \t"))]
+	if indent == "" {
+		return dropRowIndent
+	}
+	return indent
 }
 
 // lastSectionCloseOffset 返回**最后一个** `[/section]` 所在行的起始偏移

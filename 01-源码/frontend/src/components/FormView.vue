@@ -731,10 +731,15 @@ function columnIndexOfRef(section: FormViewSection | null, want: string): number
   return -1;
 }
 
-/** 表单里填的怪物ID / 物品ID 也实时解析中文名（复用同一个解析 + 缓存）。 */
-const dropMonsterName = computed(() =>
-  draftName(mainSection.value, columnIndexOfRef(mainSection.value, "monster"), dropMonsterId.value)
-);
+/**
+ * 表单里填的怪物ID / 物品ID 也实时解析中文名（复用同一个解析 + 缓存）。
+ *
+ * 都用**普通函数**而不是 computed：名字是异步取回的，computed 在首次求值时会
+ * 把空结果缓存住（用户 2026-10-03 实测：物品ID 能出名字、怪物ID 不出）。
+ */
+function dropMonsterName(id: string): string {
+  return draftName(mainSection.value, columnIndexOfRef(mainSection.value, "monster"), id);
+}
 
 function dropItemName(id: string): string {
   const section = mainSection.value;
@@ -1576,7 +1581,9 @@ function resetColumnWidths(): void {
             placeholder="必填，如 20"
             class="fv-drop-id"
           />
-          <span v-if="dropMonsterName" class="fv-drop-name">{{ dropMonsterName }}</span>
+          <span v-if="dropMonsterName(dropMonsterId)" class="fv-drop-name">
+            {{ dropMonsterName(dropMonsterId) }}
+          </span>
         </div>
 
         <div class="fv-drop-row">
