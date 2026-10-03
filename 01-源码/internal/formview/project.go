@@ -34,6 +34,8 @@ type Cell struct {
 type RowLink struct {
 	// Column 是触发链接的列下标（0 基），即规则里 Link.Column。
 	Column int `json:"column"`
+	// DisplayColumn 是界面上**显示关联内容并可双击打开**的列（规则未指定时同 Column）。
+	DisplayColumn int `json:"displayColumn"`
 	// TargetSection 是被引用段的段名。
 	TargetSection string `json:"targetSection"`
 	// Occurrence 是被引用段在本文件里的第几次出现（1 基），与
@@ -298,8 +300,13 @@ func resolveLinks(projection *Projection, format Format) {
 						continue
 					}
 					target := &projection.Sections[claimed.sectionIndex]
+					display := link.Column
+					if link.DisplayColumn != nil {
+						display = *link.DisplayColumn
+					}
 					row.Link = &RowLink{
 						Column:        link.Column,
+						DisplayColumn: display,
 						TargetSection: target.Section,
 						Occurrence:    target.Occurrence,
 						Title:         strings.TrimSpace(link.Title),

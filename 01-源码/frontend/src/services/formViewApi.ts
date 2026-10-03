@@ -61,6 +61,11 @@ export interface FormViewCell {
 export interface FormViewRowLink {
   /** 触发链接的列下标（0 基）。 */
   column: number;
+  /**
+   * 界面上**显示关联内容并可双击打开**的列（规则未指定时同 column）。
+   * 例：独立掉落的触发列是「掉落方式」，但「内联列表」显示在「掉落物品」列上。
+   */
+  displayColumn: number;
   /** 被引用段的段名。 */
   targetSection: string;
   /** 被引用段在本文件里的第几次出现（1 基），与 FormViewSection.occurrence 对应。 */

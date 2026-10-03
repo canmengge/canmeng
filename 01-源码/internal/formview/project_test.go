@@ -255,6 +255,11 @@ func TestProjectLinksInlineList(t *testing.T) {
 	if link.Column != 16 {
 		t.Errorf("link.Column = %d，期望 16（掉落方式列）", link.Column)
 	}
+	// 交互落在「掉落物品」列（规则里的 displayColumn=2），触发列只当标签 ——
+	// 内联列表时那一列原本显示的是无意义的 0（被解析成「金币 0」）。
+	if link.DisplayColumn != 2 {
+		t.Errorf("link.DisplayColumn = %d，期望 2（掉落物品列）", link.DisplayColumn)
+	}
 	if link.Title != "掉落候选" {
 		t.Errorf("link.Title = %q，期望 %q", link.Title, "掉落候选")
 	}

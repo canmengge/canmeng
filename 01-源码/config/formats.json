@@ -25,6 +25,7 @@
           "links": [
             {
               "column": 16,
+              "displayColumn": 2,
               "when": ["1", "2"],
               "targetSection": "list",
               "title": "掉落候选"

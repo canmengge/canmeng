@@ -146,9 +146,25 @@ function sectionTitle(section: FormViewSection): string {
   return `${section.label || section.section}${suffix}`;
 }
 
-/** 该格是否是「触发关联」的列（规则里的 link.column）。 */
+/**
+ * 该格是否是「显示关联内容并可双击打开」的格（规则里的 displayColumn）。
+ *
+ * 交互落在**显示列**（如「掉落物品」）上；**触发列**（如「掉落方式」）只当普通标签 ——
+ * 2026-10-03 用户要求：内联列表时，掉落物品列不该显示那个无意义的「金币 0」。
+ */
 function isLinkCell(row: FormViewRow, index: number): boolean {
-  return !!row.link && row.link.column === index;
+  return !!row.link && row.link.displayColumn === index;
+}
+
+/**
+ * 关联行在显示列上要写的文字：取**触发列**的可读文本（「内联列表」/「外部文件」）。
+ */
+function linkCellText(row: FormViewRow, index: number): string {
+  const link = row.link;
+  if (!link || link.displayColumn !== index) return "";
+  const trigger = row.cells[link.column];
+  if (!trigger) return "";
+  return trigger.display && trigger.display !== "" ? trigger.display : trigger.value;
 }
 
 /** 名称解析结果（ref 列才有）。 */
@@ -161,7 +177,7 @@ function cellTitle(row: FormViewRow, index: number): string {
   const name = cellName(row, index);
   if (isLinkCell(row, index) && row.link) {
     const target = row.link.title || row.link.targetSection;
-    return `双击查看关联的「${target}」（第 ${row.link.occurrence} 处）\n原值: ${raw}`;
+    return `这一行是「${linkCellText(row, index)}」：双击查看关联的「${target}」（第 ${row.link.occurrence} 处）`;
   }
   if (name !== "") {
     return `${name}\n编号: ${raw}\n双击可改（改的是归档内存，点主工具条「保存 PVF」落盘）`;
@@ -534,16 +550,20 @@ function resetColumnWidths(): void {
                       v-else
                       class="fv-cell"
                       :style="cellStyle(mainSection, index)"
-                      :title="cellText(row, index).text"
                     >
-                      <span v-if="cellName(row, index)" class="fv-name">
-                        {{ cellName(row, index) }}
-                      </span>
-                      <span v-else>{{ cellText(row, index).text }}</span>
-                      <span v-if="cellName(row, index)" class="fv-id">
-                        {{ cellText(row, index).text }}
-                      </span>
-                      <span v-if="isLinkCell(row, index)" class="fv-link-badge">🔗</span>
+                      <template v-if="isLinkCell(row, index)">
+                        {{ linkCellText(row, index) }}
+                        <span class="fv-link-badge">🔗</span>
+                      </template>
+                      <template v-else>
+                        <span v-if="cellName(row, index)" class="fv-name">
+                          {{ cellName(row, index) }}
+                        </span>
+                        <span v-else>{{ cellText(row, index).text }}</span>
+                        <span v-if="cellName(row, index)" class="fv-id">
+                          {{ cellText(row, index).text }}
+                        </span>
+                      </template>
                     </span>
                   </td>
                 </tr>

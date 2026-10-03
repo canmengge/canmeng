@@ -61,6 +61,14 @@ type Link struct {
 	When []string `json:"when"`
 	// TargetSection 是被引用段的段名（如 list），必须在本文件族里定义。
 	TargetSection string `json:"targetSection"`
+	// DisplayColumn 是界面上**显示关联内容并可双击打开**的列下标（0 基）。
+	//
+	// 与 Column 分开的原因（2026-10-03 用户要求）：独立掉落的**触发列**是最后那列
+	// 「掉落方式」，但用户要看的是「掉落物品」列 —— 内联列表时那一列原本显示的
+	// 是无意义的 0（会被解析成「金币 0」）。所以让规则单独指定"显示列"：
+	// 交互落在显示列上，触发列只当普通标签。
+	// 不写（nil）时与 Column 相同。
+	DisplayColumn *int `json:"displayColumn,omitempty"`
 	// Title 是界面上查看器用的标题（如「掉落候选」）。
 	Title string `json:"title,omitempty"`
 }
@@ -345,6 +353,11 @@ func Validate(catalog Catalog) error {
 				}
 				if len(link.When) == 0 {
 					problems = append(problems, linkPrefix+".when 不能为空")
+				}
+				if link.DisplayColumn != nil &&
+					(*link.DisplayColumn < 0 || *link.DisplayColumn >= len(section.Columns)) {
+					problems = append(problems, fmt.Sprintf("%s.displayColumn(%d) 超出列范围 0..%d",
+						linkPrefix, *link.DisplayColumn, len(section.Columns)-1))
 				}
 				if strings.TrimSpace(link.TargetSection) == "" {
 					problems = append(problems, linkPrefix+".targetSection 不能为空")
