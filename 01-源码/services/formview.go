@@ -319,17 +319,6 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 		edit  FormViewCellEdit
 		value string
 	}
-	// 段在本文件里出现多次时（`[list]` 有 862 次），结构化引擎按**段名**匹配会把同名的一起改，
-	// 所以只能改用「按出现序号定位」的文本路径；同一次保存里只要涉及这种段，就整体走文本路径
-	// （两条路都有同一套"改完重新投影逐格校验"的兜底，见 ④）。
-	useTextPath := false
-	for _, edit := range edits {
-		if countSectionOccurrences(view, edit.Section) > 1 {
-			useTextPath = true
-			break
-		}
-	}
-
 	operations := make([]pvf.StructuredBatchOperation, 0, len(edits))
 	occurrenceEdits := make([]occurrenceEdit, 0, len(edits))
 	expected := make([]expectation, 0, len(edits))
@@ -364,7 +353,11 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 			target.Rows[edit.Row].Cells[edit.Column].Value == value {
 			continue // 值没变，不必写
 		}
-		if useTextPath {
+		// **按段分别选路**（2026-10-03 修正）：单次出现的段走结构化引擎；
+		// 只有出现多次的段（内联列表 `[list]` 有 862 次）才走"按出现序号定位"的文本层。
+		// 早先写成"一批里只要有一个多次段就整批走文本层"，结果把主表（1834 行）也塞进
+		// 只数一次出现的扫描，报出"取不到第 20 个"—— 现在各走各的路。
+		if countSectionOccurrences(view, edit.Section) > 1 {
 			occurrenceEdits = append(occurrenceEdits, occurrenceEdit{
 				section:    edit.Section,
 				occurrence: edit.Occurrence,
@@ -386,19 +379,12 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 		return current, nil
 	}
 
-	// ③-a 文本路径：按（段名, 出现序号, token 下标）在文本上替换 —— 完全不动内核
-	// （`internal/pvf/` 是冻结层），也不怕同名段有几百个。
+	// ③-a 单次出现的段：结构化引擎（在克隆上改，不碰内核；UTF-16 / 换行都交给它）。
+	//     没有这类改动时直接用当前文本，交给下面的文本层处理。
 	var updatedText string
-	if useTextPath {
+	if len(operations) == 0 {
 		s.c.mu.RUnlock()
-		next, changed, applyErr := applyOccurrenceEdits(text, occurrenceEdits)
-		if applyErr != nil {
-			return nil, applyErr
-		}
-		if !changed {
-			return nil, fmt.Errorf("改写没有产生任何改动")
-		}
-		updatedText = next
+		updatedText = text
 	} else {
 		raw, err := a.RawBytes(index)
 		if err != nil {
@@ -424,6 +410,18 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 			return nil, fmt.Errorf("读回改写结果失败: %w", err)
 		}
 		updatedText = innerText
+	}
+
+	// ③-b 多次出现的段（内联列表）：在**上面结果的基础上**按出现序号逐个替换 ——
+	//      完全不动内核（`internal/pvf/` 是冻结层），也不怕同名段有几百个。
+	if len(occurrenceEdits) > 0 {
+		next, changed, applyErr := applyOccurrenceEdits(updatedText, occurrenceEdits)
+		if applyErr != nil {
+			return nil, applyErr
+		}
+		if changed {
+			updatedText = next
+		}
 	}
 
 	// ④ 校验：重新投影，逐个确认目标格真的变成了期望值；不符就整体放弃（不写入）。
