@@ -1447,14 +1447,14 @@ function resetColumnWidths(): void {
   gap: 8px;
   padding: 6px 8px;
   margin: 6px 0;
-  border: 1px solid var(--pvf-border, #e0e0e6);
+  border: 1px solid var(--pvf-border-faint);
   border-radius: 6px;
-  background: var(--pvf-surface-2, #fafafc);
+  background: var(--pvf-surface-subtle);
   flex-wrap: wrap;
 }
 
 .fv-tools-label {
-  color: var(--pvf-text-3, #909399);
+  color: var(--pvf-text-muted);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1468,8 +1468,9 @@ function resetColumnWidths(): void {
 }
 
 .fv-tools-hit {
-  color: var(--pvf-primary, #2080f0);
+  color: var(--pvf-text-primary);
   font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -1483,9 +1484,9 @@ function resetColumnWidths(): void {
   gap: 6px;
   padding: 8px;
   margin-bottom: 8px;
-  border: 1px dashed var(--pvf-border, #e0e0e6);
+  border: 1px dashed var(--pvf-border-normal);
   border-radius: 6px;
-  background: var(--pvf-surface-2, #fafafc);
+  background: var(--pvf-surface-subtle);
 }
 
 .fv-batch-row {
@@ -1509,12 +1510,12 @@ function resetColumnWidths(): void {
 
 .fv-batch-count {
   font-size: 12px;
-  color: var(--pvf-text-2, #606266);
+  color: var(--pvf-text-secondary);
 }
 
 .fv-batch-hint {
   font-size: 12px;
-  color: var(--pvf-text-3, #909399);
+  color: var(--pvf-text-muted);
 }
 
 .fv-viewer {
