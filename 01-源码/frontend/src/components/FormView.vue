@@ -717,41 +717,6 @@ const selectedRows = ref<Set<number>>(new Set());
 /** 连选的锚点：上一次不带 Shift 点击的那一行。 */
 const selectAnchor = ref<number | null>(null);
 
-/**
- * 吸顶那块（段标题 + 搜索行 + 操作按钮）的**实时高度**。
- *
- * 用途：表头自己也要吸顶，得知道"上面那块有多高"，才知道自己钉在第几像素
- * （CSS 里读 `--fv-fixed-h`）。用 ResizeObserver 而不是写死数值 —— 换行/缩放/文案变化
- * 都会改变高度，写死就会出现表头被压住或浮一条缝。
- */
-const fixedRef = ref<HTMLElement | null>(null);
-const fixedHeight = ref(0);
-let fixedObserver: ResizeObserver | null = null;
-
-watch(
-  fixedRef,
-  (element) => {
-    fixedObserver?.disconnect();
-    fixedObserver = null;
-    if (!element) {
-      fixedHeight.value = 0;
-      return;
-    }
-    fixedObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) fixedHeight.value = Math.round(entry.contentRect.height);
-    });
-    fixedObserver.observe(element);
-    fixedHeight.value = Math.round(element.getBoundingClientRect().height);
-  },
-  { immediate: true, flush: "post" }
-);
-
-onUnmounted(() => {
-  fixedObserver?.disconnect();
-  fixedObserver = null;
-});
-
 function onRowClick(row: FormViewRow, event: MouseEvent): void {
   const index = row.index;
   if (event.shiftKey && selectAnchor.value !== null) {
@@ -1563,7 +1528,9 @@ function resetColumnWidths(): void {
           <!-- 用户 2026-10-03 指定删除（红框内）：文件族统计行「独立掉落 · … 个 token · N 个段」
                与投影级告警（如「段 [dungeon condition] 未在规则中定义」）。 -->
           <template v-if="mainSection">
-            <div ref="fixedRef" class="fv-fixed">
+            <!-- 固定操作区（不滚动）：段标题 + 搜索行 + 操作按钮；滚动只发生在它下方的
+                 .fv-grid-scroll 里（用户 2026-10-03："滑动浏览要在固定 UI 界面下面"） -->
+            <div class="fv-fixed">
             <div class="fv-section-head">
               <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
               <span class="fv-section-meta">
@@ -1729,9 +1696,11 @@ function resetColumnWidths(): void {
               </div>
             </div>
 
+            <!-- 唯一滚动容器：主表在这里面滚，固定操作区在上面不受影响 -->
+            <div class="fv-grid-scroll">
             <table
               class="fv-table"
-              :style="{ minWidth: 0, '--fv-fixed-h': `${fixedHeight}px` }"
+              :style="{ minWidth: 0 }"
             >
               <colgroup>
                 <col class="fv-col-index" />
@@ -1843,6 +1812,8 @@ function resetColumnWidths(): void {
                 </tr>
               </tbody>
             </table>
+            </div>
+            <!-- /.fv-grid-scroll -->
           </template>
 
           <div v-if="otherSections.length" class="fv-others">
@@ -2370,12 +2341,39 @@ function resetColumnWidths(): void {
   word-break: break-all;
 }
 
-/* ④ 滚动区（唯一的滚动容器） */
+/* ④ 纵向排版容器（**本身不滚动**）
+ *
+ * 用户 2026-10-03 实测：先前用 `position: sticky` 吸顶，滑动时表格行会穿到那块 UI 的
+ * 上/下面去（截图里行压在搜索行上）。sticky 的本质就是"内容从它下面穿过"，做不到
+ * "滚动区在固定 UI 下面"。所以改成结构分离：
+ *   .fv-body（flex 列，overflow:hidden）
+ *     ├─ .fv-fixed        段标题 + 搜索行 + 操作按钮（不滚动）
+ *     └─ .fv-grid-scroll  **唯一滚动容器**（只包住表格）
+ * 这样滚动条与滚动内容都严格在固定 UI 的下方。 */
 .fv-body {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* 让 Naive 的 NSpin 两层容器也参与纵向 flex，固定区与滚动区才能真正分成上下两块 */
+.fv-body > .n-spin-container,
+.fv-body .n-spin-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 唯一滚动容器：只包住主表 */
+.fv-grid-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  padding: 8px 10px 10px;
+  padding: 0 10px 6px;
 }
 
 .fv-stats {
@@ -2412,19 +2410,15 @@ function resetColumnWidths(): void {
 }
 
 /*
- * 段标题 + 搜索行 + 操作按钮**整体吸顶**。
+ * 段标题 + 搜索行 + 操作按钮：**不参与滚动的固定区**（放在滚动容器之外）。
  *
- * 用户 2026-10-03 实测反馈："向下滑动的话，前面的 UI 界面就没有了" —— 这一块
- * （选列/搜索/添加掉落/删除选中/未保存计数/保存改动）必须一直可见，所以
- * 从滚动流里"钉"在滚动区顶部；背景要不透明，否则表格行会从底下透出来。
- * 表头（`thead th`）的 `top` 由脚本量出的 `--fv-fixed-h` 决定，正好叠在这块下面。
+ * 用户 2026-10-03 要求："滑动浏览要在固定 UI 界面下面" —— 所以这里不用 sticky
+ * （那只是"钉在滚动区里"，内容照样从它上/下面穿过），而是作为 `.fv-body` 的
+ * 非滚动子元素，让下面那块 `.fv-grid-scroll` 自己去滚。见 `.fv-body` 的说明。
  */
 .fv-fixed {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  margin: 0 -10px;
-  padding: 4px 10px 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px 8px;
   background: var(--pvf-surface-panel);
   border-bottom: 1px solid var(--pvf-border-faint);
 }
@@ -2488,9 +2482,9 @@ function resetColumnWidths(): void {
 
 .fv-table thead th {
   position: sticky;
-  /* 吸顶的那块（段标题 + 搜索行）有多高，表头就从它下面开始钉 —— 两者叠着显示，
-     都由脚本量出的高度驱动（见 .fv-fixed 说明）。 */
-  top: var(--fv-fixed-h, 0px);
+  /* 表头钉在**表格自己的滚动容器**顶部（.fv-grid-scroll）—— 固定操作区已经是
+     滚动区之外的独立一块，所以这里不需要任何偏移量。 */
+  top: 0;
   z-index: 2;
   background: var(--pvf-surface-elevated);
   color: var(--pvf-text-secondary);
