@@ -46,14 +46,7 @@ const inlineRowLimit = 50;
 /** 列宽：段名 → 各列像素宽（0 表示"自动"）。 */
 const columnWidths = ref<Record<string, number[]>>({});
 
-/**
- * 是否已经拖过列宽。
- *
- * 没拖过 → 用**自动布局**：表格只占内容宽，紧凑、中间不留空白；
- * 拖过之后 → 切**固定布局**：列宽完全按 colgroup 里的像素值，向左向右都拉得动
- * （自动布局下浏览器不允许列窄于内容，所以"向左拉没反应"）。
- */
-const hasColumnWidths = computed(() => Object.keys(columnWidths.value).length > 0);
+
 
 onMounted(() => {
   void formView.loadFormats();
@@ -61,6 +54,19 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopResize();
+});
+
+/**
+ * 规则说明的**折叠文本**。
+ *
+ * 刻意用 JS 截断而不是 CSS `line-clamp`：2026-10-03 事故里发现，前端 JS 已是新版
+ * （状态栏版号对得上）但**样式表的行为没生效**（说明没折叠、表格空白还在）。
+ * 凡是"必须生效"的布局，一律走 JS + 行内样式 —— 那样任何 CSS 缓存都挡不住。
+ */
+const notesBrief = computed(() => {
+  const full = (formView.currentFormat?.notes ?? "").trim();
+  if (full.length <= 110) return full;
+  return `${full.slice(0, 110)}…（悬停看全文）`;
 });
 
 /** 界面标题：文件族名 + 「编辑」（如 独立掉落 → 独立掉落编辑）。 */
@@ -116,6 +122,9 @@ watch(
   () => formView.projection,
   () => {
     page.value = 1;
+    // 每次重新解析都回到"按内容自适应"：避免上一次拖出来的宽度把撑开的空白冻住
+    // （2026-10-03 事故：中间那一片空白一直消不掉）。
+    columnWidths.value = {};
   }
 );
 
@@ -288,7 +297,19 @@ let dragState: DragState | null = null;
 
 function columnStyle(section: FormViewSection, index: number) {
   const width = columnWidths.value[section.section]?.[index] ?? 0;
-  return width > 0 ? { width: `${width}px`, minWidth: `${width}px` } : undefined;
+  return width > 0 ? { width: `${width}px` } : undefined;
+}
+
+/**
+ * 单元格**内容**的行内宽度上限（拖动列宽后才给）。
+ *
+ * 表格保持 `table-layout: auto`（没拖过就是"内容多宽就多宽"，中间不可能留空白）；
+ * 一旦给了这个上限，内容被约束住，列也就跟着变窄 —— **向左拖才真的动得动**，
+ * 而且不会像"切固定布局"那样把已撑开的宽度冻住。
+ */
+function cellStyle(section: FormViewSection, index: number): Record<string, string> | undefined {
+  const width = columnWidths.value[section.section]?.[index] ?? 0;
+  return width > 0 ? { maxWidth: `${Math.max(24, width - 14)}px` } : undefined;
 }
 
 function onResizeStart(
@@ -401,7 +422,7 @@ function resetColumnWidths(): void {
         class="fv-notes"
         :title="formView.currentFormat?.notes"
       >
-        {{ formView.currentFormat.notes }}
+        {{ notesBrief }}
       </div>
     </section>
 
@@ -447,7 +468,7 @@ function resetColumnWidths(): void {
               </li>
             </ul>
 
-            <table class="fv-table" :class="{ 'fv-table--fixed': hasColumnWidths }">
+            <table class="fv-table" :style="{ minWidth: 0 }">
               <colgroup>
                 <col class="fv-col-index" />
                 <col
@@ -509,7 +530,12 @@ function resetColumnWidths(): void {
                       @keyup.esc="cancelEdit()"
                       @blur="cancelEdit()"
                     />
-                    <template v-else>
+                    <span
+                      v-else
+                      class="fv-cell"
+                      :style="cellStyle(mainSection, index)"
+                      :title="cellText(row, index).text"
+                    >
                       <span v-if="cellName(row, index)" class="fv-name">
                         {{ cellName(row, index) }}
                       </span>
@@ -518,7 +544,7 @@ function resetColumnWidths(): void {
                         {{ cellText(row, index).text }}
                       </span>
                       <span v-if="isLinkCell(row, index)" class="fv-link-badge">🔗</span>
-                    </template>
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -535,10 +561,7 @@ function resetColumnWidths(): void {
                 <span>{{ sectionTitle(section) }}</span>
                 <span class="fv-section-meta">{{ section.rows.length }} 行</span>
               </summary>
-              <table
-                class="fv-table fv-table--compact"
-                :class="{ 'fv-table--fixed': hasColumnWidths }"
-              >
+              <table class="fv-table fv-table--compact" :style="{ minWidth: 0 }">
                 <colgroup>
                   <col class="fv-col-index" />
                   <col
@@ -854,19 +877,21 @@ function resetColumnWidths(): void {
   width: max-content;
 }
 
-/* 拖过列宽之后才切固定布局：此时列宽完全由 colgroup 的像素值决定，可左可右。 */
-.fv-table--fixed {
-  table-layout: fixed;
-}
-
 .fv-col-index {
   width: 56px;
 }
 
-.fv-table--fixed th,
-.fv-table--fixed td {
+/* 单元格内容的包装元素。
+   拖过列宽后由**行内** max-width 约束（刻意不靠样式表：2026-10-03 事故里
+   前端 JS 是新版、但样式表行为没生效）。没给宽度时它就是个普通行内元素，
+   列宽完全由内容决定 —— 中间不可能出现空白。 */
+.fv-cell {
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .fv-table th,
