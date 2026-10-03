@@ -102,7 +102,7 @@ func (s *FormViewService) AddIndependentDrop(
 	}
 	s.c.mu.RUnlock()
 
-	plan, err := planSectionAppend(text, dropSectionName, 1)
+	plan, err := planSectionAppend(text, dropSectionName, 1, section.RowTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +111,13 @@ func (s *FormViewService) AddIndependentDrop(
 	// 前面的（缩进/换行）跟邻居一致，后面的（那 17 个值）原样不动。
 	// 行文本本身不带缩进、也不带行尾换行（见 buildDropRowText）。
 	separator := plan.separator
+	if plan.tailIsTag {
+		// 收官行是标签（`[/list]`）⇒ 新条目**另起一行**（与文件里 `[/list]` 后换行的排法一致）。
+		// 不能照抄那个列表行前面的制表符 —— 否则新行会被塞进 `[/list]` 同一行（用户 2026-10-03 实测）。
+		separator = detectEOL(text) + plan.rowIndent
+	}
 	if separator == "" {
-		separator = "\r\n" + dropRowIndent
+		separator = detectEOL(text) + dropRowIndent
 	}
 	updatedText := text[:plan.offset] + separator + rowText + text[plan.offset:]
 

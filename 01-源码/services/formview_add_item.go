@@ -75,15 +75,19 @@ func (s *FormViewService) AddDropCandidate(
 	}
 	s.c.mu.RUnlock()
 
-	plan, err := planSectionAppend(text, section, occurrence)
+	plan, err := planSectionAppend(text, section, occurrence, rowTokensOf(format, section))
 	if err != nil {
 		return nil, err
 	}
 	// 候选行本身**不带缩进**：缩进由 separator 照抄上一条候选决定
-	//（文件里候选是"\r\n + 2 个制表符"，照抄就还是那样；连排的也一样跟着连排）。
+	//（文件里候选是"换行 + 2 个制表符"，照抄就还是那样；连排的也一样跟着连排）。
 	separator := plan.separator
+	if plan.tailIsTag {
+		// 收官行是标签（理论上 `[list]` 里不会发生，留着以防格式异常的段）
+		separator = detectEOL(text) + dropItemIndent
+	}
 	if separator == "" {
-		separator = "\r\n" + dropItemIndent
+		separator = detectEOL(text) + dropItemIndent
 	}
 	line := id + "\t" + weight
 	updatedText := text[:plan.offset] + separator + line + text[plan.offset:]
@@ -143,11 +147,30 @@ func (s *FormViewService) AddDropCandidate(
 type sectionAppendPlan struct {
 	// offset = 最后一个条目**最后一个 token 之后**（新内容插在这里，不含行尾换行）。
 	offset int
-	// separator = 上一条目**前面**那段空白（可能含换行）。新条目照抄它 ⇒
-	// 文件怎么排邻居，新条目就怎么排（用户 2026-10-03：格式是红线）。
+	// separator = 收官行**自己**前面那段空白（可能含换行）。
+	// 收官行是"连排的一行"⇒ 它就是制表符（跟着连排 ✓）；
+	// 收官行是 `[/list]` 这类标签 ⇒ 不用它，改用 tailIsTag 那条规则。
 	separator string
-	// rowIndent = 该段最后一条**数据行**的行首缩进（仅用于没有 separator 时的兜底）。
+	// rowIndent = 该段**第一条数据行**的行首缩进（新行照抄它）。
 	rowIndent string
+	// tailIsTag：最后一个条目的收官行是**标签**（如 `[/list]`）。
+	//
+	// 用户 2026-10-03 实测：加了"列表掉落"之后，后续添加必须**另起一行** ——
+	// 这是对的（文件里 `[/list]` 后面本来就换行），错的是我照抄了那个列表行前面的
+	// 制表符，把新行塞到了 `[/list]` 同一行上。收官行是标签时，分隔符应当是
+	// 「换行 + 数据行缩进」。
+	tailIsTag bool
+}
+
+// detectEOL 取文件实际使用的换行（这份归档是 LF，别处有的是 CRLF，别写死）。
+func detectEOL(text string) string {
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		if index > 0 && text[index-1] == '\r' {
+			return "\r\n"
+		}
+		return "\n"
+	}
+	return "\r\n"
 }
 
 // nextLineBreak 找从 from 开始的下一处换行，返回「本行结束位置」与「下一行开始位置」。
@@ -196,64 +219,133 @@ func whitespaceBefore(text string, offset int) string {
 //
 // 缩进另取：栈深度为 0 的**数据行**的缩进 —— 不能拿"上一行"的缩进（上一行可能是
 // `[/list]`，缩进少一层，照抄就错了）。
-func planSectionAppend(text, section string, occurrence int) (sectionAppendPlan, error) {
+func planSectionAppend(text, section string, occurrence, rowTokens int) (sectionAppendPlan, error) {
 	name := strings.TrimSpace(section)
 	open := "[" + name + "]"
-	seen := 0
-	inTarget := false
-	var stack []string
-	plan := sectionAppendPlan{}
-	foundRow := false
+	closeTag := "[/" + name + "]"
+	if name == "" || occurrence < 1 {
+		return sectionAppendPlan{}, fmt.Errorf("段名与出现序号无效")
+	}
 
+	// 一次前向扫描把每行记录下来（换行三种都认），后面全部按**行号**推理 ——
+	// 不再用"段名栈"：栈那套容易被嵌套子段带偏，而这里其实只关心
+	// "最后一个条目在哪、它前面那段空白是什么"。
+	type lineRef struct {
+		start   int
+		end     int
+		indent  string
+		trimmed string
+		// tokens 是该行的 token 数（按空白切）；lastTokenStart 是最后一个 token 的起点。
+		// 用它们判断"这一行里连排了几行数据" —— 连排时新条目要接在**行内**（用制表符）。
+		tokens         int
+		lastTokenStart int
+	}
+	var lines []lineRef
 	for lineStart := 0; lineStart <= len(text); {
 		lineEnd, next := nextLineBreak(text, lineStart)
 		line := text[lineStart:lineEnd]
-		trimmed := strings.TrimSpace(line)
-
-		switch {
-		case isSectionOpenTag(trimmed):
-			if inTarget {
-				stack = append(stack, strings.ToLower(trimmed))
-			} else if strings.EqualFold(trimmed, open) {
-				seen++
-				if seen == occurrence {
-					inTarget = true
-					stack = stack[:0]
-				}
-			}
-		case isSectionCloseTag(trimmed):
-			if !inTarget {
-				break
-			}
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-				break
-			}
-			if !foundRow {
-				return sectionAppendPlan{}, fmt.Errorf(
-					"段 [%s] 的第 %d 次出现里没有任何条目（无可插入位置）", name, occurrence)
-			}
-			return plan, nil
-		default:
-			if inTarget && trimmed != "" {
-				// 插入点 = 最后一个条目**最后一个 token 之后**（不含行尾换行）——
-				// 分隔交给 separator，这样新条目既能"跟邻居一样"，又不会留下空行。
-				plan.offset = lineStart + len(line)
-				if len(stack) == 0 {
-					// 上一条目**前面**那段空白 = 新条目要照抄的分隔符：
-					// 文件是"整段连排"（行间只有制表符）就跟着连排；
-					// 是"一条一行"（\r\n + 缩进）就跟一条一行（用户 2026-10-03 要求）。
-					plan.separator = whitespaceBefore(text, lineStart)
-					plan.rowIndent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-					foundRow = true
-				}
-			}
+		item := lineRef{
+			start:          lineStart,
+			end:            lineEnd,
+			indent:         line[:len(line)-len(strings.TrimLeft(line, " \t"))],
+			trimmed:        strings.TrimSpace(line),
+			lastTokenStart: -1,
 		}
-
+		for pos := 0; pos < len(line); {
+			if line[pos] == ' ' || line[pos] == '\t' {
+				pos++
+				continue
+			}
+			start := pos
+			for pos < len(line) && line[pos] != ' ' && line[pos] != '\t' {
+				pos++
+			}
+			item.tokens++
+			item.lastTokenStart = lineStart + start
+		}
+		lines = append(lines, item)
 		if next <= lineStart {
 			break
 		}
 		lineStart = next
 	}
-	return sectionAppendPlan{}, fmt.Errorf("文件里找不到段 [%s] 的第 %d 次出现", name, occurrence)
+
+	// 第 occurrence 个闭合标签
+	closeIndex := -1
+	seenClose := 0
+	for index := range lines {
+		if strings.EqualFold(lines[index].trimmed, closeTag) {
+			seenClose++
+			if seenClose == occurrence {
+				closeIndex = index
+				break
+			}
+		}
+	}
+	if closeIndex < 0 {
+		return sectionAppendPlan{}, fmt.Errorf("文件里找不到段 [%s] 的第 %d 次出现", name, occurrence)
+	}
+
+	// 该次出现的开始标签之后 = 本条目的内容起点（找不到就用文件开头）
+	regionStart := 0
+	seenOpen := 0
+	for index := 0; index < closeIndex; index++ {
+		if strings.EqualFold(lines[index].trimmed, open) {
+			seenOpen++
+			if seenOpen == occurrence {
+				regionStart = index + 1
+				break
+			}
+		}
+	}
+
+	// 段内第一条非空行的缩进 = 该段数据行的缩进（照抄它）
+	rowIndent := ""
+	for index := regionStart; index < closeIndex; index++ {
+		if lines[index].trimmed != "" {
+			rowIndent = lines[index].indent
+			break
+		}
+	}
+	if rowIndent == "" {
+		rowIndent = dropRowIndent
+	}
+
+	// 从闭合标签往前找最后一个非空行 = 最后一个条目的收官行
+	tailIndex := -1
+	for index := closeIndex - 1; index >= regionStart; index-- {
+		if lines[index].trimmed != "" {
+			tailIndex = index
+			break
+		}
+	}
+	if tailIndex < 0 {
+		return sectionAppendPlan{}, fmt.Errorf(
+			"段 [%s] 的第 %d 次出现里没有任何条目（无可插入位置）", name, occurrence)
+	}
+
+	tail := lines[tailIndex]
+	tailIsTag := isSectionOpenTag(tail.trimmed) || isSectionCloseTag(tail.trimmed)
+	plan := sectionAppendPlan{
+		offset:    tail.end,
+		rowIndent: rowIndent,
+		tailIsTag: tailIsTag,
+	}
+	// 分隔符完全跟着"收官行的排法"走（用户 2026-10-03：文件里两种排法都有）：
+	//   ① 收官行是标签（`[/list]`）⇒ 另起一行；
+	//   ② 收官行里**连排了多行数据** ⇒ 新条目接在这一行**后面**（用行内的制表符）；
+	//   ③ 收官行只有一行数据 ⇒ 另起一行（换行 + 缩进）。
+	switch {
+	case tailIsTag:
+		plan.separator = detectEOL(text) + rowIndent
+	case rowTokens > 0 && tail.tokens > rowTokens && tail.lastTokenStart >= 0:
+		plan.separator = whitespaceBefore(text, tail.lastTokenStart)
+	default:
+		plan.separator = whitespaceBefore(text, tail.start+len(tail.indent))
+	}
+	return plan, nil
 }
+
+// 说明：早先这里按"段名栈"判层级，遇到嵌套子段（[independent drop] 里的 862 个 [list]）
+// 会算错 —— 实测表现为"扫描在第一个 [/list] 处提前结束"（外层只剩 17 个 token）。
+// 现在改为"按行号前后查找"，不再依赖层级推断，所以这里没有栈。
