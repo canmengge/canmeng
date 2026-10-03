@@ -23,10 +23,10 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 // 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
 // 不新增后端接口（用户 2026-10-03 要求：把 3015 改成 3037 时名字要跟着变）。
-import { ResolveObject } from "../services/objectViewApi";
 import {
   AddDropCandidate,
   AddIndependentDrop,
+  ResolveRefNames,
   type FormViewDropItem,
 } from "../services/formViewApi";
 import {
@@ -150,6 +150,15 @@ const searchScopes = computed<SearchScope[]>(() => {
 
 const searchRef = ref("");
 const searchQuery = ref("");
+/**
+ * 搜哪个字段：ID / 名称。
+ *
+ * 用户 2026-10-03：搜 `28` 本意是找"怪物ID = 28"，可**名字里带 28 的行也被搜出来**了 ⇒
+ * 必须能把"按 ID 搜"和"按名称搜"分开。
+ */
+const searchField = ref<"id" | "name">("id");
+/** 精确匹配（照抄主工具条那颗「启用精确匹配」）：开启后必须整串相等，而不是包含。 */
+const searchExact = ref(false);
 
 /** 命中搜索范围那些列的下标（规则里可能有多列共用一个 ref）。 */
 const searchColumns = computed<number[]>(() => {
@@ -165,13 +174,23 @@ const searchColumns = computed<number[]>(() => {
 });
 
 /** 一行的目标列里，编号或中文名任一含关键字即命中（都按小写子串比）。 */
+/**
+ * 一行是否命中：**先按字段（ID / 名称）分开**，再按"包含 / 精确"比。
+ *
+ * - 字段 = ID：只比编号（草稿里的新编号也算 ✓）
+ * - 字段 = 名称：只比中文名
+ * - 精确匹配开启：必须**整串相等**（搜怪物ID 28 ⇒ 只有编号正好是 28 的那行）
+ */
 function rowMatchesSearch(row: FormViewRow, query: string): boolean {
   for (const index of searchColumns.value) {
     const cell = row.cells[index];
     if (!cell) continue;
-    const id = cellCurrent(row, index).trim().toLowerCase();
-    const name = (cell.name ?? "").trim().toLowerCase();
-    if (id.includes(query) || name.includes(query)) return true;
+    const target =
+      searchField.value === "name"
+        ? rowName(mainSection.value, row, index).trim().toLowerCase()
+        : cellCurrent(row, index).trim().toLowerCase();
+    if (target === "") continue;
+    if (searchExact.value ? target === query : target.includes(query)) return true;
   }
   return false;
 }
@@ -639,51 +658,35 @@ async function submitViewerAdd(): Promise<void> {
 const draftNames = ref<Map<string, string>>(new Map());
 const pendingNameLookups = new Set<string>();
 
-function refCandidates(section: FormViewSection | null, index: number): string[] {
-  const ref = (section?.columnRefs?.[index] ?? "").trim();
-  if (ref === "") return [];
-  return ref
-    .split("|")
-    .map((item) => item.trim())
-    .filter((item) => item !== "");
-}
-
 /** 取草稿值的中文名；没有就问一次后端（问过就缓存，含"查不到"的空结果）。 */
 function draftName(section: FormViewSection | null, index: number, value: string): string {
   const id = value.trim();
-  if (id === "" || refCandidates(section, index).length === 0) return "";
-  const key = `${section?.columnRefs?.[index] ?? ""}|${id}`;
+  const ref = (section?.columnRefs?.[index] ?? "").trim();
+  if (id === "" || ref === "") return "";
+  const key = `${ref}|${id}`;
   const cached = draftNames.value.get(key);
   if (cached !== undefined) return cached;
-  void lookupDraftName(section, index, id, key);
+  void lookupDraftName(ref, id, key);
   return "";
 }
 
-async function lookupDraftName(
-  section: FormViewSection | null,
-  index: number,
-  id: string,
-  key: string
-): Promise<void> {
+/**
+ * 向后端要名字。
+ *
+ * 用的是 `ResolveRefNames`（**表格同款解析器**）—— 早先这里借用「对象视图」的
+ * ResolveObject，结果物品能出名字、怪物出不来（用户 2026-10-03 实测）。
+ * `ref` 支持 `a|b` 多候选，由后端逐个试，前端不必自己循环。
+ */
+async function lookupDraftName(ref: string, id: string, key: string): Promise<void> {
   if (pendingNameLookups.has(key)) return;
   pendingNameLookups.add(key);
   try {
-    let name = "";
-    for (const objectType of refCandidates(section, index)) {
-      try {
-        const view = await ResolveObject(objectType, id);
-        const found = (view?.name ?? "").trim();
-        if (found !== "") {
-          name = found;
-          break;
-        }
-      } catch {
-        // 该候选类型解析不到就试下一个（与后端 resolve() 的行为一致）。
-      }
-    }
+    const names = await ResolveRefNames(ref, [id]);
     const next = new Map(draftNames.value);
-    next.set(key, name);
+    next.set(key, (names?.[id] ?? "").trim());
     draftNames.value = next;
+  } catch {
+    // 解析失败就保持空（下次渲染会再试一次），不弹错打断编辑。
   } finally {
     pendingNameLookups.delete(key);
   }
@@ -1285,13 +1288,39 @@ function resetColumnWidths(): void {
                 placeholder="选列：怪物 / 掉落物品…"
                 class="fv-tools-scope"
               />
+              <NSelect
+                v-model:value="searchField"
+                :options="[
+                  { label: 'ID', value: 'id' },
+                  { label: '名称', value: 'name' },
+                ]"
+                size="small"
+                class="fv-tools-field"
+              />
               <NInput
                 v-model:value="searchQuery"
                 size="small"
                 clearable
-                placeholder="输入编号或中文名（两者都匹配）"
+                :placeholder="
+                  searchField === 'name'
+                    ? '输入中文名（按名称搜）'
+                    : '输入编号（按 ID 搜）'
+                "
                 class="fv-tools-query"
               />
+              <NButton
+                size="tiny"
+                :type="searchExact ? 'primary' : 'default'"
+                :ghost="!searchExact"
+                :title="
+                  searchExact
+                    ? '精确匹配已开启：必须整串相等（如 ID 搜 28 只出编号为 28 的行）'
+                    : '启用精确匹配（与主工具条那颗按钮同一套用法）'
+                "
+                @click="searchExact = !searchExact"
+              >
+                ◎ 精确
+              </NButton>
               <span v-if="searchActive" class="fv-tools-hit">
                 命中 {{ searchHits.size }} / {{ mainSection.rows.length }} 行
               </span>
@@ -2260,6 +2289,10 @@ function resetColumnWidths(): void {
 
 .fv-tools-scope {
   width: 190px;
+}
+
+.fv-tools-field {
+  width: 88px;
 }
 
 .fv-tools-query {

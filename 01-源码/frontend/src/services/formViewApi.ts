@@ -181,6 +181,22 @@ export function AddDropCandidate(
 }
 
 /**
+ * 把一批 ref 值（怪物 / 物品编号）翻成中文名，返回 `{ 编号: 名字 }`（查不到的键不出现）。
+ *
+ * **与表格里的名字同源**：走的是后端那个 `refNameResolver`（表格投影用的同一个）。
+ * 早先前端借用「对象视图」的 ResolveObject 显示草稿名，两条路对怪物并不等价，
+ * 于是出现"物品能出名字、怪物出不来"（用户 2026-10-03 实测）。
+ *
+ * fqn = pvfine/services.FormViewService.ResolveRefNames（ID 同样反验过）
+ */
+export function ResolveRefNames(
+  ref: string,
+  ids: string[]
+): $CancellablePromise<Record<string, string>> {
+  return $Call.ByID(1504687577, ref, ids);
+}
+
+/**
  * 返回规则文件里定义的全部文件族。
  * fqn = pvfine/services.FormViewService.ListFormats
  */
