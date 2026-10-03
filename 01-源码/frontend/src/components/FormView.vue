@@ -156,7 +156,7 @@ function rowMatchesSearch(row: FormViewRow, query: string): boolean {
   for (const index of searchColumns.value) {
     const cell = row.cells[index];
     if (!cell) continue;
-    const id = (cell.value ?? "").trim().toLowerCase();
+    const id = cellCurrent(row, index).trim().toLowerCase();
     const name = (cell.name ?? "").trim().toLowerCase();
     if (id.includes(query) || name.includes(query)) return true;
   }
@@ -292,12 +292,14 @@ async function runBatch(): Promise<void> {
   }[] = [];
   let skipped = 0;
   for (const rowIndex of rows) {
-    const cell = section.rows[rowIndex]?.cells[column];
-    if (!cell) {
+    const row = section.rows[rowIndex];
+    const cell = row?.cells[column];
+    if (!row || !cell) {
       skipped += 1;
       continue;
     }
-    const current = Number(cell.value);
+    // 取**当前值**（草稿优先）：连续两次批量改要能叠加，而不是都从归档原值重算。
+    const current = Number(cellCurrent(row, column));
     if (!Number.isFinite(current)) {
       // 非数值格（空值 / 文本）不参与数值运算，跳过并如实报数。
       skipped += 1;
@@ -320,15 +322,17 @@ async function runBatch(): Promise<void> {
 
   batchRunning.value = true;
   try {
-    await formView.applyEdits(edits);
-    editedCount.value += edits.length;
+    // 与单格编辑同一个模型：**只落草稿**，点「保存改动」才写进归档内存。
+    const staged = stageEdits(edits);
     batchVisible.value = false;
-    message.success(
-      `批量改：${edits.length} 格已更新（归档内存已改，点主工具条「保存 PVF」落盘）` +
-        (skipped > 0 ? `；跳过 ${skipped} 格（非数值）` : "")
-    );
-  } catch (issue: any) {
-    message.error(String(issue?.message ?? issue));
+    if (staged === 0) {
+      message.warning("改动算下来与原值一致，没有可暂存的内容");
+    } else {
+      message.success(
+        `批量改：已暂存 ${staged} 格改动（点「保存改动」写进归档）` +
+          (skipped > 0 ? `；跳过 ${skipped} 格（非数值）` : "")
+      );
+    }
   } finally {
     batchRunning.value = false;
   }
@@ -341,12 +345,37 @@ watch(
     // 每次重新解析都回到"按内容自适应"：避免上一次拖出来的宽度把撑开的空白冻住
     // （2026-10-03 事故：中间那一片空白一直消不掉）。
     columnWidths.value = {};
+    // 投影换了（重新解析、或草稿保存成功后的回传）⇒ 旧草稿的行列坐标不再可信，清掉。
+    pendingEdits.value = new Map();
   }
 );
+
+/**
+ * 该格「当前应该显示的值」：**本地草稿优先**，没有草稿才用归档里的值。
+ *
+ * 这是「改了立刻看见」的关键 —— 编辑 / 批量改只写草稿，界面马上按草稿渲染，
+ * 不再走"提交后端 → 等重新投影 → 才显示新值"那条慢路径。
+ */
+function cellCurrent(row: FormViewRow, index: number): string {
+  const draft = draftValue(row, index);
+  if (draft !== null) return draft;
+  return row.cells[index]?.value ?? "";
+}
+
+/** 该格是否有未保存的草稿（界面上要标出来）。 */
+function isDirtyCell(row: FormViewRow, index: number): boolean {
+  const section = mainSection.value;
+  if (!section) return false;
+  return pendingEdits.value.has(draftKey(section, row.index, index));
+}
 
 function cellText(row: FormViewRow, index: number): { text: string; raw: string } {
   const cell = row.cells[index];
   if (!cell) return { text: "", raw: "" };
+  if (isDirtyCell(row, index)) {
+    const current = cellCurrent(row, index);
+    return { text: current, raw: current };
+  }
   return {
     text: cell.display && cell.display !== "" ? cell.display : cell.value,
     raw: cell.value,
@@ -396,9 +425,9 @@ function cellTitle(row: FormViewRow, index: number): string {
     return `这一行是「${linkCellText(row, index)}」：双击查看关联的「${target}」（第 ${row.link.occurrence} 处）`;
   }
   if (name !== "") {
-    return `${name}\n编号: ${raw}\n双击可改（改的是归档内存，点主工具条「保存 PVF」落盘）`;
+    return `${name}\n编号: ${raw}\n双击可改（先存本地草稿，点「保存改动」才写进归档内存）`;
   }
-  return `原值: ${raw}\n双击可改（改的是归档内存，点主工具条「保存 PVF」落盘）`;
+  return `原值: ${raw}\n双击可改（先存本地草稿，点「保存改动」才写进归档内存）`;
 }
 
 // ---- 行 → 关联段（双击查看） ----
@@ -436,15 +465,105 @@ async function openLink(row: FormViewRow): Promise<void> {
   }
 }
 
-// ---- 单元格编辑（双击改值） ----
+// ---- 单元格编辑（双击改值 → 本地草稿 → 点「保存改动」才进归档） ----
+//
+// 模型（2026-10-03 用户指定，对齐装备文本编辑）：**先改前端、立刻显示；点「保存改动」
+// 才写进归档内存**。所以这里不再"每改一格都去后端转一圈"—— 改的是草稿，显示走 cellText
+// 里的草稿优先，提交只在 saveDrafts() 时发生一次（批量改也是先落草稿）。
 
 type EditState = { row: number; column: number; label: string };
 
 const editing = ref<EditState | null>(null);
 /** 正在编辑的文本（单独一个 ref，模板里就不必对 editing 判空）。 */
 const editText = ref("");
-/** 本次会话改过多少格（未落盘）。 */
+/** 已经写进**归档内存**（还没落盘）的格数。 */
 const editedCount = ref(0);
+/** 正在把草稿提交给后端。 */
+const saving = ref(false);
+
+type DraftEdit = { row: number; column: number; value: string };
+
+/** 草稿键：段名#出现序号:行:列（同一格只留最后一次改动）。 */
+function draftKey(section: FormViewSection, row: number, column: number): string {
+  return `${section.section.toLowerCase()}#${section.occurrence}:${row}:${column}`;
+}
+
+/** 本地草稿（未提交）：改了立刻显示，点「保存改动」才写进归档内存。 */
+const pendingEdits = ref<Map<string, DraftEdit>>(new Map());
+const pendingCount = computed(() => pendingEdits.value.size);
+
+function draftValue(row: FormViewRow, index: number): string | null {
+  const section = mainSection.value;
+  if (!section) return null;
+  const draft = pendingEdits.value.get(draftKey(section, row.index, index));
+  return draft ? draft.value : null;
+}
+
+/**
+ * 把若干格改动放进草稿（**不碰归档**），返回真正发生变化的格数。
+ *
+ * 值改回归档原样就从草稿里删掉 —— 不制造"改了又改回来"的假未保存标记。
+ */
+function stageEdits(items: DraftEdit[]): number {
+  const section = mainSection.value;
+  if (!section || items.length === 0) return 0;
+  const next = new Map(pendingEdits.value);
+  let staged = 0;
+  for (const item of items) {
+    const key = draftKey(section, item.row, item.column);
+    const original = (section.rows[item.row]?.cells[item.column]?.value ?? "").trim();
+    const value = item.value.trim();
+    if (value === original) {
+      next.delete(key);
+      continue;
+    }
+    next.set(key, { row: item.row, column: item.column, value });
+    staged += 1;
+  }
+  pendingEdits.value = next;
+  return staged;
+}
+
+/** 放弃全部草稿（不动归档）。 */
+function discardDrafts(): void {
+  if (pendingEdits.value.size === 0) return;
+  pendingEdits.value = new Map();
+  message.info("已放弃未保存的改动");
+}
+
+/** 把草稿提交给后端（写进归档内存，**不落盘**）。 */
+async function saveDrafts(): Promise<void> {
+  const section = mainSection.value;
+  const drafts = [...pendingEdits.value.values()];
+  if (!section || drafts.length === 0) return;
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再保存（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  // 按行、列排序提交：服务端逐格定位 + 逐格校验，顺序稳定、行为可预期。
+  drafts.sort((left, right) => left.row - right.row || left.column - right.column);
+  saving.value = true;
+  try {
+    await formView.applyEdits(
+      drafts.map((draft) => ({
+        section: section.section,
+        occurrence: section.occurrence,
+        row: draft.row,
+        column: draft.column,
+        value: draft.value,
+      }))
+    );
+    pendingEdits.value = new Map();
+    editedCount.value += drafts.length;
+    message.success(`已保存 ${drafts.length} 格到归档内存（点主工具条「保存 PVF」才落盘）`);
+  } catch (issue: any) {
+    message.error(String(issue?.message ?? issue));
+  } finally {
+    saving.value = false;
+  }
+}
 
 function normalizePath(value: string): string {
   return (value ?? "").replace(/\\/g, "/").trim().toLowerCase();
@@ -471,7 +590,8 @@ function startEdit(row: FormViewRow, index: number, section: FormViewSection): v
     );
     return;
   }
-  editText.value = cell.value;
+  // 续改时取草稿里的值：别把用户刚打的字又顶回归档里的旧值。
+  editText.value = cellCurrent(row, index);
   editing.value = {
     row: row.index,
     column: index,
@@ -484,34 +604,15 @@ function cancelEdit(): void {
   editing.value = null;
 }
 
-async function commitEdit(): Promise<void> {
+/**
+ * 回车 / 点到别处：落到**草稿**并**立刻显示**（不碰归档、不重新投影）。
+ * 所以不会再出现"先显示旧值、几秒后才变"。
+ */
+function commitEdit(): void {
   const state = editing.value;
-  const section = mainSection.value;
-  if (!state || !section) return;
-  const value = editText.value.trim();
-  const original = section.rows[state.row]?.cells[state.column]?.value ?? "";
-  if (value === original) {
-    editing.value = null;
-    return;
-  }
-  try {
-    await formView.applyEdits([
-      {
-        section: section.section,
-        occurrence: section.occurrence,
-        row: state.row,
-        column: state.column,
-        value,
-      },
-    ]);
-    editing.value = null;
-    editedCount.value += 1;
-    message.success(
-      `已改「${state.label}」为 ${value}（归档内存已更新，点主工具条「保存 PVF」落盘）`
-    );
-  } catch (issue: any) {
-    message.error(String(issue?.message ?? issue));
-  }
+  if (!state) return;
+  stageEdits([{ row: state.row, column: state.column, value: editText.value }]);
+  editing.value = null;
 }
 
 function onCellDblClick(row: FormViewRow, index: number, section: FormViewSection): void {
@@ -758,6 +859,21 @@ function resetColumnWidths(): void {
                 清除
               </NButton>
               <span class="fv-tools-gap" />
+              <span v-if="pendingCount > 0" class="fv-tools-dirty">
+                未保存 {{ pendingCount }} 格
+              </span>
+              <NButton size="tiny" quaternary :disabled="pendingCount === 0" @click="discardDrafts">
+                放弃改动
+              </NButton>
+              <NButton
+                size="tiny"
+                type="primary"
+                :disabled="pendingCount === 0"
+                :loading="saving"
+                @click="saveDrafts"
+              >
+                保存改动
+              </NButton>
               <NButton size="tiny" ghost type="primary" @click="batchVisible = !batchVisible">
                 {{ batchVisible ? "收起批量改" : "批量改…" }}
               </NButton>
@@ -814,7 +930,7 @@ function resetColumnWidths(): void {
                 </NButton>
               </div>
               <div class="fv-batch-hint">
-                改的是归档内存，点主工具条「保存 PVF」才落盘；非数值格自动跳过。
+                先存本地草稿、立刻显示；点「保存改动」才写进归档内存，非数值格自动跳过。
               </div>
             </div>
 
@@ -858,6 +974,7 @@ function resetColumnWidths(): void {
                     :class="{
                       'fv-num': isNumeric(cellText(row, index).raw),
                       'fv-link-cell': isLinkCell(row, index),
+                      'fv-cell-dirty': isDirtyCell(row, index),
                       'fv-cell-editing':
                         editing !== null &&
                         editing.row === row.index &&
@@ -886,8 +1003,10 @@ function resetColumnWidths(): void {
                       :style="cellStyle(mainSection, index)"
                     >
                       <template v-if="isLinkCell(row, index)">
-                        {{ linkCellText(row, index) }}
-                        <span class="fv-link-badge">🔗</span>
+                        <span class="fv-link-pill">
+                          <span class="fv-link-text">{{ linkCellText(row, index) }}</span>
+                          <span class="fv-link-badge">🔗 查看</span>
+                        </span>
                       </template>
                       <template v-else>
                         <span v-if="cellName(row, index)" class="fv-name">
@@ -986,9 +1105,9 @@ function resetColumnWidths(): void {
       </div>
       <span class="fv-foot-hint">
         <template v-if="editedCount > 0">
-          已改 {{ editedCount }} 格 · 未落盘（点主工具条「保存 PVF」）
+          已存入归档内存 {{ editedCount }} 格 · 未落盘（点主工具条「保存 PVF」）
         </template>
-        <template v-else>窗口可左右拉伸 · 双击格子可改值</template>
+        <template v-else>窗口可左右拉伸 · 双击格子改值（先存草稿，点「保存改动」写进归档）</template>
       </span>
     </footer>
 
@@ -1335,6 +1454,57 @@ function resetColumnWidths(): void {
 }
 
 /* 可双击查看关联的格 */
+/* 关联列表标记（如「内联列表 🔗 查看」）：原来只挂一个淡 🔗，用户看不清 —— 改成药丸底 + 醒目徽章。 */
+.fv-link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--pvf-surface-selected);
+  border: 1px solid var(--pvf-border-normal);
+  color: var(--pvf-text-primary);
+  font-weight: 600;
+}
+
+.fv-link-text {
+  white-space: nowrap;
+}
+
+/* 提高一级选择器，压过下面既有的 .fv-link-badge */
+.fv-link-pill .fv-link-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--pvf-warning-surface);
+  color: var(--pvf-warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 有未保存草稿的格：底色 + 左侧一道标记（让人一眼看出"这格改了还没保存"） */
+.fv-table tbody td.fv-cell-dirty {
+  background: var(--pvf-surface-warning);
+}
+
+.fv-table tbody td.fv-cell-dirty .fv-cell::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-right: 4px;
+  vertical-align: -2px;
+  background: var(--pvf-warning);
+}
+
+.fv-tools-dirty {
+  color: var(--pvf-warning);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .fv-link-cell {
   cursor: pointer;
   text-decoration: underline dotted;
