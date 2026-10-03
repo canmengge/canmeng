@@ -613,13 +613,41 @@ const viewerAddItemId = ref("");
 const viewerAddWeight = ref("1000");
 const viewerAdding = ref(false);
 
+/**
+ * 排队中的「新增」。
+ *
+ * 用户 2026-10-03 明确要求：**新增也不能立刻生效** —— 与改一格同一套模型，
+ * 先排队（草稿），点「保存改动」时才真正写进归档内存。
+ * 插入本来没法当"单元格草稿"存（它是新增行），所以单独排一队。
+ */
+type PendingInsert =
+  | { kind: "candidate"; section: string; occurrence: number; item: FormViewDropItem }
+  | { kind: "drop"; entry: FormViewDropEntry };
+
+const pendingInserts = ref<PendingInsert[]>([]);
+const pendingInsertCount = computed(() => pendingInserts.value.length);
+
+/** 该处 `[list]` 排队中的候选（查看器里显示成"还没保存"的行）。 */
+function pendingCandidates(section: FormViewSection | null): FormViewDropItem[] {
+  if (!section) return [];
+  return pendingInserts.value
+    .filter(
+      (item): item is Extract<PendingInsert, { kind: "candidate" }> =>
+        item.kind === "candidate" &&
+        item.section.toLowerCase() === section.section.toLowerCase() &&
+        item.occurrence === section.occurrence
+    )
+    .map((item) => item.item);
+}
+
 function startViewerAdd(): void {
   viewerAddItemId.value = "";
   viewerAddWeight.value = "1000";
   viewerAddVisible.value = true;
 }
 
-async function submitViewerAdd(): Promise<void> {
+/** **只排队**，不碰归档（点「保存改动」才写）。 */
+function submitViewerAdd(): void {
   const section = viewerSection.value;
   if (!section) return;
   if (fileOpenInEditor()) {
@@ -628,25 +656,22 @@ async function submitViewerAdd(): Promise<void> {
     );
     return;
   }
-  viewerAdding.value = true;
-  try {
-    const fresh = await AddDropCandidate(
-      formView.filePath.trim(),
-      section.section,
-      section.occurrence,
-      {
-        itemId: viewerAddItemId.value.trim(),
-        weight: viewerAddWeight.value.trim() || "1000",
-      }
-    );
-    if (fresh) viewerSection.value = fresh;
-    viewerAddVisible.value = false;
-    message.success("已追加候选到归档内存（未落盘）：点主工具条「保存 PVF」写进 PVF");
-  } catch (issue: any) {
-    message.error(String(issue?.message ?? issue));
-  } finally {
-    viewerAdding.value = false;
+  const itemId = viewerAddItemId.value.trim();
+  if (itemId === "") {
+    message.warning("物品ID 不能为空");
+    return;
   }
+  pendingInserts.value = [
+    ...pendingInserts.value,
+    {
+      kind: "candidate",
+      section: section.section,
+      occurrence: section.occurrence,
+      item: { itemId, weight: viewerAddWeight.value.trim() || "1000" },
+    },
+  ];
+  viewerAddVisible.value = false;
+  message.success("已加入待提交（点上方「保存改动」才写进归档内存）");
 }
 
 // ---- 草稿里的 ref 值 → 中文名（实时解析） ----
@@ -657,6 +682,19 @@ async function submitViewerAdd(): Promise<void> {
 
 const draftNames = ref<Map<string, string>>(new Map());
 const pendingNameLookups = new Set<string>();
+
+/**
+ * 该名字是否**正在查**。
+ *
+ * 用来区分两件事：① 请求还没回来（等一下就会出现）② 确实查不到（登记表里没有这个编号）。
+ * 用户 2026-10-03 反复问"为什么怪物名不出"，界面必须能自己说清楚是哪种。
+ */
+function isNamePending(section: FormViewSection | null, index: number, value: string): boolean {
+  const ref = (section?.columnRefs?.[index] ?? "").trim();
+  const id = value.trim();
+  if (ref === "" || id === "") return false;
+  return pendingNameLookups.has(`${ref}|${id}`);
+}
 
 /** 取草稿值的中文名；没有就问一次后端（问过就缓存，含"查不到"的空结果）。 */
 function draftName(section: FormViewSection | null, index: number, value: string): string {
@@ -795,34 +833,31 @@ async function submitDrop(): Promise<void> {
     message.warning("个数必须是非负整数");
     return;
   }
-  dropAdding.value = true;
-  try {
-    // 直接写进归档内存（不落盘）：插入不是"改一格"，没法当草稿存；
-    // 落盘仍由主工具条「保存 PVF」把关，与其它改动一致。
-    await AddIndependentDrop(formView.filePath.trim(), {
-      isApc: dropIsAPC.value,
-      monsterId: dropMonsterId.value.trim(),
-      useList: dropUseList.value,
-      itemId: dropItemId.value.trim(),
-      list: dropItems.value.map((item) => ({
-        itemId: item.itemId.trim(),
-        weight: item.weight.trim(),
-      })),
-      rates,
-      counts,
-      levelMin: Number(dropLevelMin.value) || 0,
-      levelMax: Number(dropLevelMax.value) || 0,
-      jobLimit: dropJobLimit.value.trim() || "-1",
-    });
-    dropFormVisible.value = false;
-    resetDropForm();
-    await formView.project();
-    message.success("已追加到归档内存（未落盘）：点主工具条「保存 PVF」写进 PVF");
-  } catch (issue: any) {
-    message.error(String(issue?.message ?? issue));
-  } finally {
-    dropAdding.value = false;
-  }
+  // **只排队**（点「保存改动」才真正写进归档内存）：与改一格同一套模型。
+  pendingInserts.value = [
+    ...pendingInserts.value,
+    {
+      kind: "drop",
+      entry: {
+        isApc: dropIsAPC.value,
+        monsterId: dropMonsterId.value.trim(),
+        useList: dropUseList.value,
+        itemId: dropItemId.value.trim(),
+        list: dropItems.value.map((item) => ({
+          itemId: item.itemId.trim(),
+          weight: item.weight.trim(),
+        })),
+        rates,
+        counts,
+        levelMin: Number(dropLevelMin.value) || 0,
+        levelMax: Number(dropLevelMax.value) || 0,
+        jobLimit: dropJobLimit.value.trim() || "-1",
+      },
+    },
+  ];
+  dropFormVisible.value = false;
+  resetDropForm();
+  message.success("已加入待提交（点上方「保存改动」才写进归档内存）");
 }
 
 // ---- 单元格编辑（双击改值 → 本地草稿 → 点「保存改动」才进归档） ----
@@ -949,18 +984,20 @@ function stageEdits(items: StageEditInput[]): number {
   return staged;
 }
 
-/** 放弃全部草稿（不动归档）。 */
+/** 放弃全部草稿（不动归档），含排队中的新增。 */
 function discardDrafts(): void {
-  if (pendingEdits.value.size === 0) return;
+  if (pendingEdits.value.size === 0 && pendingInserts.value.length === 0) return;
   pendingEdits.value = new Map();
+  pendingInserts.value = [];
   message.info("已放弃未保存的改动");
 }
 
-/** 把草稿提交给后端（写进归档内存，**不落盘**）。 */
+/** 把草稿 + 排队中的新增一起提交给后端（写进归档内存，**不落盘**）。 */
 async function saveDrafts(): Promise<void> {
   // 草稿**自带段信息**：主表的改动与各处内联列表（[list]）的改动可以混在一起一次提交。
   const drafts = [...pendingEdits.value.values()];
-  if (drafts.length === 0) return;
+  const queued = [...pendingInserts.value];
+  if (drafts.length === 0 && queued.length === 0) return;
   if (fileOpenInEditor()) {
     message.warning(
       "该文件正在编辑区打开：请先关掉那个标签页，再保存（避免两处同时改同一份文本）"
@@ -971,6 +1008,20 @@ async function saveDrafts(): Promise<void> {
   drafts.sort((left, right) => left.row - right.row || left.column - right.column);
   saving.value = true;
   try {
+    // ① 先执行排队中的新增（插入不是"改一格"，各走自己的通道）。
+    for (const item of queued) {
+      if (item.kind === "drop") {
+        await AddIndependentDrop(formView.filePath.trim(), item.entry);
+      } else {
+        await AddDropCandidate(
+          formView.filePath.trim(),
+          item.section,
+          item.occurrence,
+          item.item
+        );
+      }
+    }
+    pendingInserts.value = [];
     await formView.applyEdits(
       drafts.map((draft) => ({
         section: draft.section,
@@ -980,9 +1031,14 @@ async function saveDrafts(): Promise<void> {
         value: draft.value,
       }))
     );
+    // 只有新增、没有改格时，上面的 applyEdits 会空转（不会回传新投影），这里补一次重新解析。
+    if (drafts.length === 0) await formView.project();
     pendingEdits.value = new Map();
     editedCount.value += drafts.length;
-    message.success(`已保存 ${drafts.length} 格到归档内存（点主工具条「保存 PVF」才落盘）`);
+    const parts: string[] = [];
+    if (drafts.length > 0) parts.push(`${drafts.length} 格`);
+    if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
+    message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
     // 查看器里那份（某处 [list]）不在主投影里，得单独重取一次，否则它还停在被改之前的旧值。
     if (viewerVisible.value && viewerSection.value) {
       const target = viewerSection.value;
@@ -1331,16 +1387,23 @@ function resetColumnWidths(): void {
                 添加掉落
               </NButton>
               <span class="fv-tools-gap" />
-              <span v-if="pendingCount > 0" class="fv-tools-dirty">
-                未保存 {{ pendingCount }} 格
+              <span v-if="pendingCount + pendingInsertCount > 0" class="fv-tools-dirty">
+                未保存 {{ pendingCount }} 格{{
+                  pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
+                }}
               </span>
-              <NButton size="tiny" quaternary :disabled="pendingCount === 0" @click="discardDrafts">
+              <NButton
+                size="tiny"
+                quaternary
+                :disabled="pendingCount + pendingInsertCount === 0"
+                @click="discardDrafts"
+              >
                 放弃改动
               </NButton>
               <NButton
                 size="tiny"
                 type="primary"
-                :disabled="pendingCount === 0"
+                :disabled="pendingCount + pendingInsertCount === 0"
                 :loading="saving"
                 @click="saveDrafts"
               >
@@ -1613,6 +1676,19 @@ function resetColumnWidths(): void {
           <span v-if="dropMonsterName(dropMonsterId)" class="fv-drop-name">
             {{ dropMonsterName(dropMonsterId) }}
           </span>
+          <span
+            v-else-if="
+              dropMonsterId.trim() !== '' &&
+              !isNamePending(
+                mainSection,
+                columnIndexOfRef(mainSection, 'monster'),
+                dropMonsterId
+              )
+            "
+            class="fv-drop-hint"
+          >
+            （查不到该编号）
+          </span>
         </div>
 
         <div class="fv-drop-row">
@@ -1790,6 +1866,16 @@ function resetColumnWidths(): void {
           </div>
           <div class="fv-viewer-hint">
             双击格子可改（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档内存。
+          </div>
+          <div v-if="pendingCandidates(viewerSection).length" class="fv-viewer-hint">
+            待提交候选（还没写进归档）：
+            <span
+              v-for="(item, index) in pendingCandidates(viewerSection)"
+              :key="index"
+              class="fv-drop-name"
+            >
+              {{ item.itemId }} / {{ item.weight }}&nbsp;&nbsp;
+            </span>
           </div>
           <div class="fv-drop-row">
             <NButton size="tiny" type="primary" ghost @click="startViewerAdd">
