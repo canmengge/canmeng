@@ -124,12 +124,40 @@ export const useArchiveStore = defineStore("archive", () => {
   }
 
   /**
+   * 路径不存在（"记住的上次归档"被搬走 / 改名）—— 这不是"打开失败"，
+   * 不该弹红框吓人。用户 2026-10-03 截图：启动时自动打开 `D:\115us\PVF Ai Agent\Script.pvf`
+   * 而那个文件夹已经不在了，结果弹了一个「打开 PVF 失败」的错误框。
+   */
+  function isMissingPath(message: string): boolean {
+    const lower = message.toLowerCase();
+    return (
+      lower.includes("cannot find the path") ||
+      lower.includes("no such file") ||
+      lower.includes("系统找不到指定的路径") ||
+      lower.includes("找不到指定的路径") ||
+      lower.includes("系统找不到指定的文件") ||
+      lower.includes("the system cannot find the file")
+    );
+  }
+
+  /**
    * 记录一次打开失败，供顶层 ArchiveErrorDialog 统一弹窗（含「选择 sk.dat 文件…」按钮）。
    * 2026-09-29：用户取消不算失败；真正的失败也不再由各入口各发一条右下角 message。
+   * 2026-10-03：**路径不存在**同样不算失败 —— 清掉这条失效记录，交给状态栏给一句人话提示。
    */
   function recordOpenError(e: any): void {
     const message = String(e?.message ?? e);
     if (isOpenCancelled(message)) return;
+    if (isMissingPath(message)) {
+      // 把失效路径从"最近归档"里剔除，免得每次启动都拿它去撞一次墙。
+      const stale = message.match(/[A-Za-z]:\\[^\r\n]*?\.pvf/i)?.[0]?.trim();
+      if (stale) {
+        recentArchives.value = recentArchives.value.filter((item) => item !== stale);
+        persistRecentArchives();
+      }
+      loadError.value = message;
+      return;
+    }
     openError.value = { kind: message.includes("sk.dat") ? "skdat" : "other", message };
   }
 

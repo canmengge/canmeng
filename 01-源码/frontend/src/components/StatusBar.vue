@@ -33,6 +33,20 @@ const dev = useDevStore();
 const message = useMessage();
 const rebuildingIndex = ref(false);
 
+// 启动时自动打开的"上次归档"路径已失效（被搬走 / 改名）：不弹红框，这里给一句人话提示。
+// 用户 2026-10-03 实测：那个红框「打开 PVF 失败」实际只是路径没了，点掉后重新选归档即可。
+watch(
+  () => archive.loadError,
+  (text) => {
+    if (!text) return;
+    if (!/cannot find the path|no such file|找不到指定的(路径|文件)/i.test(text)) return;
+    message.warning(`上次打开的归档已不存在（可能被搬走或改名）：${text}`, {
+      duration: 10000,
+      closable: true,
+    });
+  }
+);
+
 // B-02：打开归档时若检测到上次保存的残留临时文件（.pvftmp），提示用户。
 watch(
   () => archive.saveRemnant,
