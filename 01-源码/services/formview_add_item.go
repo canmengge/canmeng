@@ -150,6 +150,26 @@ type sectionAppendPlan struct {
 	rowIndent string
 }
 
+// nextLineBreak 找从 from 开始的下一处换行，返回「本行结束位置」与「下一行开始位置」。
+//
+// **三种换行都要认**（`\r\n` / `\n` / `\r`）：这份归档是**混用**的 —— 文件里既有 CRLF
+// 也有单独的 LF（2026-10-03 按字节核对发现）。早先只认 `\r\n`，于是整个文件被当成
+// **一行**，标签行永远匹配不上，报出"文件里找不到段 [independent drop] 的第 1 次出现"。
+func nextLineBreak(text string, from int) (int, int) {
+	if from >= len(text) {
+		return len(text), len(text)
+	}
+	index := from
+	for index < len(text) && text[index] != '\r' && text[index] != '\n' {
+		index++
+	}
+	next := index
+	for next < len(text) && (text[next] == '\r' || text[next] == '\n') {
+		next++
+	}
+	return index, next
+}
+
 // whitespaceBefore 取 offset 之前那一段空白：先吃掉行首缩进（空格 / 制表符），再吃掉换行。
 // 结果就是"上一条目与本条目之间"的分隔符。
 func whitespaceBefore(text string, offset int) string {
@@ -186,17 +206,8 @@ func planSectionAppend(text, section string, occurrence int) (sectionAppendPlan,
 	foundRow := false
 
 	for lineStart := 0; lineStart <= len(text); {
-		lineRest := text[lineStart:]
-		lineEnd := strings.IndexAny(lineRest, "\r\n")
-		line := lineRest
-		next := len(text)
-		if lineEnd >= 0 {
-			line = lineRest[:lineEnd]
-			next = lineStart + lineEnd
-			for next < len(text) && (text[next] == '\r' || text[next] == '\n') {
-				next++
-			}
-		}
+		lineEnd, next := nextLineBreak(text, lineStart)
+		line := text[lineStart:lineEnd]
 		trimmed := strings.TrimSpace(line)
 
 		switch {

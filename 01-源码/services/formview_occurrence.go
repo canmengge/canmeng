@@ -65,17 +65,8 @@ func sectionTokenSpans(text, section string, occurrence int) ([]tokenSpan, error
 	var stack []string
 
 	for lineStart := 0; lineStart <= len(text); {
-		lineRest := text[lineStart:]
-		lineEnd := strings.IndexAny(lineRest, "\r\n")
-		line := lineRest
-		nextLine := len(text)
-		if lineEnd >= 0 {
-			line = lineRest[:lineEnd]
-			nextLine = lineStart + lineEnd
-			for nextLine < len(text) && (text[nextLine] == '\r' || text[nextLine] == '\n') {
-				nextLine++
-			}
-		}
+		lineEnd, nextLine := nextLineBreak(text, lineStart)
+		line := text[lineStart:lineEnd]
 		trimmed := strings.TrimSpace(line)
 
 		switch {
