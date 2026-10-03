@@ -1056,7 +1056,17 @@ export const useEditorStore = defineStore("editor", () => {
     const indexes = (data?.fileIndexes ?? []).filter(
       (value: unknown): value is number => typeof value === "number",
     );
-    if (indexes.length > 0) void refreshBatchFiles(indexes);
+    if (indexes.length === 0) return;
+    if (data?.source === "formview") {
+      // 来源是**可视化编辑区**：那份文件以可视化那边的结果写进了归档。
+      // `refreshBatchFiles` 有意保留原始文本基准（供批处理后续续改），但在这个场景下
+      // 旧基准会让标签一直显示"还有改动没保存"的绿点，诱使用户再存一次
+      // （用户 2026-10-03 截图反馈：可视化保存后 independent_drop.etc 挂着绿点）。
+      // 所以这里整份重载：text 与 original 一起重置，绿点随之消失。
+      void Promise.all(indexes.map((index) => reloadFileFromArchive(index)));
+      return;
+    }
+    void refreshBatchFiles(indexes);
   });
   Events.On("archive:registrations-changed", (event: any) => {
     const data = event?.data ?? event;

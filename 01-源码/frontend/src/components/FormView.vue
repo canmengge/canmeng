@@ -17,8 +17,11 @@
  * 该格**双击**会打开被引用段（紧跟其后的 [list]）—— 那里的候选（物品 / 权重）**也能改**
  * （用户 2026-10-03 要求：内联列表不能只读，否则可视化没意义）。
  *
- * 编辑模型（对齐装备文本编辑）：**先改前端草稿、立刻显示；点「保存改动」才写进归档内存；
- * 主工具条「保存 PVF」才落盘**。草稿自带段信息，所以主表与各处内联列表可以混在一次提交里。
+ * 编辑模型（对齐装备文本编辑）：**先改前端草稿、立刻显示；点「保存改动」→ 写进归档内存
+ * 并立即写入 PVF 文件（落盘）**。草稿自带段信息，所以主表与各处内联列表可以混在一次提交里。
+ *
+ * 2026-10-03 用户要求：可视化这边的「保存改动」就该等于"保存这个掉落文件"，
+ * 不该只改内存、再让用户回主窗口点一次「保存 PVF」（那样主窗口标签还会挂个绿点）。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 // 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
@@ -946,8 +949,10 @@ const editing = ref<EditState | null>(null);
 const editText = ref("");
 /** 已经写进**归档内存**（还没落盘）的格数。 */
 const editedCount = ref(0);
-/** 正在把草稿提交给后端。 */
+/** 正在把草稿提交给后端（写归档内存）。 */
 const saving = ref(false);
+/** 正在把归档写进 PVF 文件（落盘，可能十几秒）。 */
+const savingToPvf = ref(false);
 
 /**
  * 一条草稿：**自带所在段**（段名 + 出现序号）。
@@ -1120,7 +1125,12 @@ async function saveDrafts(): Promise<void> {
     if (drafts.length > 0) parts.push(`${drafts.length} 格`);
     if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
     if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
-    message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
+    // 用户 2026-10-03 要求：**可视化的「保存改动」= 直接保存这个掉落文件**。
+    // 只写归档内存的话，主窗口那个标签会一直挂着"还有改动没保存"的绿点，
+    // 用户还得再点一次「保存 PVF」—— 那正是他要消掉的"多一步"。
+    // 所以这里接着走主工具条同一条落盘通道（封包进度 / 取消都沿用）。
+    const persisted = await persistToSource();
+
     // 查看器里那份（某处 [list]）不在主投影里，得单独重取一次，否则它还停在被改之前的旧值。
     if (viewerVisible.value && viewerSection.value) {
       const target = viewerSection.value;
@@ -1131,10 +1141,41 @@ async function saveDrafts(): Promise<void> {
         // 取不到就保持原样（不覆盖、不报错：主表那边已经刷新成功）。
       }
     }
+    const summary = parts.join(" + ");
+    if (persisted) {
+      message.success(`已保存 ${summary} 并写入 PVF 文件`);
+    } else {
+      message.warning(
+        `已保存 ${summary} 到归档内存，但写入 PVF 文件没成功：可回主窗口点「保存 PVF」重试`
+      );
+    }
   } catch (issue: any) {
     message.error(String(issue?.message ?? issue));
   } finally {
     saving.value = false;
+  }
+}
+
+/**
+ * 把归档写进 PVF 文件（与主工具条「保存 PVF」同一条通道：`editor.save()`）。
+ *
+ * 独立窗口里调用同样有效 —— 归档在后端是同一份，本窗口的 `editor` store 即使
+ * 一个标签都没有，`EditorService.Save()` 照样把当前归档整体落盘。
+ * 返回是否成功（失败时提示里带上原因，不吞错）。
+ */
+async function persistToSource(): Promise<boolean> {
+  savingToPvf.value = true;
+  try {
+    await editor.save();
+    return true;
+  } catch (issue: any) {
+    const text = String(issue?.message ?? issue);
+    if (!/cancel|已取消/i.test(text)) {
+      message.error(`写入 PVF 文件失败：${text}`);
+    }
+    return false;
+  } finally {
+    savingToPvf.value = false;
   }
 }
 
@@ -1314,7 +1355,7 @@ function resetColumnWidths(): void {
           size="small"
           :bordered="false"
           type="warning"
-          title="主表可双击改值 / 批量改；改的是归档内存，点主工具条「保存 PVF」才落盘。关联的内联列表只读。"
+          title="主表可双击改值；改完点「保存改动」就写进归档内存并保存到 PVF 文件。关联的内联列表在主表里只读（在它自己的查看器里可改）。"
         >
           可编辑
         </NTag>
@@ -1498,11 +1539,14 @@ function resetColumnWidths(): void {
               <NButton
                 size="tiny"
                 type="primary"
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount === 0"
-                :loading="saving"
+                :disabled="
+                  pendingCount + pendingInsertCount + pendingDeleteCount === 0 || savingToPvf
+                "
+                :loading="saving || savingToPvf"
+                title="写进归档内存，并立即保存到 PVF 文件（不用再回主窗口点「保存 PVF」）"
                 @click="saveDrafts"
               >
-                保存改动
+                {{ savingToPvf ? "正在写入 PVF…" : "保存改动" }}
               </NButton>
               <!-- 「批量改」按钮已按用户 2026-10-03 要求撤下（"现在那个有问题不好用，后续我再改"）：
                    面板与脚本都留着（batchVisible 控制，不会显示），下次接回来只加回这一颗按钮即可。 -->
@@ -1757,9 +1801,11 @@ function resetColumnWidths(): void {
       </div>
       <span class="fv-foot-hint">
         <template v-if="editedCount > 0">
-          已存入归档内存 {{ editedCount }} 格 · 未落盘（点主工具条「保存 PVF」）
+          本次已保存 {{ editedCount }} 格（含写入 PVF 文件）
         </template>
-        <template v-else>窗口可左右拉伸 · 双击格子改值（先存草稿，点「保存改动」写进归档）</template>
+        <template v-else>
+          窗口可左右拉伸 · 双击格子改值（先存草稿，点「保存改动」写进归档并保存到 PVF 文件）
+        </template>
       </span>
     </footer>
 
@@ -1899,8 +1945,8 @@ function resetColumnWidths(): void {
         </div>
 
         <div class="fv-drop-hint">
-          写入位置：最后一个 [/independent drop] 之前（追加到该段末尾）。先写进归档内存，
-          点主工具条「保存 PVF」才落盘。
+          写入位置：最后一个 [/independent drop] 之前（追加到该段末尾）。点「保存改动」
+          即写进归档内存并保存到 PVF 文件。
         </div>
         <div class="fv-drop-actions">
           <NButton size="small" @click="dropFormVisible = false">取消</NButton>
@@ -1951,7 +1997,7 @@ function resetColumnWidths(): void {
                         viewerEditing.row === row.index &&
                         viewerEditing.column === index,
                     }"
-                    title="双击改值（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档"
+                    title="双击改值（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」写进归档并保存到 PVF 文件"
                     @dblclick="startViewerEdit(row, index)"
                   >
                     <NInput
