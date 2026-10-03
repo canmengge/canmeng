@@ -2359,9 +2359,15 @@ function resetColumnWidths(): void {
   padding: 0;
 }
 
-/* 让 Naive 的 NSpin 两层容器也参与纵向 flex，固定区与滚动区才能真正分成上下两块 */
-.fv-body > .n-spin-container,
-.fv-body .n-spin-content {
+/* 让 Naive 的 NSpin 两层容器也参与纵向 flex，固定区与滚动区才能真正分成上下两块。
+ *
+ * ⚠️ 必须走 `:deep()`：本组件的样式是 `<style scoped>`，而 NSpin 生成的
+ * `.n-spin-container` / `.n-spin-content` 上**没有本组件的 data-v 标记** ——
+ * 直接写 `.fv-body > .n-spin-container` 永远匹配不上（2026-10-03 实测：
+ * 中间层没被约束 → 表格按内容撑高 → 被 .fv-body 的 overflow:hidden 裁掉 →
+ * "滚不动、只显示 27 行"）。 */
+.fv-body > :deep(.n-spin-container),
+.fv-body :deep(.n-spin-content) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
