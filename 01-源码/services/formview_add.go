@@ -147,6 +147,9 @@ func (s *FormViewService) AddIndependentDrop(
 	if _, _, err := s.c.setText(index, updatedText); err != nil {
 		return nil, err
 	}
+	// 同 ApplyCellEdits：广播出去，让主窗口的编辑区刷新这个文件的标签，
+	// 否则那份旧文本副本一保存就把刚加的条目覆盖掉。
+	emitFormViewFileChanged(index)
 
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()

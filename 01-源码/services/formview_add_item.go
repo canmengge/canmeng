@@ -112,6 +112,8 @@ func (s *FormViewService) AddDropCandidate(
 	if _, _, err := s.c.setText(index, updatedText); err != nil {
 		return nil, err
 	}
+	// 同 ApplyCellEdits：广播出去，让主窗口的编辑区刷新这个文件的标签。
+	emitFormViewFileChanged(index)
 
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()

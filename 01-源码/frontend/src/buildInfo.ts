@@ -8,7 +8,7 @@
  * **自 4.4 起界面版本与更新清单统一为三段号**（用户 2026-09-28 要求），
  * 所以这里写的就是对外的正式版本号，与 `stable.json` 的 `version` 完全一致。
  */
-export const TEST_BUILD_NO = "4.9.2";
+export const TEST_BUILD_NO = "4.9.3";
 
 /** 状态栏显示的版本标签。 */
 export const BUILD_LABEL = `版本号${TEST_BUILD_NO}`;

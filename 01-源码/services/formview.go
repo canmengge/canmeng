@@ -448,6 +448,12 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 	if _, _, err := s.c.setText(index, updatedText); err != nil {
 		return nil, err
 	}
+	// ⑤-b 广播「这个文件被改过」。
+	//
+	// 主窗口可能把这个文件开在「归档编辑」里，那份标签持有的是**打开时的旧文本副本**；
+	// 不同步的话，用户一保存就把这里的改动覆盖掉（2026-10-03 实测丢过改动）。
+	// 复用现有通道：编辑区 store 监听 archive:batch-applied 并按 fileIndexes 重拉标签。
+	emitFormViewFileChanged(index)
 
 	// ⑥ 回读并重新投影，界面直接换新结果，不必再请求一次。
 	s.c.mu.RLock()
@@ -467,6 +473,21 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 	result := formview.Project(filePath, format, pvf.ParseScriptView(freshText))
 	s.fillRefNames(result.Sections, format, fresh, &result.Warnings)
 	return result, nil
+}
+
+// emitFormViewFileChanged 广播「结构化视图改了某个文件」。
+//
+// 复用批量 / 脚本那条现成通道（`archive:batch-applied`）：主窗口的编辑区 store 监听它，
+// 会按 `fileIndexes` 重拉对应标签的内容。**不广播就会丢改动** —— 编辑区里那份标签持有
+// 打开时的旧文本副本，用户一保存就把可视化这边的改动覆盖掉（2026-10-03 用户实测丢过条目）。
+//
+// structural=false：这里只改文本、不动条目表，所以文件索引不会变，不需要重建树。
+func emitFormViewFileChanged(index int32) {
+	emitEvent("archive:batch-applied", map[string]any{
+		"structural":  false,
+		"fileIndexes": []int32{index},
+		"source":      "formview",
+	})
 }
 
 // sectionOccurrence 单独投影「某段第 N 次出现」。
