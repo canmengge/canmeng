@@ -65,7 +65,7 @@ git ls-files --eol <路径>                            # 查行尾（i/ = 索引
 
 | 要做的事 | 命令 |
 | --- | --- |
-| 构建开发版 exe + 核验 + 打印该告知用户的原话 | `scripts/build-dev.ps1` |
+| 构建开发版 exe + 核验 + 打印该告知用户的原话 | `scripts/build-dev.ps1`（**内置版号闸门**：`buildInfo.ts` 的号必须等于 `-Version`、且大于已用过的最大 git tag，**不通过直接失败不构建**；通过后打印「版本号 旧 → 新」，必须原样写进给用户的回复） |
 | 核验正式版 exe（PE 头 / 图标 / 版本 / 内嵌字面量 / 哈希） | `scripts/verify-exe.ps1 -Exe "<exe路径>" -Literals "4.6.0","取消封包"` |
 | PVF 内容分析（列文件 / 统计扩展名 / 读单文件 / 搜索 / 按清单提取） | `scripts/pvf.ps1 -Action <动作> [...]` |
 
