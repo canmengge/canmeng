@@ -95,10 +95,13 @@ type closeCoordinator struct {
 	// scriptWindow lets the quit path release the detached script window without
 	// waiting for its own close confirmation.
 	scriptWindow *services.ScriptWindowService
+	// formViewWindow 是「结构化视图」独立窗口；它只读、没有未保存内容，但主窗口
+	// 一旦关掉它就失去了入口，所以退出路径也一并关掉。
+	formViewWindow *services.FormViewWindowService
 }
 
-func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWindowService) *closeCoordinator {
-	coordinator := &closeCoordinator{app: app, scriptWindow: scriptWindow}
+func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWindowService, formViewWindow *services.FormViewWindowService) *closeCoordinator {
+	coordinator := &closeCoordinator{app: app, scriptWindow: scriptWindow, formViewWindow: formViewWindow}
 	app.Event.On(closeConfirmedEvent, func(*application.CustomEvent) {
 		logging.For("window").Warn("收到关闭确认：放行关闭")
 		coordinator.allowWindowClosing.Store(true)
@@ -113,6 +116,9 @@ func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWind
 				if coordinator.scriptWindow != nil && window.Name() == mainWindowName {
 					coordinator.scriptWindow.AllowScriptWindowClose()
 					coordinator.scriptWindow.CloseScriptWindowIfOpen()
+				}
+				if coordinator.formViewWindow != nil && window.Name() == mainWindowName {
+					coordinator.formViewWindow.CloseFormViewWindowIfOpen()
 				}
 				window.Close()
 				addressable = true
@@ -136,6 +142,9 @@ func newCloseCoordinator(app *application.App, scriptWindow *services.ScriptWind
 		if coordinator.scriptWindow != nil {
 			coordinator.scriptWindow.AllowScriptWindowClose()
 			coordinator.scriptWindow.CloseScriptWindowIfOpen()
+		}
+		if coordinator.formViewWindow != nil {
+			coordinator.formViewWindow.CloseFormViewWindowIfOpen()
 		}
 		app.Quit()
 	})
@@ -372,8 +381,10 @@ func main() {
 	app.RegisterService(application.NewService(updaterSvc))
 	scriptWindowService := services.NewScriptWindowService(app)
 	app.RegisterService(application.NewService(scriptWindowService))
+	formViewWindowService := services.NewFormViewWindowService(app)
+	app.RegisterService(application.NewService(formViewWindowService))
 	app.RegisterService(application.NewService(services.NewLogService()))
-	closeCoordinator := newCloseCoordinator(app, scriptWindowService)
+	closeCoordinator := newCloseCoordinator(app, scriptWindowService, formViewWindowService)
 
 	// MCP 服务：默认关闭；环境变量 PVFINE_MCP=1 或设置里的「MCP 只读服务」开关开启时，
 	// 以 HTTP 方式开放（仅本机回环、只暴露只读工具）。用于让外部 AI 客户端读取归档

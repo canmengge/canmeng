@@ -7,13 +7,23 @@ import {
   type FormViewFormatInfo,
   type FormViewProjection,
 } from "../services/formViewApi";
+import {
+  IsFormViewWindowOpen,
+  OpenFormViewWindow,
+  type FormViewSession,
+} from "../services/formViewWindowApi";
 import { useArchiveStore } from "./archive";
 
 /**
- * 结构化视图面板状态：按规则把**文件**投影成「段 → 行 → 列」表格（只读）。
+ * 结构化视图状态：按规则把**文件**投影成「段 → 行 → 列」表格（只读）。
  *
- * 数据全部来自 Go 侧 `FormViewService`（只读投影），这里只负责取数与界面状态。
- * 与对象视图的区别：对象视图是「一个 ID → 关联文件」，这里是「一个文件 → 结构化表格」。
+ * 两种运行位置共用这一个 store：
+ *   - 侧栏面板（主窗口内）
+ *   - **独立窗口**（`?view=formview`，另一个 webview，**有自己的 store 实例**）
+ *
+ * 独立窗口拿不到主窗口的归档 store（每个 webview 各一份 Pinia），所以那里
+ * 初始参数来自 Go 侧暂存的 `FormViewSession`；而**归档本身不用传** —— 投影是
+ * Go 侧 core 在读已打开的归档，两个窗口共用同一个进程。
  */
 export const useFormViewStore = defineStore("formView", () => {
   const archive = useArchiveStore();
@@ -30,10 +40,14 @@ export const useFormViewStore = defineStore("formView", () => {
   const projecting = ref(false);
   const error = ref("");
 
+  /** 本实例是否跑在独立窗口里。 */
+  const detached = ref(false);
+  const windowOpen = ref(false);
+
   /** 归档切换时自增，用于丢弃迟到的响应。 */
   const sessionId = ref(0);
 
-  const ready = computed(() => archive.open);
+  const ready = computed(() => archive.open || detached.value);
   const canProject = computed(
     () => ready.value && !projecting.value && filePath.value.trim() !== ""
   );
@@ -46,11 +60,13 @@ export const useFormViewStore = defineStore("formView", () => {
 
   watch(
     () => archive.info?.path ?? "",
-    () => reset()
+    () => {
+      // 独立窗口没有归档 store，路径恒为空，别让它把自己重置掉。
+      if (!detached.value) reset();
+    }
   );
 
   watch(formatId, (next) => {
-    // 切换文件族时把路径预填成规则里的第一个路径，省得手敲。
     const format = formats.value.find((entry) => entry.id === next);
     if (format && format.files.length > 0) {
       filePath.value = format.files[0];
@@ -102,13 +118,43 @@ export const useFormViewStore = defineStore("formView", () => {
     projection.value = null;
     try {
       const result = await ProjectFile(filePath.value.trim());
-      if (session !== sessionId.value || (archive.info?.path ?? "") !== archivePath) return;
+      if (session !== sessionId.value) return;
+      if (!detached.value && (archive.info?.path ?? "") !== archivePath) return;
       projection.value = result;
     } catch (issue: any) {
       if (session !== sessionId.value) return;
       error.value = String(issue?.message ?? issue);
     } finally {
       if (session === sessionId.value) projecting.value = false;
+    }
+  }
+
+  /** 独立窗口启动时：用主窗口暂存的参数初始化，并立即投影一次。 */
+  async function initFromSession(session: FormViewSession | null): Promise<void> {
+    detached.value = true;
+    await loadFormats();
+    if (session) {
+      if (session.formatId) formatId.value = session.formatId;
+      if (session.filePath) filePath.value = session.filePath;
+    }
+    if (filePath.value.trim() !== "") await project();
+  }
+
+  /** 在独立窗口里打开当前这个「文件族 + 路径」。 */
+  async function openInWindow(): Promise<void> {
+    await OpenFormViewWindow({
+      formatId: formatId.value,
+      filePath: filePath.value.trim(),
+    });
+    windowOpen.value = true;
+  }
+
+  /** 查询独立窗口是否开着（面板显示状态用）。 */
+  async function refreshWindowOpen(): Promise<void> {
+    try {
+      windowOpen.value = await IsFormViewWindowOpen();
+    } catch {
+      windowOpen.value = false;
     }
   }
 
@@ -131,12 +177,17 @@ export const useFormViewStore = defineStore("formView", () => {
     projecting,
     error,
     ready,
+    detached,
+    windowOpen,
     canProject,
     formatOptions,
     currentFormat,
     loadFormats,
     reloadRules,
     project,
+    initFromSession,
+    openInWindow,
+    refreshWindowOpen,
     reset,
   };
 });

@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import ScriptWindow from "./ScriptWindow.vue";
+import FormViewWindow from "./FormViewWindow.vue";
 import "./style.css";
 import { applyTheme, getTheme } from "./theme";
 
@@ -11,7 +12,8 @@ applyTheme(getTheme("dark"));
 // 资产服务器没有 SPA 回退（未命中的路径直接 404），所以第二个窗口用
 // query 而不是路径来选择视图。默认加载主窗口。
 const view = new URLSearchParams(window.location.search).get("view");
-const root = view === "script" ? ScriptWindow : App;
+const root =
+  view === "script" ? ScriptWindow : view === "formview" ? FormViewWindow : App;
 
 const app = createApp(root);
 app.use(createPinia());
