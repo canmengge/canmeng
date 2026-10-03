@@ -640,26 +640,109 @@ const pendingInsertCount = computed(() => pendingInserts.value.length);
 const pendingDeletes = ref<number[]>([]);
 const pendingDeleteCount = computed(() => pendingDeletes.value.length);
 
-/** 当前选中的行（点行选中；点已选中的行取消选中）。 */
-const selectedRow = ref<number | null>(null);
+/**
+ * 选中的行（可多选；用户 2026-10-03 要求与系统资源管理器同一套操作）：
+ * - 单击：只选这一行；再点同一行（且当时只有它被选中）：取消选中
+ * - **Ctrl + 左键**：把这一行加进选中集 / 从选中集移除
+ * - **Shift + 左键**：从「上一次单击的那行」连选到这一行（同一页内，跟系统一致）
+ * - Ctrl + Shift + 左键：在已有选中集上追加一整片
+ *
+ * 用 `Set` 而不是"单个行号"：删除要能一次删多条（用户明确要求
+ * "删除那边可以选择删除多个列表掉落"）。
+ */
+const selectedRows = ref<Set<number>>(new Set());
+/** 连选的锚点：上一次不带 Shift 点击的那一行。 */
+const selectAnchor = ref<number | null>(null);
 
-function toggleSelectRow(row: FormViewRow): void {
-  selectedRow.value = selectedRow.value === row.index ? null : row.index;
+/**
+ * 吸顶那块（段标题 + 搜索行 + 操作按钮）的**实时高度**。
+ *
+ * 用途：表头自己也要吸顶，得知道"上面那块有多高"，才知道自己钉在第几像素
+ * （CSS 里读 `--fv-fixed-h`）。用 ResizeObserver 而不是写死数值 —— 换行/缩放/文案变化
+ * 都会改变高度，写死就会出现表头被压住或浮一条缝。
+ */
+const fixedRef = ref<HTMLElement | null>(null);
+const fixedHeight = ref(0);
+let fixedObserver: ResizeObserver | null = null;
+
+watch(
+  fixedRef,
+  (element) => {
+    fixedObserver?.disconnect();
+    fixedObserver = null;
+    if (!element) {
+      fixedHeight.value = 0;
+      return;
+    }
+    fixedObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) fixedHeight.value = Math.round(entry.contentRect.height);
+    });
+    fixedObserver.observe(element);
+    fixedHeight.value = Math.round(element.getBoundingClientRect().height);
+  },
+  { immediate: true, flush: "post" }
+);
+
+onUnmounted(() => {
+  fixedObserver?.disconnect();
+  fixedObserver = null;
+});
+
+function onRowClick(row: FormViewRow, event: MouseEvent): void {
+  const index = row.index;
+  if (event.shiftKey && selectAnchor.value !== null) {
+    const order = pagedRows.value.map((item) => item.index);
+    const from = order.indexOf(selectAnchor.value);
+    const to = order.indexOf(index);
+    if (from >= 0 && to >= 0) {
+      const start = Math.min(from, to);
+      const end = Math.max(from, to);
+      const next = event.ctrlKey || event.metaKey ? new Set(selectedRows.value) : new Set<number>();
+      for (let position = start; position <= end; position += 1) next.add(order[position]);
+      selectedRows.value = next;
+      return;
+    }
+  }
+  if (event.ctrlKey || event.metaKey) {
+    const next = new Set(selectedRows.value);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    selectedRows.value = next;
+    selectAnchor.value = index;
+    return;
+  }
+  if (selectedRows.value.size === 1 && selectedRows.value.has(index)) {
+    selectedRows.value = new Set();
+    selectAnchor.value = null;
+    return;
+  }
+  selectedRows.value = new Set([index]);
+  selectAnchor.value = index;
 }
 
+function clearSelection(): void {
+  selectedRows.value = new Set();
+  selectAnchor.value = null;
+}
+
+/** 把选中的行**全部**加入待删除（保存时才真正删；删除按行号从大到小执行，不会错位）。 */
 function queueDeleteSelected(): void {
-  const index = selectedRow.value;
-  if (index === null) {
-    message.warning("先点一行选中它");
+  const targets = [...selectedRows.value];
+  if (targets.length === 0) {
+    message.warning("先选中要删的行：单击选一行 · Ctrl+左键多选 · Shift+左键连选一片");
     return;
   }
-  if (pendingDeletes.value.includes(index)) {
-    message.info("这一行已经在待删除列表里了");
+  const fresh = targets.filter((index) => !pendingDeletes.value.includes(index));
+  if (fresh.length === 0) {
+    message.info("选中的行都已经在待删除列表里了");
     return;
   }
-  pendingDeletes.value = [...pendingDeletes.value, index].sort((left, right) => left - right);
-  selectedRow.value = null;
-  message.success("已加入待删除（点上方「保存改动」才真正删除）");
+  pendingDeletes.value = [...pendingDeletes.value, ...fresh].sort((left, right) => left - right);
+  clearSelection();
+  message.success(
+    `已把 ${fresh.length} 条加入待删除（共 ${pendingDeletes.value.length} 条，点上方「保存改动」才真正删除）`
+  );
 }
 
 /** 该处 `[list]` 排队中的候选（查看器里显示成"还没保存"的行）。 */
@@ -1067,7 +1150,7 @@ function discardDrafts(): void {
   pendingEdits.value = new Map();
   pendingInserts.value = [];
   pendingDeletes.value = [];
-  selectedRow.value = null;
+  clearSelection();
   message.info("已放弃未保存的改动");
 }
 
@@ -1360,18 +1443,9 @@ function resetColumnWidths(): void {
         >
           解析
         </NButton>
-        <NButton
-          size="small"
-          quaternary
-          :loading="formView.formatsLoading"
-          @click="formView.reloadRules()"
-        >
-          重新读规则
-        </NButton>
       </div>
-      <div class="fv-form-sub">
-        <span class="fv-rule" :title="formView.rulePath">规则：{{ formView.rulePath }}</span>
-      </div>
+      <!-- 用户 2026-10-03：删掉「规则：<路径>」那一行与「重新读规则」按钮 —— 规则文件内置，
+           不再需要用户关心它放在哪、也不必手动重读。 -->
       <div
         v-if="formView.currentFormat?.notes"
         class="fv-notes"
@@ -1393,28 +1467,16 @@ function resetColumnWidths(): void {
 
       <NSpin v-else :show="formView.projecting">
         <template v-if="formView.projection">
-          <div class="fv-stats">
-            <span class="fv-stats-strong">{{ formView.projection.formatLabel }}</span>
-            <span class="fv-sep">·</span>
-            <span>{{ formView.projection.file }}</span>
-            <span class="fv-sep">·</span>
-            <span>{{ formView.projection.tokenCount }} 个 token</span>
-            <span class="fv-sep">·</span>
-            <span>{{ formView.projection.sections.length }} 个段</span>
-          </div>
-
-          <ul v-if="formView.projection.warnings.length" class="fv-warnings">
-            <li v-for="(warning, index) in formView.projection.warnings" :key="index">
-              {{ warning }}
-            </li>
-          </ul>
-
+          <!-- 用户 2026-10-03 指定删除（红框内）：文件族统计行「独立掉落 · … 个 token · N 个段」
+               与投影级告警（如「段 [dungeon condition] 未在规则中定义」）。 -->
           <template v-if="mainSection">
+            <div ref="fixedRef" class="fv-fixed">
             <div class="fv-section-head">
               <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
               <span class="fv-section-meta">
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列 ·
-                拖表头右边缘调列宽 · 双击格改值 · 带 🔗 的格双击查看关联列表（关联列表只读）
+                单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 ·
+                带 🔗 的格双击查看关联列表
               </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
@@ -1480,11 +1542,11 @@ function resetColumnWidths(): void {
                 size="tiny"
                 type="error"
                 ghost
-                :disabled="selectedRow === null"
-                title="先在表里点一行选中，再点这里（会把这整条掉落删掉，含它自带的候选列表）"
+                :disabled="selectedRows.size === 0"
+                title="先选中要删的行：单击一行 · Ctrl+左键多选 · Shift+左键连选一片（会把这些掉落整条删掉，含各自的候选列表）"
                 @click="queueDeleteSelected"
               >
-                删除选中
+                删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
               </NButton>
               <span class="fv-tools-gap" />
               <span
@@ -1516,6 +1578,8 @@ function resetColumnWidths(): void {
               <!-- 「批量改」按钮已按用户 2026-10-03 要求撤下（"现在那个有问题不好用，后续我再改"）：
                    面板与脚本都留着（batchVisible 控制，不会显示），下次接回来只加回这一颗按钮即可。 -->
             </div>
+            </div>
+            <!-- /.fv-fixed：段标题 + 搜索行 + 操作按钮整体吸顶（滚动表格时永远可见） -->
 
             <div v-if="batchVisible" class="fv-batch">
               <div class="fv-batch-row">
@@ -1572,7 +1636,10 @@ function resetColumnWidths(): void {
               </div>
             </div>
 
-            <table class="fv-table" :style="{ minWidth: 0 }">
+            <table
+              class="fv-table"
+              :style="{ minWidth: 0, '--fv-fixed-h': `${fixedHeight}px` }"
+            >
               <colgroup>
                 <col class="fv-col-index" />
                 <col
@@ -1605,10 +1672,10 @@ function resetColumnWidths(): void {
                   :key="row.index"
                   :class="{
                     'fv-row-incomplete': !row.complete,
-                    'fv-row-selected': selectedRow === row.index,
+                    'fv-row-selected': selectedRows.has(row.index),
                     'fv-row-deleting': pendingDeletes.includes(row.index),
                   }"
-                  @click="toggleSelectRow(row)"
+                  @click="onRowClick(row, $event)"
                 >
                   <td class="fv-td-index">{{ row.index + 1 }}</td>
                   <td
@@ -2202,6 +2269,24 @@ function resetColumnWidths(): void {
   margin: 10px 0 4px;
 }
 
+/*
+ * 段标题 + 搜索行 + 操作按钮**整体吸顶**。
+ *
+ * 用户 2026-10-03 实测反馈："向下滑动的话，前面的 UI 界面就没有了" —— 这一块
+ * （选列/搜索/添加掉落/删除选中/未保存计数/保存改动）必须一直可见，所以
+ * 从滚动流里"钉"在滚动区顶部；背景要不透明，否则表格行会从底下透出来。
+ * 表头（`thead th`）的 `top` 由脚本量出的 `--fv-fixed-h` 决定，正好叠在这块下面。
+ */
+.fv-fixed {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0 -10px;
+  padding: 4px 10px 6px;
+  background: var(--pvf-surface-panel);
+  border-bottom: 1px solid var(--pvf-border-faint);
+}
+
 .fv-section-title {
   font-size: 12px;
   font-weight: 600;
@@ -2261,7 +2346,9 @@ function resetColumnWidths(): void {
 
 .fv-table thead th {
   position: sticky;
-  top: 0;
+  /* 吸顶的那块（段标题 + 搜索行）有多高，表头就从它下面开始钉 —— 两者叠着显示，
+     都由脚本量出的高度驱动（见 .fv-fixed 说明）。 */
+  top: var(--fv-fixed-h, 0px);
   z-index: 2;
   background: var(--pvf-surface-elevated);
   color: var(--pvf-text-secondary);
