@@ -24,6 +24,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 // 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
 // 不新增后端接口（用户 2026-10-03 要求：把 3015 改成 3037 时名字要跟着变）。
 import { ResolveObject } from "../services/objectViewApi";
+import { AddIndependentDrop, type FormViewDropItem } from "../services/formViewApi";
 import {
   NButton,
   NEmpty,
@@ -645,6 +646,124 @@ function rowName(section: FormViewSection | null, row: FormViewRow, index: numbe
   return row.cells[index]?.name ?? "";
 }
 
+// ---- 添加掉落（往 [independent drop] 段末尾追加一条） ----
+//
+// 用户 2026-10-03 要求：搜索后面加一颗「添加掉落」，点开是一张表单 —— 怪物ID 直接填；
+// 掉落物品**二选一**（单一物品 / 掉落物列表 = 内联列表形式，物品+权重可增删）；
+// 掉落率按百分比填（与现有格式一致）；「掉落方式」随选择自动定，不让人填。
+// 写入位置：最后一个 `[/independent drop]` 之前（= 追加到该段末尾）。
+
+const dropFormVisible = ref(false);
+const dropAdding = ref(false);
+const dropIsAPC = ref(false);
+const dropMonsterId = ref("");
+const dropUseList = ref(false);
+const dropItemId = ref("");
+const dropItems = ref<FormViewDropItem[]>([{ itemId: "", weight: "1000" }]);
+const dropRates = ref<string[]>(["100", "100", "100", "100", "100"]);
+const dropCounts = ref<string[]>(["1", "1", "1", "1", "1"]);
+const dropLevelMin = ref("0");
+const dropLevelMax = ref("0");
+const dropJobLimit = ref("-1");
+
+/** 取「列声明里含某个对象类型」的列下标（拿不到返回 -1）。 */
+function columnIndexOfRef(section: FormViewSection | null, want: string): number {
+  const refs = section?.columnRefs ?? [];
+  for (let index = 0; index < refs.length; index += 1) {
+    const candidates = (refs[index] ?? "")
+      .split("|")
+      .map((item) => item.trim());
+    if (candidates.includes(want)) return index;
+  }
+  return -1;
+}
+
+/** 表单里填的怪物ID / 物品ID 也实时解析中文名（复用同一个解析 + 缓存）。 */
+const dropMonsterName = computed(() =>
+  draftName(mainSection.value, columnIndexOfRef(mainSection.value, "monster"), dropMonsterId.value)
+);
+
+function dropItemName(id: string): string {
+  const section = mainSection.value;
+  const refs = section?.columnRefs ?? [];
+  for (let index = 0; index < refs.length; index += 1) {
+    const candidates = (refs[index] ?? "").split("|").map((item) => item.trim());
+    if (candidates.includes("equipment") || candidates.includes("stackable")) {
+      return draftName(section, index, id);
+    }
+  }
+  return "";
+}
+
+function addDropItemRow(): void {
+  dropItems.value = [...dropItems.value, { itemId: "", weight: "1000" }];
+}
+
+function removeDropItemRow(index: number): void {
+  if (dropItems.value.length <= 1) return;
+  dropItems.value = dropItems.value.filter((_, position) => position !== index);
+}
+
+function resetDropForm(): void {
+  dropIsAPC.value = false;
+  dropMonsterId.value = "";
+  dropUseList.value = false;
+  dropItemId.value = "";
+  dropItems.value = [{ itemId: "", weight: "1000" }];
+  dropRates.value = ["100", "100", "100", "100", "100"];
+  dropCounts.value = ["1", "1", "1", "1", "1"];
+  dropLevelMin.value = "0";
+  dropLevelMax.value = "0";
+  dropJobLimit.value = "-1";
+}
+
+async function submitDrop(): Promise<void> {
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再加（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  const rates = dropRates.value.map((value) => Number(value));
+  if (rates.some((value) => !Number.isFinite(value) || value < 0 || value > 100)) {
+    message.warning("掉落率请填 0 ~ 100 的百分比（如 20 表示 20%）");
+    return;
+  }
+  const counts = dropCounts.value.map((value) => Number(value));
+  if (counts.some((value) => !Number.isFinite(value) || value < 0)) {
+    message.warning("个数必须是非负整数");
+    return;
+  }
+  dropAdding.value = true;
+  try {
+    // 直接写进归档内存（不落盘）：插入不是"改一格"，没法当草稿存；
+    // 落盘仍由主工具条「保存 PVF」把关，与其它改动一致。
+    await AddIndependentDrop(formView.filePath.trim(), {
+      isApc: dropIsAPC.value,
+      monsterId: dropMonsterId.value.trim(),
+      useList: dropUseList.value,
+      itemId: dropItemId.value.trim(),
+      list: dropItems.value.map((item) => ({
+        itemId: item.itemId.trim(),
+        weight: item.weight.trim(),
+      })),
+      rates,
+      counts,
+      levelMin: Number(dropLevelMin.value) || 0,
+      levelMax: Number(dropLevelMax.value) || 0,
+      jobLimit: dropJobLimit.value.trim() || "-1",
+    });
+    dropFormVisible.value = false;
+    resetDropForm();
+    await formView.project();
+    message.success("已追加到归档内存（未落盘）：点主工具条「保存 PVF」写进 PVF");
+  } catch (issue: any) {
+    message.error(String(issue?.message ?? issue));
+  } finally {
+    dropAdding.value = false;
+  }
+}
+
 // ---- 单元格编辑（双击改值 → 本地草稿 → 点「保存改动」才进归档） ----
 //
 // 模型（2026-10-03 用户指定，对齐装备文本编辑）：**先改前端、立刻显示；点「保存改动」
@@ -1121,6 +1240,9 @@ function resetColumnWidths(): void {
               <NButton v-if="searchActive" size="tiny" quaternary @click="clearSearch">
                 清除
               </NButton>
+              <NButton size="tiny" type="primary" @click="dropFormVisible = true">
+                添加掉落
+              </NButton>
               <span class="fv-tools-gap" />
               <span v-if="pendingCount > 0" class="fv-tools-dirty">
                 未保存 {{ pendingCount }} 格
@@ -1372,6 +1494,139 @@ function resetColumnWidths(): void {
         <template v-else>窗口可左右拉伸 · 双击格子改值（先存草稿，点「保存改动」写进归档）</template>
       </span>
     </footer>
+
+    <!-- ⑦ 添加掉落（追加到 [independent drop] 段末尾） -->
+    <NModal
+      v-model:show="dropFormVisible"
+      preset="card"
+      title="添加掉落（追加到 [independent drop] 段末尾）"
+      class="fv-drop-modal"
+      :bordered="false"
+      size="small"
+    >
+      <div class="fv-drop">
+        <div class="fv-drop-row">
+          <span class="fv-drop-label">类型</span>
+          <NSelect
+            v-model:value="dropIsAPC"
+            :options="[
+              { label: '怪物', value: false },
+              { label: 'APC', value: true },
+            ]"
+            size="small"
+            class="fv-drop-small"
+          />
+          <span class="fv-drop-label">怪物/APC ID</span>
+          <NInput
+            v-model:value="dropMonsterId"
+            size="small"
+            placeholder="必填，如 20"
+            class="fv-drop-id"
+          />
+          <span v-if="dropMonsterName" class="fv-drop-name">{{ dropMonsterName }}</span>
+        </div>
+
+        <div class="fv-drop-row">
+          <span class="fv-drop-label">掉落物品</span>
+          <NSelect
+            v-model:value="dropUseList"
+            :options="[
+              { label: '单一物品', value: false },
+              { label: '掉落物列表（内联）', value: true },
+            ]"
+            size="small"
+            class="fv-drop-way"
+          />
+          <template v-if="!dropUseList">
+            <NInput
+              v-model:value="dropItemId"
+              size="small"
+              placeholder="物品ID，如 3015"
+              class="fv-drop-id"
+            />
+            <span v-if="dropItemName(dropItemId)" class="fv-drop-name">
+              {{ dropItemName(dropItemId) }}
+            </span>
+          </template>
+          <span v-else class="fv-drop-hint">
+            掉落方式将写为「内联列表(1)」；候选在下方维护
+          </span>
+        </div>
+
+        <div v-if="dropUseList" class="fv-drop-candidates">
+          <div v-for="(item, index) in dropItems" :key="index" class="fv-drop-row">
+            <span class="fv-drop-label">候选 {{ index + 1 }}</span>
+            <NInput
+              v-model:value="item.itemId"
+              size="small"
+              placeholder="物品ID"
+              class="fv-drop-id"
+            />
+            <span v-if="dropItemName(item.itemId)" class="fv-drop-name">
+              {{ dropItemName(item.itemId) }}
+            </span>
+            <NInput
+              v-model:value="item.weight"
+              size="small"
+              placeholder="权重"
+              class="fv-drop-weight"
+            />
+            <NButton
+              size="tiny"
+              quaternary
+              :disabled="dropItems.length <= 1"
+              @click="removeDropItemRow(index)"
+            >
+              删除
+            </NButton>
+          </div>
+          <NButton size="tiny" @click="addDropItemRow">+ 加一条候选</NButton>
+        </div>
+
+        <div class="fv-drop-row">
+          <span class="fv-drop-label">掉落率(%)</span>
+          <NInput
+            v-for="(_, index) in dropRates"
+            :key="`rate-${index}`"
+            v-model:value="dropRates[index]"
+            size="small"
+            class="fv-drop-num"
+          />
+          <span class="fv-drop-hint">依次为难度 1~5（如 20 = 20%）</span>
+        </div>
+        <div class="fv-drop-row">
+          <span class="fv-drop-label">个数</span>
+          <NInput
+            v-for="(_, index) in dropCounts"
+            :key="`count-${index}`"
+            v-model:value="dropCounts[index]"
+            size="small"
+            class="fv-drop-num"
+          />
+          <span class="fv-drop-hint">依次为难度 1~5</span>
+        </div>
+        <div class="fv-drop-row">
+          <span class="fv-drop-label">等级下限</span>
+          <NInput v-model:value="dropLevelMin" size="small" class="fv-drop-num" />
+          <span class="fv-drop-label">等级上限</span>
+          <NInput v-model:value="dropLevelMax" size="small" class="fv-drop-num" />
+          <span class="fv-drop-label">职业限制</span>
+          <NInput v-model:value="dropJobLimit" size="small" class="fv-drop-num" />
+          <span class="fv-drop-hint">-1 = 不限</span>
+        </div>
+
+        <div class="fv-drop-hint">
+          写入位置：最后一个 [/independent drop] 之前（追加到该段末尾）。先写进归档内存，
+          点主工具条「保存 PVF」才落盘。
+        </div>
+        <div class="fv-drop-actions">
+          <NButton size="small" @click="dropFormVisible = false">取消</NButton>
+          <NButton size="small" type="primary" :loading="dropAdding" @click="submitDrop">
+            添加
+          </NButton>
+        </div>
+      </div>
+    </NModal>
 
     <!-- ⑥ 关联段查看器（只读） -->
     <NModal
@@ -1972,6 +2227,73 @@ function resetColumnWidths(): void {
 .fv-batch-hint {
   font-size: 12px;
   color: var(--pvf-text-muted);
+}
+
+/* 「添加掉落」表单 */
+.fv-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fv-drop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fv-drop-label {
+  color: var(--pvf-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fv-drop-small {
+  width: 110px;
+}
+
+.fv-drop-way {
+  width: 180px;
+}
+
+.fv-drop-id {
+  width: 140px;
+}
+
+.fv-drop-weight {
+  width: 100px;
+}
+
+.fv-drop-num {
+  width: 76px;
+}
+
+.fv-drop-name {
+  color: var(--pvf-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fv-drop-hint {
+  color: var(--pvf-text-muted);
+  font-size: 12px;
+}
+
+.fv-drop-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed var(--pvf-border-normal);
+  border-radius: 6px;
+  background: var(--pvf-surface-subtle);
+}
+
+.fv-drop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .fv-viewer {

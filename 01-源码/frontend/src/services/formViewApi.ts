@@ -125,6 +125,44 @@ export interface FormViewCellEdit {
   value: string;
 }
 
+/** 对应 Go `services.FormViewDropItem`：内联列表里的一条候选（物品编号 + 权重）。 */
+export interface FormViewDropItem {
+  itemId: string;
+  weight: string;
+}
+
+/** 对应 Go `services.FormViewDropEntry`：新增一条掉落配置（字段与 17 列一一对应）。 */
+export interface FormViewDropEntry {
+  /** false = 怪物（类型 0）/ true = APC（类型 1）。 */
+  isApc: boolean;
+  monsterId: string;
+  /** true = 内联列表（掉落方式 1）/ false = 单一物品（掉落方式 0）。 */
+  useList: boolean;
+  itemId: string;
+  list: FormViewDropItem[];
+  /** 五个难度的掉落率，**按百分比**（20 = 20%）。 */
+  rates: number[];
+  counts: number[];
+  levelMin: number;
+  levelMax: number;
+  jobLimit: string;
+}
+
+/**
+ * 往 `[independent drop]` 段末尾追加一条配置，返回重新投影后的结果（只改归档内存，不落盘）。
+ * fqn = pvfine/services.FormViewService.AddIndependentDrop
+ *
+ * 方法 ID 是**复算并反验过的**：用 `pvfine/services.ObjectViewService` 的三个已知 ID
+ * （ListObjectTypes / ResolveObject / ReloadRules）验证 FNV-1a-32 算法 3/3 吻合后，
+ * 才算出的这个值 —— 不是猜的。
+ */
+export function AddIndependentDrop(
+  filePath: string,
+  entry: FormViewDropEntry
+): $CancellablePromise<FormViewProjection> {
+  return $Call.ByID(3153989520, filePath, entry);
+}
+
 /**
  * 返回规则文件里定义的全部文件族。
  * fqn = pvfine/services.FormViewService.ListFormats
