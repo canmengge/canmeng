@@ -24,7 +24,11 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 // 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
 // 不新增后端接口（用户 2026-10-03 要求：把 3015 改成 3037 时名字要跟着变）。
 import { ResolveObject } from "../services/objectViewApi";
-import { AddIndependentDrop, type FormViewDropItem } from "../services/formViewApi";
+import {
+  AddDropCandidate,
+  AddIndependentDrop,
+  type FormViewDropItem,
+} from "../services/formViewApi";
 import {
   NButton,
   NEmpty,
@@ -45,7 +49,8 @@ const editor = useEditorStore();
 const message = useMessage();
 
 /** 主表分页大小（一次渲染上万行会拖慢界面）。 */
-const pageSize = 200;
+// 每页行数（用户 2026-10-03：200 → 500）。
+const pageSize = 500;
 const page = ref(1);
 /** 折叠段里最多先渲染多少行。 */
 const inlineRowLimit = 50;
@@ -107,13 +112,15 @@ const linkedSectionKeys = computed(() => {
   return keys;
 });
 
-const otherSections = computed<FormViewSection[]>(() =>
-  (formView.projection?.sections ?? []).filter(
-    (section) =>
-      section !== mainSection.value &&
-      !linkedSectionKeys.value.has(`${section.section.toLowerCase()}#${section.occurrence}`)
-  )
-);
+/**
+ * 「其它段」列表。
+ *
+ * 用户 2026-10-03 要求**去掉**这块 UI：主投影里剩下的都是没被任何行关联的零散段
+ * （例如没配对的几处 `[list]`），铺在下面只会干扰主表。这里直接返回空数组 ⇒
+ * 模板里那段 `v-if="otherSections.length"` 永远不渲染（标记留着，将来若想恢复，
+ * 把下面这段 filter 放回去即可 —— 它过滤的正是"非主段 且 未被行关联认领"的段）。
+ */
+const otherSections = computed<FormViewSection[]>(() => []);
 
 // ---- 搜索（怪物 / 掉落物品：ID 与中文名视为同一个目标）----
 //
@@ -575,6 +582,52 @@ function commitViewerEdit(): void {
     { section, row: state.row, column: state.column, value: viewerEditText.value },
   ]);
   viewerEditing.value = null;
+}
+
+// ---- 查看器里「添加候选」（往这一处 [list] 末尾追加一条） ----
+//
+// 用户 2026-10-03 要求：内联列表里也要能加 —— 只加"物品ID + 权重"，
+// 格式与现有候选行完全一致（两个制表符缩进）。
+
+const viewerAddVisible = ref(false);
+const viewerAddItemId = ref("");
+const viewerAddWeight = ref("1000");
+const viewerAdding = ref(false);
+
+function startViewerAdd(): void {
+  viewerAddItemId.value = "";
+  viewerAddWeight.value = "1000";
+  viewerAddVisible.value = true;
+}
+
+async function submitViewerAdd(): Promise<void> {
+  const section = viewerSection.value;
+  if (!section) return;
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再加（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  viewerAdding.value = true;
+  try {
+    const fresh = await AddDropCandidate(
+      formView.filePath.trim(),
+      section.section,
+      section.occurrence,
+      {
+        itemId: viewerAddItemId.value.trim(),
+        weight: viewerAddWeight.value.trim() || "1000",
+      }
+    );
+    if (fresh) viewerSection.value = fresh;
+    viewerAddVisible.value = false;
+    message.success("已追加候选到归档内存（未落盘）：点主工具条「保存 PVF」写进 PVF");
+  } catch (issue: any) {
+    message.error(String(issue?.message ?? issue));
+  } finally {
+    viewerAdding.value = false;
+  }
 }
 
 // ---- 草稿里的 ref 值 → 中文名（实时解析） ----
@@ -1702,6 +1755,34 @@ function resetColumnWidths(): void {
           <div class="fv-viewer-hint">
             双击格子可改（物品编号 / 权重）—— 改的是本地草稿，点上方「保存改动」才写进归档内存。
           </div>
+          <div class="fv-drop-row">
+            <NButton size="tiny" type="primary" ghost @click="startViewerAdd">
+              添加候选
+            </NButton>
+            <template v-if="viewerAddVisible">
+              <span class="fv-drop-label">物品ID</span>
+              <NInput
+                v-model:value="viewerAddItemId"
+                size="small"
+                placeholder="如 14400"
+                class="fv-drop-id"
+              />
+              <span v-if="dropItemName(viewerAddItemId)" class="fv-drop-name">
+                {{ dropItemName(viewerAddItemId) }}
+              </span>
+              <span class="fv-drop-label">权重</span>
+              <NInput
+                v-model:value="viewerAddWeight"
+                size="small"
+                placeholder="如 1000"
+                class="fv-drop-weight"
+              />
+              <NButton size="tiny" type="primary" :loading="viewerAdding" @click="submitViewerAdd">
+                追加
+              </NButton>
+              <NButton size="tiny" quaternary @click="viewerAddVisible = false">取消</NButton>
+            </template>
+          </div>
         </div>
         <NEmpty v-else description="正在取这一段的投影…" />
       </NSpin>
@@ -2239,11 +2320,15 @@ function resetColumnWidths(): void {
 .fv-drop-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px 8px;
   flex-wrap: wrap;
 }
 
+/* 标签固定成一列宽度并右对齐 ⇒ 各行字段竖直对齐（用户 2026-10-03：表单太乱，对齐一下） */
 .fv-drop-label {
+  flex: 0 0 84px;
+  width: 84px;
+  text-align: right;
   color: var(--pvf-text-muted);
   font-size: 12px;
   white-space: nowrap;

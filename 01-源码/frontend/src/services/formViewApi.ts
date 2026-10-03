@@ -164,6 +164,23 @@ export function AddIndependentDrop(
 }
 
 /**
+ * 往**某一处** `[list]`（内联掉落列表）末尾追加一条候选（物品编号 + 权重），
+ * 返回重新投影后的这一段。
+ * fqn = pvfine/services.FormViewService.AddDropCandidate
+ *
+ * 方法 ID 同样复算 + 反验过（连同上面 AddIndependentDrop，4 个已知 ID 全部命中
+ * FNV-1a-32 后才取用）。
+ */
+export function AddDropCandidate(
+  filePath: string,
+  section: string,
+  occurrence: number,
+  item: FormViewDropItem
+): $CancellablePromise<FormViewSection> {
+  return $Call.ByID(2721441661, filePath, section, occurrence, item);
+}
+
+/**
  * 返回规则文件里定义的全部文件族。
  * fqn = pvfine/services.FormViewService.ListFormats
  */

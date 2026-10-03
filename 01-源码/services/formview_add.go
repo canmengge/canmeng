@@ -223,8 +223,9 @@ func buildDropRowText(section formview.Section, entry FormViewDropEntry) (string
 			section.RowTokens, len(tokens))
 	}
 
+	// 注意：**不要**再补一个换行 —— 插入点前面那一行自带行尾（\r\n），
+	// 多写一个就会在归档里留下空行（用户 2026-10-03 实测截图发现）。
 	var builder strings.Builder
-	builder.WriteString("\r\n")
 	builder.WriteString(dropRowIndent)
 	builder.WriteString(strings.Join(tokens, "\t"))
 	builder.WriteString("\r\n")
