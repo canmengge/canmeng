@@ -594,6 +594,8 @@ async function openLink(row: FormViewRow): Promise<void> {
   viewerError.value = "";
   viewerVisible.value = true;
   viewerLoading.value = true;
+  // 每次打开都从"零选中"开始，避免上一次的选中行带进来（行号还可能对不上）。
+  clearViewerSelection();
   try {
     viewerSection.value = await formView.loadLinkedSection(
       link.targetSection,
@@ -603,6 +605,26 @@ async function openLink(row: FormViewRow): Promise<void> {
     viewerError.value = String(issue?.message ?? issue);
   } finally {
     viewerLoading.value = false;
+  }
+}
+
+/**
+ * 「确定修改」：按用户 2026-10-03 要求，功能就是**关掉这个界面**。
+ *
+ * 注意口径：它**不代表已经保存** —— 改动仍留在本地草稿里（主界面工具条上的
+ * 「未保存 N 格 / 新增 N 条 / 删除 N 条」照样亮着），要点主界面的「保存改动」
+ * 才写进归档内存；写 PVF 文件仍只由你点主工具条「保存 PVF」。（红线不变。）
+ */
+function closeViewer(): void {
+  const section = viewerSection.value;
+  const removed = viewerPendingDeleteRows.value.length;
+  const added = pendingCandidates(section).length;
+  viewerVisible.value = false;
+  clearViewerSelection();
+  if (removed + added > 0) {
+    message.info(
+      `改动还在本地没保存（待删除 ${removed} 条 / 待保存新增 ${added} 条）：回主界面点「保存改动」才写进归档内存`
+    );
   }
 }
 
@@ -2210,6 +2232,7 @@ function resetColumnWidths(): void {
       class="fv-viewer-modal"
       :bordered="false"
       size="small"
+      style="width: 50vw; min-width: 560px; max-width: 960px"
     >
       <NSpin :show="viewerLoading">
         <div v-if="viewerError" class="fv-error">{{ viewerError }}</div>
@@ -2335,6 +2358,16 @@ function resetColumnWidths(): void {
           <div class="fv-drop-row">
             <NButton size="tiny" type="primary" ghost @click="startViewerAdd">
               添加候选
+            </NButton>
+            <!-- 「确定修改」：用户 2026-10-03 要的功能就是**关掉这个界面**
+                 （改动仍在本地草稿里，回主界面点「保存改动」才写进归档内存） -->
+            <NButton
+              size="tiny"
+              type="primary"
+              title="关掉这个界面（改动仍留在本地，回主界面点「保存改动」才写进归档内存）"
+              @click="closeViewer"
+            >
+              确定修改
             </NButton>
             <template v-if="viewerAddVisible">
               <span class="fv-drop-label">物品ID</span>
