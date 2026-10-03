@@ -339,9 +339,17 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 			s.c.mu.RUnlock()
 			return nil, fmt.Errorf("规则里没有段 [%s]", edit.Section)
 		}
-		if edit.Row < 0 || edit.Row >= rowCountOf(current, edit.Section, edit.Occurrence) {
+		target := sectionOccurrence(format, view, edit.Section, edit.Occurrence)
+		if target == nil {
 			s.c.mu.RUnlock()
-			return nil, fmt.Errorf("行号 %d 超出范围", edit.Row+1)
+			return nil, fmt.Errorf(
+				"文件里没有段 [%s] 的第 %d 次出现", edit.Section, edit.Occurrence)
+		}
+		if edit.Row < 0 || edit.Row >= len(target.Rows) {
+			s.c.mu.RUnlock()
+			return nil, fmt.Errorf(
+				"行号 %d 超出范围（段 [%s] 第 %d 次出现只有 %d 行）",
+				edit.Row+1, edit.Section, edit.Occurrence, len(target.Rows))
 		}
 		if edit.Column < 0 || edit.Column >= len(rule.Columns) {
 			s.c.mu.RUnlock()
@@ -352,7 +360,8 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 			s.c.mu.RUnlock()
 			return nil, fmt.Errorf("第 %d 行「%s」列: %w", edit.Row+1, rule.Columns[edit.Column].Label, err)
 		}
-		if existing, ok := cellValueIn(current, edit.Section, edit.Occurrence, edit.Row, edit.Column); ok && existing == value {
+		if edit.Row < len(target.Rows) && edit.Column < len(target.Rows[edit.Row].Cells) &&
+			target.Rows[edit.Row].Cells[edit.Column].Value == value {
 			continue // 值没变，不必写
 		}
 		if useTextPath {
@@ -418,9 +427,18 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 	}
 
 	// ④ 校验：重新投影，逐个确认目标格真的变成了期望值；不符就整体放弃（不写入）。
-	check := formview.Project(filePath, format, pvf.ParseScriptView(updatedText))
+	//    同样要用 sectionOccurrence 单独取那一处 —— 主投影里内联列表（被关联认领的 [list]）
+	//    是看不到的，用主投影校验会一律"查不到"而误报校验失败。
+	checkView := pvf.ParseScriptView(updatedText)
 	for _, item := range expected {
-		got, ok := cellValueIn(check, item.edit.Section, item.edit.Occurrence, item.edit.Row, item.edit.Column)
+		got := ""
+		ok := false
+		if projected := sectionOccurrence(format, checkView, item.edit.Section, item.edit.Occurrence); projected != nil &&
+			item.edit.Row < len(projected.Rows) &&
+			item.edit.Column < len(projected.Rows[item.edit.Row].Cells) {
+			got = projected.Rows[item.edit.Row].Cells[item.edit.Column].Value
+			ok = true
+		}
 		if !ok || got != item.value {
 			return nil, fmt.Errorf(
 				"校验未通过：第 %d 行第 %d 列改后应为 %q，实际为 %q。已取消本次修改（没有写入任何内容）",
@@ -451,6 +469,21 @@ func (s *FormViewService) ApplyCellEdits(filePath string, edits []FormViewCellEd
 	result := formview.Project(filePath, format, pvf.ParseScriptView(freshText))
 	s.fillRefNames(result.Sections, format, fresh, &result.Warnings)
 	return result, nil
+}
+
+// sectionOccurrence 单独投影「某段第 N 次出现」。
+//
+// 为什么不能只在主投影里找：主投影会把**被行关联认领**的目标段（如独立掉落的 862 处 [list]）
+// 从输出里移除（否则界面会被 862 个两列表格淹掉），于是内联列表的改动在
+// `current.Sections` 里**根本找不到**，行数会被算成 0、报出"行号 1 超出范围"
+// （2026-10-03 用户实测踩到）。所以定位与校验都要走这里，与查看器用同一个 API。
+func sectionOccurrence(
+	format formview.Format,
+	view pvf.ScriptView,
+	section string,
+	occurrence int,
+) *formview.ProjectedSection {
+	return formview.ProjectSection(format, view, section, occurrence)
 }
 
 // countSectionOccurrences 数某段名在本文件里出现了几次（按 SectionID 去重）。
