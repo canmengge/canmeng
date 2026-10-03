@@ -308,7 +308,15 @@ function onCellDblClick(row: FormViewRow, index: number, section: FormViewSectio
 
 // ---- 列宽左右拉伸 ----
 
-type DragState = { key: string; index: number; startX: number; startWidth: number };
+type DragState = {
+  key: string;
+  index: number;
+  startX: number;
+  startWidth: number;
+  /** 按下瞬间量到的各列宽度：**首次真正移动时才落盘**。 */
+  widths: number[];
+  seeded: boolean;
+};
 let dragState: DragState | null = null;
 
 function columnStyle(section: FormViewSection, index: number) {
@@ -348,8 +356,12 @@ function onResizeStart(
     index,
     startX: event.clientX,
     startWidth: current ? Math.round(current.getBoundingClientRect().width) : 80,
+    widths,
+    seeded: false,
   };
-  columnWidths.value = { ...columnWidths.value, [section.section]: widths };
+  // 刻意**不**在这里写入 widths：单纯点一下手柄（没拖动）不该改动任何列宽，
+  // 否则手一抖就把当时的布局冻住（2026-10-03 用户反复遇到"空白消不掉"）。真正
+  // 写入发生在 onResizeMove 的第一次移动。
   window.addEventListener("pointermove", onResizeMove);
   window.addEventListener("pointerup", onResizeEnd);
 }
@@ -357,6 +369,10 @@ function onResizeStart(
 function onResizeMove(event: PointerEvent): void {
   const state = dragState;
   if (!state) return;
+  if (!state.seeded) {
+    columnWidths.value = { ...columnWidths.value, [state.key]: [...state.widths] };
+    state.seeded = true;
+  }
   const next = Math.max(48, Math.round(state.startWidth + (event.clientX - state.startX)));
   const widths = [...(columnWidths.value[state.key] ?? [])];
   widths[state.index] = next;
@@ -907,7 +923,11 @@ function resetColumnWidths(): void {
    列宽完全由内容决定 —— 中间不可能出现空白。 */
 .fv-cell {
   display: inline-block;
-  max-width: 100%;
+  /* ★ 千万别在这里写 max-width: 100%！
+     在 auto 布局的表格里，**百分比** max-width 会让"内容最宽的那一列"把表格的
+     剩余宽度全部吸过去 —— 表现就是"该列后面拖出一大片空白"（2026-10-03 实测，
+     与早先 min-width:100% 是同一个坑换了个形式）。
+     只有在**真的拖过列宽**时才给行内像素 maxWidth（见 cellStyle）。 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
