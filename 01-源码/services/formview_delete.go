@@ -82,27 +82,38 @@ func (s *FormViewService) DeleteIndependentDrop(
 	end := last.end
 
 	// 紧跟其后的 [list] 块属于这一条 ⇒ 整块一起删。
+	hadList := false
 	next := skipSpaces(text, end)
-	if strings.HasPrefix(text[next:], "[list]") || strings.HasPrefix(text[next:], "[list]\r") {
+	if strings.HasPrefix(text[next:], "[list]") {
 		blockEnd, blockErr := findBlockEnd(text, next, "list")
 		if blockErr != nil {
 			return nil, blockErr
 		}
 		end = blockEnd
+		hadList = true
+	}
+
+	// 删除范围：含该条前面的空白（否则留空行）；第一条保留它自己的前导空白
+	//（否则数据行会接到 `[independent drop]` 标签那一行上）。
+	cutFrom := start
+	if rowIndex == 0 {
+		cutFrom = first.start
 	}
 
 	updatedText := ""
 	switch {
-	case rowIndex > 0 && rowIndex < rows-1:
-		// 后面还有下一条 ⇒ 把它前面的空白收成一个制表符（往前靠）
+	case rowIndex == 0 && rows > 1:
+		// 第一条且后面还有：它自己的前导空白（换行 + 缩进）**保留**，
+		// 于是下一条正好"补位"到第一行的位置 —— 不能再补衔接符，否则会多一个缩进。
 		after := skipSpaces(text, end)
-		updatedText = text[:start] + "\t" + text[after:]
-	case rowIndex == 0:
-		// 第一条：保留它前面那段空白（否则数据行会接到标签那一行上）
-		updatedText = text[:first.start] + text[end:]
+		updatedText = text[:first.start] + text[after:]
+	case rowIndex < rows-1:
+		// 中间那条：补上衔接（普通行往前靠；自带 [list] 的让下一条另起一行）
+		after := skipSpaces(text, end)
+		updatedText = text[:cutFrom] + joinAfterDelete(text, after, hadList) + text[after:]
 	default:
 		// 最后一条：只删自己，闭合标签前的空白原样保留
-		updatedText = text[:start] + text[end:]
+		updatedText = text[:cutFrom] + text[end:]
 	}
 
 	// 校验：重新投影，行数必须正好少一行，且原本的下一条应当落到被删的位置上。
@@ -154,6 +165,26 @@ func (s *FormViewService) DeleteIndependentDrop(
 	return result, nil
 }
 
+// joinAfterDelete 决定"删掉一条之后，它原来的位置要补什么"：
+//
+//   - 被删的是普通行 ⇒ 补一个制表符，下一条**往前靠**（接着上一行写）；
+//   - 被删的这条**自带 `[list]` 块** ⇒ 补「换行 + 缩进」，下一条必须**另起一行**
+//     （用户 2026-10-03：删完看到下一条挤在 `[/list]` 后面是不对的）。
+//
+// 缩进优先沿用下一条自己的（它本来就另起一行时），否则用一个制表符。
+func joinAfterDelete(text string, after int, hadList bool) string {
+	if !hadList {
+		return "\t"
+	}
+	indent := dropRowIndent
+	if sep := whitespaceBefore(text, after); strings.ContainsAny(sep, "\r\n") {
+		if cut := strings.LastIndexAny(sep, "\r\n"); cut >= 0 {
+			indent = sep[cut+1:]
+		}
+	}
+	return detectEOL(text) + indent
+}
+
 // whitespaceStart 返回 pos 之前那段空白（空格 / 制表符 / 换行）的起点。
 func whitespaceStart(text string, pos int) int {
 	if pos > len(text) {
@@ -199,10 +230,13 @@ func findBlockEnd(text string, start int, name string) (int, error) {
 		at := cursor + index
 		switch {
 		case strings.HasPrefix(text[at:], closeTag):
-			if depth == 0 {
+			// 闭合标签把层级减回 0 ⇒ 这一块结束，**立刻收工**。
+			// （早先只在"进入前 depth==0"时返回，于是配对的 `[/list]` 被当成"还没结束"，
+			//   继续往后找第二个 ⇒ 报"找不到配对结束标签"，用户 2026-10-03 实测踩到。）
+			depth--
+			if depth <= 0 {
 				return at + len(closeTag), nil
 			}
-			depth--
 			cursor = at + len(closeTag)
 		case strings.HasPrefix(text[at:], open):
 			depth++
