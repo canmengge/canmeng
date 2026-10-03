@@ -100,6 +100,14 @@ $t = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
    scripts/verify-exe.ps1 -Exe "<exe 路径>" -Literals "4.6.0","取消封包"
    ```
 
+2. **改前端后的可见性自检（每轮必做，规则 §C 硬性）**：
+
+   ```powershell
+   scripts/check-frontend-live.ps1 -File "src/components/FormView.vue" -Marker "<本轮标记串>"
+   ```
+
+   直接问 dev server 要刚改的文件，看响应里有没有本轮标记串：**exit 0 = 用户可以测；exit 1 = dev server 在吐旧代码，禁止说"能测了"**，先让用户重跑 HMR 脚本重启 dev server 再查。
+
    PE 头 / 子系统 / 图标 / 版本 / 内嵌字面量 / 哈希 一次核完，**不要靠眼睛**。
 
 2. **参考留档位置**：上一版的客户端目录、`index-online-<版本>.html`、`notes.md`、`gen-manifest.js` 都在 `06-交付发布\release-<上一版>\`。
