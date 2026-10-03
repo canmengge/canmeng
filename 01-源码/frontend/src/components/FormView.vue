@@ -352,6 +352,11 @@ watch(
     columnWidths.value = {};
     // 投影换了（重新解析、或草稿保存成功后的回传）⇒ 旧草稿的行列坐标不再可信，清掉。
     pendingEdits.value = new Map();
+    // 搜索**默认选中第一个可搜的列**（按规则列顺序；独立掉落就是「怪物/APC」，ref = monster）。
+    // 用户 2026-10-03：默认空白要手点一次太麻烦，默认就要能直接打字搜。
+    if (searchRef.value === "" && searchScopes.value.length > 0) {
+      searchRef.value = searchScopes.value[0].ref;
+    }
   }
 );
 
@@ -1132,9 +1137,8 @@ function resetColumnWidths(): void {
               >
                 保存改动
               </NButton>
-              <NButton size="tiny" ghost type="primary" @click="batchVisible = !batchVisible">
-                {{ batchVisible ? "收起批量改" : "批量改…" }}
-              </NButton>
+              <!-- 「批量改」按钮已按用户 2026-10-03 要求撤下（"现在那个有问题不好用，后续我再改"）：
+                   面板与脚本都留着（batchVisible 控制，不会显示），下次接回来只加回这一颗按钮即可。 -->
             </div>
 
             <div v-if="batchVisible" class="fv-batch">
