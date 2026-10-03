@@ -373,7 +373,17 @@ function onResizeMove(event: PointerEvent): void {
     columnWidths.value = { ...columnWidths.value, [state.key]: [...state.widths] };
     state.seeded = true;
   }
-  const next = Math.max(48, Math.round(state.startWidth + (event.clientX - state.startX)));
+  // ★ 只能**缩小**，不能放大（上限 = 按下瞬间量到的"内容自然宽度"）。
+  //
+  // 2026-10-03 定案：那个"列后面一大片空白"反复消不掉的根因，就是**拖动把列拖宽过**
+  // 留下的固定像素宽度（宽度是会话内记忆的，只有「解析」或「重置列宽」才清）。
+  // 用户的真实需求是"狭窄一点、能向左拉"，从来不需要把列拖得比内容还宽 ——
+  // 而从结构上禁止放大，就**不可能再产生空白**。
+  const ceiling = Math.max(48, state.widths[state.index] ?? state.startWidth);
+  const next = Math.min(
+    ceiling,
+    Math.max(48, Math.round(state.startWidth + (event.clientX - state.startX)))
+  );
   const widths = [...(columnWidths.value[state.key] ?? [])];
   widths[state.index] = next;
   columnWidths.value = { ...columnWidths.value, [state.key]: widths };
