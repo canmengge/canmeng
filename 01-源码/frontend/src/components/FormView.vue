@@ -21,6 +21,9 @@
  * 主工具条「保存 PVF」才落盘**。草稿自带段信息，所以主表与各处内联列表可以混在一次提交里。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+// 草稿里的 ref 值也要能显示中文名：直接复用「对象视图」的解析（同一个 Go 进程、同一套规则），
+// 不新增后端接口（用户 2026-10-03 要求：把 3015 改成 3037 时名字要跟着变）。
+import { ResolveObject } from "../services/objectViewApi";
 import {
   NButton,
   NEmpty,
@@ -566,6 +569,75 @@ function commitViewerEdit(): void {
     { section, row: state.row, column: state.column, value: viewerEditText.value },
   ]);
   viewerEditing.value = null;
+}
+
+// ---- 草稿里的 ref 值 → 中文名（实时解析） ----
+//
+// 归档里的名称是后端投影时解析好、跟着投影一起下发的；草稿是"还没写进归档的新 ID"，
+// 所以没有名字。这里用「对象视图」的解析补上：ref 支持 `a|b` 多候选（与后端规则一致），
+// 逐个试到有名字为止。结果按 `ref|id` 缓存 + 去重，同一个 ID 只问一次。
+
+const draftNames = ref<Map<string, string>>(new Map());
+const pendingNameLookups = new Set<string>();
+
+function refCandidates(section: FormViewSection | null, index: number): string[] {
+  const ref = (section?.columnRefs?.[index] ?? "").trim();
+  if (ref === "") return [];
+  return ref
+    .split("|")
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
+
+/** 取草稿值的中文名；没有就问一次后端（问过就缓存，含"查不到"的空结果）。 */
+function draftName(section: FormViewSection | null, index: number, value: string): string {
+  const id = value.trim();
+  if (id === "" || refCandidates(section, index).length === 0) return "";
+  const key = `${section?.columnRefs?.[index] ?? ""}|${id}`;
+  const cached = draftNames.value.get(key);
+  if (cached !== undefined) return cached;
+  void lookupDraftName(section, index, id, key);
+  return "";
+}
+
+async function lookupDraftName(
+  section: FormViewSection | null,
+  index: number,
+  id: string,
+  key: string
+): Promise<void> {
+  if (pendingNameLookups.has(key)) return;
+  pendingNameLookups.add(key);
+  try {
+    let name = "";
+    for (const objectType of refCandidates(section, index)) {
+      try {
+        const view = await ResolveObject(objectType, id);
+        const found = (view?.name ?? "").trim();
+        if (found !== "") {
+          name = found;
+          break;
+        }
+      } catch {
+        // 该候选类型解析不到就试下一个（与后端 resolve() 的行为一致）。
+      }
+    }
+    const next = new Map(draftNames.value);
+    next.set(key, name);
+    draftNames.value = next;
+  } finally {
+    pendingNameLookups.delete(key);
+  }
+}
+
+/**
+ * 一格要显示的名字：**草稿优先** —— 有草稿就解析草稿里的新 ID，
+ * 没草稿才用投影里那份（后端已解析好的）名字。
+ */
+function rowName(section: FormViewSection | null, row: FormViewRow, index: number): string {
+  const draft = draftValue(section, row.index, index);
+  if (draft !== null) return draftName(section, index, draft);
+  return row.cells[index]?.name ?? "";
 }
 
 // ---- 单元格编辑（双击改值 → 本地草稿 → 点「保存改动」才进归档） ----
@@ -1195,12 +1267,11 @@ function resetColumnWidths(): void {
                         </span>
                       </template>
                       <template v-else>
-                        <!-- 有草稿的格子只显示"新值"：名称是后端按旧编号解析的，挂着会误导 -->
-                        <span v-if="cellName(row, index) && !isDirtyCell(row, index)" class="fv-name">
-                          {{ cellName(row, index) }}
+                        <span v-if="rowName(mainSection, row, index)" class="fv-name">
+                          {{ rowName(mainSection, row, index) }}
                         </span>
                         <span v-else>{{ cellText(row, index).text }}</span>
-                        <span v-if="cellName(row, index) && !isDirtyCell(row, index)" class="fv-id">
+                        <span v-if="rowName(mainSection, row, index)" class="fv-id">
                           {{ cellText(row, index).text }}
                         </span>
                       </template>
@@ -1356,11 +1427,11 @@ function resetColumnWidths(): void {
                       @blur="commitViewerEdit()"
                     />
                     <span v-else class="fv-cell">
-                      <span v-if="cellName(row, index) && !viewerCellDirty(row, index)" class="fv-name">
-                        {{ cellName(row, index) }}
+                      <span v-if="rowName(viewerSection, row, index)" class="fv-name">
+                        {{ rowName(viewerSection, row, index) }}
                       </span>
                       <span v-else>{{ viewerCellText(row, index).text }}</span>
-                      <span v-if="cellName(row, index) && !viewerCellDirty(row, index)" class="fv-id">
+                      <span v-if="rowName(viewerSection, row, index)" class="fv-id">
                         {{ viewerCellText(row, index).text }}
                       </span>
                     </span>
