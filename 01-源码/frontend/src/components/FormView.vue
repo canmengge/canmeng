@@ -46,6 +46,15 @@ const inlineRowLimit = 50;
 /** 列宽：段名 → 各列像素宽（0 表示"自动"）。 */
 const columnWidths = ref<Record<string, number[]>>({});
 
+/**
+ * 是否已经拖过列宽。
+ *
+ * 没拖过 → 用**自动布局**：表格只占内容宽，紧凑、中间不留空白；
+ * 拖过之后 → 切**固定布局**：列宽完全按 colgroup 里的像素值，向左向右都拉得动
+ * （自动布局下浏览器不允许列窄于内容，所以"向左拉没反应"）。
+ */
+const hasColumnWidths = computed(() => Object.keys(columnWidths.value).length > 0);
+
 onMounted(() => {
   void formView.loadFormats();
 });
@@ -387,7 +396,11 @@ function resetColumnWidths(): void {
       <div class="fv-form-sub">
         <span class="fv-rule" :title="formView.rulePath">规则：{{ formView.rulePath }}</span>
       </div>
-      <div v-if="formView.currentFormat?.notes" class="fv-notes">
+      <div
+        v-if="formView.currentFormat?.notes"
+        class="fv-notes"
+        :title="formView.currentFormat?.notes"
+      >
         {{ formView.currentFormat.notes }}
       </div>
     </section>
@@ -434,7 +447,15 @@ function resetColumnWidths(): void {
               </li>
             </ul>
 
-            <table class="fv-table">
+            <table class="fv-table" :class="{ 'fv-table--fixed': hasColumnWidths }">
+              <colgroup>
+                <col class="fv-col-index" />
+                <col
+                  v-for="(_, index) in mainSection.columns"
+                  :key="index"
+                  :style="columnStyle(mainSection, index)"
+                />
+              </colgroup>
               <thead>
                 <tr>
                   <th class="fv-th-index">#</th>
@@ -514,7 +535,18 @@ function resetColumnWidths(): void {
                 <span>{{ sectionTitle(section) }}</span>
                 <span class="fv-section-meta">{{ section.rows.length }} 行</span>
               </summary>
-              <table class="fv-table fv-table--compact">
+              <table
+                class="fv-table fv-table--compact"
+                :class="{ 'fv-table--fixed': hasColumnWidths }"
+              >
+                <colgroup>
+                  <col class="fv-col-index" />
+                  <col
+                    v-for="(_, columnIndex) in section.columns"
+                    :key="columnIndex"
+                    :style="columnStyle(section, columnIndex)"
+                  />
+                </colgroup>
                 <thead>
                   <tr>
                     <th class="fv-th-index">#</th>
@@ -740,6 +772,11 @@ function resetColumnWidths(): void {
   border: 1px solid var(--pvf-border-faint);
   border-radius: 4px;
   padding: 5px 8px;
+  /* 规则说明可能很长（含实测结论）：这里最多两行，完整内容悬停看 title */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ③ 错误 */
@@ -806,20 +843,38 @@ function resetColumnWidths(): void {
   color: var(--pvf-text-muted);
 }
 
-/* 表格：sticky 表头要求 border-collapse: separate（collapse 下 sticky 会掉边框） */
+/* 表格：sticky 表头要求 border-collapse: separate（collapse 下 sticky 会掉边框）。
+   只占**内容宽度**，绝不加 min-width:100% —— 否则列宽总和不足窗口时，浏览器会把
+   多余宽度摊给内容最长的列，在中间摊出一大片空白，而且表格被钉住、列宽拉不窄
+   （2026-10-03 用户报的"中间一片空白 / 向左拉没反应"）。 */
 .fv-table {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 11px;
   width: max-content;
-  min-width: 100%;
+}
+
+/* 拖过列宽之后才切固定布局：此时列宽完全由 colgroup 的像素值决定，可左可右。 */
+.fv-table--fixed {
+  table-layout: fixed;
+}
+
+.fv-col-index {
+  width: 56px;
+}
+
+.fv-table--fixed th,
+.fv-table--fixed td {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fv-table th,
 .fv-table td {
   border-bottom: 1px solid var(--pvf-border-faint);
   border-right: 1px solid var(--pvf-border-faint);
-  padding: 3px 8px;
+  /* 紧凑：行高压到最小，靠斑马纹与分隔线辨行 */
+  padding: 2px 6px;
   text-align: left;
   white-space: nowrap;
   background: var(--pvf-surface-panel);
