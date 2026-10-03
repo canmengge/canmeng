@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	appconfig "pvfine/config"
 	"pvfine/internal/formview"
 	"pvfine/internal/pvf"
 )
@@ -27,14 +28,19 @@ type FormViewFormatListResult struct {
 	Formats     []*FormViewFormatInfo `json:"formats"`
 }
 
-// FormViewService 提供「结构化视图」：按外部规则把脚本文件投影成只读表格
-// （段 → 行 → 列），供界面做表格化阅读。
+// FormViewService 提供「结构化视图」：按规则把脚本文件投影成只读表格
+// （段 → 行 → 列），供界面做表格化阅读与编辑。
 //
-// 规则来自外部数据文件（config/formats.json），本服务不硬编码任何段名、
-// 列名、枚举取值或刻度常量。投影复用内核既有的词法投影
+// 规则**随程序内置**（`config/formats.json` 由 `go:embed` 编译进二进制）：
+// 开发态若能在仓库里找到 `config/formats.json` 就优先读它（改规则立即生效），
+// 否则一律用内置副本。**不再读写用户目录（`%AppData%\pvfine\formats.json`）** ——
+// 用户 2026-10-03 要求"把规则文件内置"，界面上也不再暴露规则路径与「重新读规则」。
+//
+// 本服务不硬编码任何段名、列名、枚举取值或刻度常量。投影复用内核既有的词法投影
 // （internal/pvf 的 ParseScriptView），不另写一套解析器。
 //
-// 整个投影过程**只读**：不产生任何归档写入。
+// 除 ApplyCellEdits / 新增删除（只写**归档内存**）外，投影过程只读；
+// **任何入口都不会写 PVF 文件**（落盘只由用户点主工具条「保存 PVF」触发）。
 type FormViewService struct {
 	c *core
 
@@ -52,10 +58,32 @@ func NewFormViewService(c *core) *FormViewService {
 	service := &FormViewService{c: c}
 	if path, ok := formview.FindSourcePath(); ok {
 		service.path = path
-	} else if runtimePath, err := formview.RuntimePath(); err == nil {
-		service.path = runtimePath
 	}
+	// 刻意**不再回退到用户目录的副本**：规则内置，交付态直接用二进制里的那份。
 	return service
+}
+
+// FormViewRuleSource 是规则文件全文及其来源（界面「查看规则」只读面板用）。
+type FormViewRuleSource struct {
+	Text string `json:"text"`
+	// Source 为「(内置)」或仓库里的文件路径 —— 让用户知道"看到的就是正在生效的那份"。
+	Source string `json:"source"`
+}
+
+// RuleText 返回**当前真正生效**的那份规则全文（只读）。
+//
+// 与 loadRules 用同一套判断（仓库文件优先，否则内置副本），不另读第二个来源 ——
+// 否则"界面上看到的规则"和"实际生效的规则"可能不是同一份，人会照着错的规则排查。
+func (s *FormViewService) RuleText() (*FormViewRuleSource, error) {
+	s.mu.RLock()
+	path := s.path
+	s.mu.RUnlock()
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return &FormViewRuleSource{Text: string(data), Source: path}, nil
+		}
+	}
+	return &FormViewRuleSource{Text: string(appconfig.FormatsJSON), Source: "(内置)"}, nil
 }
 
 // ListFormats 返回规则文件里定义的全部文件族。

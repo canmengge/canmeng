@@ -1,5 +1,6 @@
 /**
- * 封包（保存 PVF）相关新增调用的适配层（与 `importApi.ts` 同源做法）。
+ * 近内核新增调用的适配层：**封包（保存 PVF）** 与 **结构化视图规则查看**
+ * （与 `importApi.ts` 同源做法）。
  *
  * ## 为什么不在 frontend/bindings/ 里
  *
@@ -15,6 +16,8 @@
  *
  * 复算后与**已有 bindings 回归校验**（EditorService.Save = 1087792513、
  * SaveAsDialog = 3571654109，两项均与生成结果一致）。
+ * 2026-10-03 新增 `FormViewService.RuleText` 时同样先复算这两项（`Math.imul` 版实现，
+ * 两个已知值都吻合）才落盘 ID = **3900388819**。
  *
  * ## 何时删除本文件
  *
@@ -49,4 +52,21 @@ export function CancelSave(): $CancellablePromise<void> {
 /** SaveStatus 返回当前（或最近一次）封包的进度。 */
 export function SaveStatus(): $CancellablePromise<SaveProgress> {
   return $Call.ByID(2499540195);
+}
+
+/** 对应 Go `services.FormViewRuleSource`：规则文件全文及其来源。 */
+export interface FormViewRuleSource {
+  /** 规则文件全文（JSON 文本，界面只读展示）。 */
+  text: string;
+  /** 来源：「(内置)」或仓库里的文件路径 —— 让用户知道这是正在生效的那一份。 */
+  source: string;
+}
+
+/**
+ * 对应 Go `services.FormViewService.RuleText`：返回**当前真正生效**的规则全文（只读）。
+ *
+ * 用户 2026-10-03 要求规则随程序内置，并在可视化编辑区里能"看规则"（可看可搜、不能改）。
+ */
+export function FormViewRuleText(): $CancellablePromise<FormViewRuleSource> {
+  return $Call.ByID(3900388819);
 }

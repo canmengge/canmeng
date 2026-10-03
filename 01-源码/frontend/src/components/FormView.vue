@@ -47,6 +47,7 @@ import {
 } from "naive-ui";
 import { useEditorStore } from "../stores/editor";
 import { useFormViewStore } from "../stores/formView";
+import { FormViewRuleText } from "../services/saveApi";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
 
 const formView = useFormViewStore();
@@ -90,6 +91,68 @@ const notesBrief = computed(() => {
 const viewTitle = computed(() => {
   const label = formView.currentFormat?.label ?? formView.projection?.formatLabel ?? "";
   return label === "" ? "可视化编辑" : `${label}编辑`;
+});
+
+// ---- 「查看规则」只读面板 ----
+//
+// 用户 2026-10-03 要求：规则文件**内置**到可视化编辑区，且这里能"看规则"
+// （可看可搜、**不能改**）。取的是**当前真正生效**的那一份（后端 RuleText：
+// 开发态读仓库 config/formats.json，交付态读二进制里的内置副本）。
+const ruleVisible = ref(false);
+const ruleLoading = ref(false);
+const ruleError = ref("");
+const ruleText = ref("");
+const ruleSource = ref("");
+const ruleQuery = ref("");
+
+/** 打开面板：只取一次（规则只读，不会边看边变）。 */
+async function openRules(): Promise<void> {
+  ruleVisible.value = true;
+  if (ruleText.value !== "" || ruleLoading.value) return;
+  ruleLoading.value = true;
+  ruleError.value = "";
+  try {
+    const result = await FormViewRuleText();
+    ruleText.value = result?.text ?? "";
+    ruleSource.value = result?.source ?? "";
+    if (ruleText.value === "") ruleError.value = "规则内容为空";
+  } catch (issue: any) {
+    ruleError.value = String(issue?.message ?? issue);
+  } finally {
+    ruleLoading.value = false;
+  }
+}
+
+/** 一行按关键字切段：命中的片段单独标出来（纯只读展示）。 */
+function ruleLineParts(line: string, query: string): { text: string; hit: boolean }[] {
+  const fallback = [{ text: line === "" ? " " : line, hit: false }];
+  if (query === "") return fallback;
+  const haystack = line.toLowerCase();
+  const needle = query.toLowerCase();
+  const parts: { text: string; hit: boolean }[] = [];
+  let cursor = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, cursor);
+    if (at < 0) break;
+    if (at > cursor) parts.push({ text: line.slice(cursor, at), hit: false });
+    parts.push({ text: line.slice(at, at + needle.length), hit: true });
+    cursor = at + needle.length;
+  }
+  if (parts.length === 0) return fallback;
+  if (cursor < line.length) parts.push({ text: line.slice(cursor), hit: false });
+  return parts;
+}
+
+/** 面板里显示的行：有关键字就只留命中行（命中片段由上面的函数标出）。 */
+const ruleLines = computed(() => {
+  const query = ruleQuery.value.trim();
+  const all = ruleText.value.split(/\r?\n/);
+  const picked =
+    query === "" ? all : all.filter((line) => line.toLowerCase().includes(query.toLowerCase()));
+  return picked.map((line, position) => ({
+    key: `${position}-${line.length}`,
+    parts: ruleLineParts(line, query),
+  }));
 });
 
 /** 主表 = 行数最多的那一段（通常是主配置表，如「掉落配置行」）。 */
@@ -1411,9 +1474,46 @@ function resetColumnWidths(): void {
         </NTag>
       </div>
       <div class="fv-head-actions">
+        <NButton size="tiny" quaternary @click="openRules">查看规则</NButton>
         <NButton size="tiny" quaternary @click="resetColumnWidths">重置列宽</NButton>
       </div>
     </header>
+
+    <!-- 「查看规则」：规则随程序内置，这里**只读**展示（可搜，不可改） -->
+    <NModal
+      v-model:show="ruleVisible"
+      preset="card"
+      :title="`查看规则（只读）· ${ruleSource || '规则文件'}`"
+      style="width: 920px; max-width: 94vw"
+    >
+      <div class="fv-rule-toolbar">
+        <NInput
+          v-model:value="ruleQuery"
+          size="small"
+          clearable
+          placeholder="在规则里搜关键字（段名 / 列标签 / 文件族 / ref…）"
+          class="fv-rule-search"
+        />
+        <span class="fv-rule-count">
+          {{ ruleQuery.trim() === "" ? `${ruleLineCount} 行` : `命中 ${ruleLineCount} 行` }}
+        </span>
+        <span class="fv-tools-gap" />
+        <span class="fv-rule-note">
+          规则内置在程序里，此处只读；要改规则请改源码 config/formats.json 后重新构建
+        </span>
+      </div>
+      <div v-if="ruleLoading" class="fv-rule-loading">正在读取规则…</div>
+      <div v-else-if="ruleError" class="fv-error">{{ ruleError }}</div>
+      <div v-else class="fv-rule-body">
+        <div v-for="line in ruleLines" :key="line.key" class="fv-rule-line">
+          <span
+            v-for="(part, index) in line.parts"
+            :key="index"
+            :class="{ 'fv-hit': part.hit }"
+          >{{ part.text }}</span>
+        </div>
+      </div>
+    </NModal>
 
     <!-- ② 参数区（固定） -->
     <section class="fv-form">
@@ -1431,18 +1531,11 @@ function resetColumnWidths(): void {
         <NInput
           v-model:value="formView.filePath"
           size="small"
-          placeholder="归档内路径，如 etc/independent_drop.etc"
+          placeholder="归档内路径，如 etc/independent_drop.etc（改完按回车解析）"
           @keyup.enter="formView.project()"
         />
-        <NButton
-          size="small"
-          type="primary"
-          :disabled="!formView.canProject"
-          :loading="formView.projecting"
-          @click="formView.project()"
-        >
-          解析
-        </NButton>
+        <!-- 「解析」按钮已按用户 2026-10-03 要求撤下：直接在文件路径框里按**回车**即解析。 -->
+        <span v-if="formView.projecting" class="fv-label">解析中…</span>
       </div>
       <!-- 用户 2026-10-03：删掉「规则：<路径>」那一行与「重新读规则」按钮 —— 规则文件内置，
            不再需要用户关心它放在哪、也不必手动重读。 -->
@@ -2156,6 +2249,55 @@ function resetColumnWidths(): void {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* 「查看规则」只读面板（用户 2026-10-03：规则内置，界面能看能搜、不能改） */
+.fv-rule-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.fv-rule-search {
+  width: 300px;
+}
+
+.fv-rule-count {
+  font-size: 12px;
+  color: var(--pvf-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.fv-rule-note {
+  font-size: 11px;
+  color: var(--pvf-text-muted);
+}
+
+.fv-rule-loading {
+  font-size: 12px;
+  color: var(--pvf-text-secondary);
+  padding: 12px 0;
+}
+
+.fv-rule-body {
+  max-height: 62vh;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--pvf-border-faint);
+  border-radius: 6px;
+  background: var(--pvf-surface-subtle);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fv-rule-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--pvf-text-primary);
 }
 
 /* ② 参数区 */
