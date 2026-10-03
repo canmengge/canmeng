@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "description": "结构化视图规则：文件族 → 段 → 行/列定义。本文件是纯数据，Go 侧不硬编码任何段名、列名、枚举取值或刻度常量。",
+  "source": {
+    "calibratedAt": "2026-10-03",
+    "files": "取自 config/lists.json 与归档实测路径；files 支持 path.Match 通配（大小写不敏感）。",
+    "independentDrop": "段名与列序由**真实归档**校准：etc/independent_drop.etc 首行 = 0 / 20 / 0 / 1000000×5 / 1×5 / 0 / 0 / -1 / 1（共 17 个 token），第 17 位为 1 时紧跟 [list]，与 pvfUtility 的 DropListRowData（17 字段）以及其内置注释 etc.json 的 [independent drop] 说明一致。",
+    "sectionNameStyle": "section 一律写 ScriptElement.Section 的原样值（不带方括号），与 config/annotations.json 的写法一致（消费侧用 EqualFold 比较）。",
+    "notAdopted": "86JP/PvfLib 无此结构，未采纳。"
+  },
+  "formats": [
+    {
+      "id": "independent_drop",
+      "label": "独立掉落",
+      "files": [
+        "etc/independent_drop.etc"
+      ],
+      "notes": "第 3 列（掉落物品）仅在掉落方式 = 0 时有效；= 1 时改看 [list] 内联候选，= 2 时 [list] 内是外部文件编号（etc/independentdrop.lst）。",
+      "sections": [
+        {
+          "section": "independent drop",
+          "label": "掉落配置行",
+          "kind": "table",
+          "rowTokens": 17,
+          "columns": [
+            { "label": "类型", "type": "enum", "values": { "0": "怪物", "1": "APC" } },
+            { "label": "怪物/APC", "type": "ref", "ref": "monster" },
+            { "label": "掉落物品", "type": "ref", "ref": "equipment|stackable" },
+            { "label": "难度1 掉落率", "type": "rate", "scale": 1000000 },
+            { "label": "难度2 掉落率", "type": "rate", "scale": 1000000 },
+            { "label": "难度3 掉落率", "type": "rate", "scale": 1000000 },
+            { "label": "难度4 掉落率", "type": "rate", "scale": 1000000 },
+            { "label": "难度5 掉落率", "type": "rate", "scale": 1000000 },
+            { "label": "难度1 个数", "type": "int" },
+            { "label": "难度2 个数", "type": "int" },
+            { "label": "难度3 个数", "type": "int" },
+            { "label": "难度4 个数", "type": "int" },
+            { "label": "难度5 个数", "type": "int" },
+            { "label": "等级下限", "type": "int" },
+            { "label": "等级上限", "type": "int" },
+            { "label": "职业限制", "type": "ref", "ref": "character", "noneValue": "-1" },
+            { "label": "掉落方式", "type": "enum", "values": { "0": "单一物品", "1": "内联列表", "2": "外部文件" } }
+          ]
+        },
+        {
+          "section": "list",
+          "label": "掉落候选（物品 / 权重）",
+          "kind": "table",
+          "rowTokens": 2,
+          "columns": [
+            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
+            { "label": "权重", "type": "int" }
+          ]
+        },
+        {
+          "section": "dungeon drop rate balance",
+          "label": "地下城掉落率平衡（本客户端未出现，保留以便其它版本）",
+          "kind": "table",
+          "rowTokens": 1,
+          "columns": [
+            { "label": "数值", "type": "int" }
+          ],
+          "optional": true
+        }
+      ]
+    }
+  ]
+}

@@ -186,3 +186,31 @@ skill\Swordman\TripleSlash.skl  技能本体（实测片段）
 | 主归档 | `D:\115us\DFO_2.31.1.117\Script.pvf`（另有 `D:\115us\Script.pvf`、`全部备份\PVF原版\Script.pvf`、`PVF工具\Script.pvf`） |
 | 密钥 | `D:\115us\DFO_2.31.1.117\sk.dat`（工具已内置两套常见密钥） |
 | 项目自带 CLI | `d:\110AI\01-源码\cmd\pvf-cli`（读/写/清单/字符串表/结构化变更/batch） |
+
+## 八、扩展包（extend）—— 改客户端/服务端资源的标准通道
+
+> **机制权威说明**：`D:\115us\DFO_2.31.1.117\extend\扩展包使用说明.txt`（**动手前先读**；本节只记实测要点，不复制条文）。
+> **官方样例**：`extend\demo-extend\`（新增道具 99990001，演示 `pvf\` + `merge\` + `sprite\` 三种写法）。
+> **踩坑教训**：`源码落点速查.md` 踩坑表 **#41 / #42 / #43**。
+
+`extend\` 下每个子文件夹是一个扩展包；登录器「启动游戏」时合成进 `Script.pvf`（约十几秒），**服务端读同一份**（所以道具在游戏/GM 工具/邮件/背包都认），可「还原原版」。
+
+| 目录 | 放什么 | 关键点 |
+| --- | --- | --- |
+| `pvf\` | 路径 = PVF 内路径的**文本**脚本 | 原版没有 = 新增；原版有 = **整份替换**。**部分脚本需要 `#PVF_File` 文件头**，照同类文件决定 |
+| `merge\list\<表>.lst` | 列表行 | 每行「编号 `路径`」；**只写新增/修改的那行**，原版其余保留 —— **不要整份覆盖** |
+| `merge\string\<表>.uv.str` | 文字表行 | 每行「键>文字」；`\n` **只在字符串表里**是换行 |
+| `sprite\` | PNG / 现成 `.img` | 目录路径 = 游戏图片路径；多帧从 `0.png` 起连续，可配 `frames.json` |
+| `sounds\` / `npk\` | `.ogg` / `.npk` | NPK 文件名必须英文，否则图片索引生成不了 |
+
+**实测要点（2026-10-03，GM 称号一案）**
+
+- **编号已在 `list\*.lst` 登记过的**（如称号 `500330113` 早在 `list\equipment.lst` 第 253686 行），**只放 `pvf\` 覆盖即可、不需要 `merge\`** —— 这就是该包根目录只有一个文件的原因。
+- **字面文本必须用反引号包住**：`.equ` 的 `[name]` / `[flavor text]` / `[explain]` 写成 `` `中文` ``；裸中文登录器报 `unexpected character`。若要与原版一致，也可写 `{8=`<表号::键>`}` 引用 + `merge\string`。
+- **`.equ` 字面文本里 `\n` 不换行**（会显示成字母 "n"），**要换行就敲真回车**；`\n` 只在字符串表里有效。
+- **挂 appendage 的标准写法（照官方称号 `100331248.equ` / `100332069.equ`）**：`[if]` → `[time] <间隔> <循环 0/1> <初始冷却>` → **`[not my appendage] <编号>`** → `[/if]`；`[then]` → `[target]`myself` -1 → `[equipment duration] <ms，0=无限>` → `[appendage] <编号>` → `[/then]`。**`[not my appendage]` 不能省** —— 缺了它，循环会把 appendage 每秒重施一次，角色状态被反复重置，表现为「能走动、但不能攻击、不能放技能」（见踩坑 #43）。`[appendage]` 编号查 `list\appendage.lst`（5032 = `Appendage/dfo/event/2021/0323/DecisionsUntoDestiny/giantEffectA.apd` 巨大化）；`[duration]`、`[probability]` 都是合法字段。
+- **字段权威释义**：`.equ` 的 `[if]` / `[then]` 在 `04-运行环境\注释数据\fields\equ.json`，`.apd` 的在 `apd.json`（`[time]` 三列 = 间隔 / 循环与否(0\|1) / 初始冷却）。
+- **批量找模板**：`pvf.ps1 -Action files -Prefix "equipment/character/common/title/"` + `-Action extract -List` 可一次导出 3276 个称号脚本，本地 grep 关键词最快（本轮就是这样找到 `[not my appendage]` 写法的）。
+- 称号 `[room list move speed rate] 2.5` ⇒ 界面显示「**城镇内移动速度 +250%**」（数值 ×100%）。
+- `[custom animation]` 路径**相对 `equipment\character\common\title\`** 写（`` `TitleAnimation/dfo/2017/dfo_administrator.ani` ``，真实位置是 `...\title\titleanimation\dfo\2017\dfo_administrator.ani`）。
+- **纪律**：改扩展包**不要靠"改一版 → 让用户进游戏试"**；先读机制 + 照同类模板写，一次写对。

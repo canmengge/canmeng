@@ -29,3 +29,9 @@ var ProtectedStringTablesJSON []byte
 //
 //go:embed external_links.json
 var ExternalLinksJSON []byte
+
+// FormatsJSON 是「结构化视图规则」的默认副本：文件族 → 段 → 行/列定义。
+// 用于把脚本文件投影成只读表格（如 etc/independent_drop.etc 的 17 列掉落行）。
+//
+//go:embed formats.json
+var FormatsJSON []byte

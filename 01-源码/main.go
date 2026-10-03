@@ -356,6 +356,7 @@ func main() {
 			application.NewService(fileSetService),
 			application.NewService(services.NewBookmarkService()),
 			application.NewService(services.NewObjectViewService(core)),
+			application.NewService(services.NewFormViewService(core)),
 			application.NewService(services.NewDoctorService(core)),
 			application.NewService(services.NewAIService(core, settingsService)),
 		},
