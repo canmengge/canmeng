@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NButton, NTag, useMessage } from "naive-ui";
 import {
   Annotation,
@@ -26,7 +26,8 @@ import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/sea
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { searchPanelPhrases, searchPanelTheme } from "../searchPanel";
 import { listLinkAt, resolveListLinkIndex } from "../listNames";
-import { GetFileLines, GetWindowAnnotations, type WindowAnnotation } from "../services/largeTextApi";
+import { GetFileLines, GetWindowAnnotations, type OverlaySegment, type WindowAnnotation } from "../services/largeTextApi";
+import { SearchInFile, type FileSearchMatch } from "../services/fileSearchApi";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
 
@@ -189,6 +190,138 @@ const largeWindowTheme = EditorView.theme({
   // （普通编辑器 CodeEditor 与大文件视图共用同一份定义，不要再往这里加面板样式）
 });
 
+// ---------------------------------------------------------------------------
+// 全文查找（Ctrl+F）：搜**整个文件**，而不是只搜已加载的视口窗口
+//
+// 官方 `search()` 面板的文档里只有当前窗口那几千行（秒开前提：大文本不进窗口），
+// 搜不到远处内容 —— 用户反馈「大文件按 Ctrl+F 像没有搜索功能」。
+// 这里改成走后端 `SearchInFile`：整份文本在后端扫、叠加未写回段后再搜，
+// 前端只拿到「命中位置」，跳转时再按行换窗口并在窗口里选中它。
+// ---------------------------------------------------------------------------
+const findOpen = ref(false);
+const findInput = ref<HTMLInputElement | null>(null);
+const findQuery = ref("");
+const findCase = ref(false);
+const findRegex = ref(false);
+const findWord = ref(false);
+const findMatches = ref<FileSearchMatch[]>([]);
+const findTotal = ref(0);
+const findTruncated = ref(false);
+/** 当前命中在 findMatches 里的下标（-1 = 无）。 */
+const findCursor = ref(-1);
+const findLoading = ref(false);
+const findError = ref("");
+let findTimer: number | undefined;
+let findRequest = 0;
+/** 待窗口加载完成后要选中的命中（跨窗口跳转时窗口还没到位）。 */
+let pendingMatch: FileSearchMatch | null = null;
+
+function openFind(): void {
+  findOpen.value = true;
+  void nextTick(() => {
+    findInput.value?.focus();
+    findInput.value?.select();
+  });
+}
+
+function closeFind(): void {
+  findOpen.value = false;
+  pendingMatch = null;
+  cmView?.focus();
+}
+
+async function runFind(): Promise<void> {
+  const query = findQuery.value;
+  const request = ++findRequest;
+  if (query.trim() === "") {
+    findMatches.value = [];
+    findTotal.value = 0;
+    findTruncated.value = false;
+    findCursor.value = -1;
+    findError.value = "";
+    findLoading.value = false;
+    return;
+  }
+  findLoading.value = true;
+  try {
+    const res = await SearchInFile(
+      props.index,
+      query,
+      findCase.value,
+      findRegex.value,
+      findWord.value,
+      2000,
+      editor.pendingSegmentsOf(props.index) as OverlaySegment[]
+    );
+    if (request !== findRequest) return;
+    findMatches.value = res?.matches ?? [];
+    findTotal.value = res?.total ?? 0;
+    findTruncated.value = res?.truncated ?? false;
+    findError.value = "";
+    findCursor.value = findMatches.value.length > 0 ? 0 : -1;
+    if (findCursor.value === 0) revealMatch(findMatches.value[0]);
+  } catch (error: any) {
+    if (request !== findRequest) return;
+    findMatches.value = [];
+    findTotal.value = 0;
+    findTruncated.value = false;
+    findCursor.value = -1;
+    findError.value = String(error?.message ?? error);
+  } finally {
+    if (request === findRequest) findLoading.value = false;
+  }
+}
+
+/** 输入防抖：整份文本要后端扫一遍，别每个字符都发一次。 */
+function scheduleFind(): void {
+  if (findTimer !== undefined) window.clearTimeout(findTimer);
+  findTimer = window.setTimeout(() => {
+    findTimer = undefined;
+    void runFind();
+  }, 250);
+}
+
+/** 下一个 / 上一个（循环）。 */
+function stepFind(delta: number): void {
+  if (findMatches.value.length === 0) return;
+  const n = findMatches.value.length;
+  findCursor.value = (((findCursor.value + delta) % n) + n) % n;
+  revealMatch(findMatches.value[findCursor.value]);
+}
+
+/** 跳到某处命中：先换窗口，窗口到位后再选中它（选中时机见 applyPendingMatch）。 */
+function revealMatch(match: FileSearchMatch): void {
+  pendingMatch = match;
+  void gotoLine(match.line);
+  applyPendingMatch();
+}
+
+/**
+ * 窗口加载完成后把待定命中选中。
+ *
+ * 命中可能离当前窗口很远 —— `gotoLine` 只是把窗口换过去（异步排队），所以先记下待定
+ * 命中，等 `winStart` / `winText` 更新后再按「绝对行号 → 窗口内行号」选中并滚动居中。
+ */
+function applyPendingMatch(): void {
+  const match = pendingMatch;
+  if (!match || !cmView) return;
+  const local = match.line - winStart.value + 1;
+  const doc = cmView.state.doc;
+  if (local < 1 || local > doc.lines) return; // 窗口还没到目标行，等下一次更新
+  const line = doc.line(local);
+  const from = Math.min(line.to, line.from + match.column);
+  const to = Math.min(line.to, from + match.length);
+  cmView.dispatch({
+    selection: { anchor: from, head: to },
+    effects: EditorView.scrollIntoView(from, { y: "center" }),
+  });
+  pendingMatch = null;
+}
+
+watch([winStart, winText], () => {
+  applyPendingMatch();
+});
+
 function makeExtensions(): Extension[] {
   return [
     largeWindowTheme,
@@ -210,6 +343,36 @@ function makeExtensions(): Extension[] {
     history(),
     keymap.of([
       { key: "Mod-s", run: () => (void saveNow(), true) },
+      // Ctrl+F 走「全文查找」（官方 searchKeymap 的 Mod-f 只能搜已加载的窗口，见上文说明）
+      {
+        key: "Mod-f",
+        run: () => {
+          openFind();
+          return true;
+        },
+      },
+      {
+        key: "F3",
+        run: () => {
+          stepFind(1);
+          return true;
+        },
+      },
+      {
+        key: "Shift-F3",
+        run: () => {
+          stepFind(-1);
+          return true;
+        },
+      },
+      {
+        key: "Escape",
+        run: () => {
+          if (!findOpen.value) return false;
+          closeFind();
+          return true;
+        },
+      },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,
@@ -501,6 +664,42 @@ onBeforeUnmount(() => {
       <span v-else-if="loading" class="lsc-state">加载中…</span>
     </div>
 
+    <!-- 全文查找条（Ctrl+F）：搜的是**整个文件**（后端扫），不是只搜已加载的窗口 -->
+    <div v-if="findOpen" class="lsc-find" data-pvf-find="pvfLargeFind20261006">
+      <input
+        ref="findInput"
+        v-model="findQuery"
+        class="lsc-find-input"
+        placeholder="在整个文件里查找"
+        @input="scheduleFind"
+        @keydown.stop
+        @keydown.enter.prevent="stepFind(1)"
+        @keydown.shift.enter.prevent="stepFind(-1)"
+        @keydown.esc.prevent="closeFind"
+      />
+      <button class="lsc-find-btn" type="button" @click="stepFind(1)">下一个</button>
+      <button class="lsc-find-btn" type="button" @click="stepFind(-1)">上一个</button>
+      <label class="lsc-find-check">
+        <input v-model="findCase" type="checkbox" @change="scheduleFind" />区分大小写
+      </label>
+      <label class="lsc-find-check">
+        <input v-model="findRegex" type="checkbox" @change="scheduleFind" />正则
+      </label>
+      <label class="lsc-find-check">
+        <input v-model="findWord" type="checkbox" @change="scheduleFind" />全词匹配
+      </label>
+      <span class="lsc-find-count">
+        <template v-if="findLoading">查找中…</template>
+        <template v-else-if="findError">{{ findError }}</template>
+        <template v-else-if="findQuery.trim() === ''">输入关键词，回车找下一处</template>
+        <template v-else-if="findTotal === 0">未找到</template>
+        <template v-else>
+          第 {{ findCursor + 1 }} / {{ findTotal }} 处{{ findTruncated ? "（只列出前 2000 处）" : "" }}
+        </template>
+      </span>
+      <button class="lsc-find-close" type="button" title="关闭" @click="closeFind">×</button>
+    </div>
+
     <div ref="viewport" class="lsc-viewport" @scroll="onScroll">
       <div class="lsc-spacer" :style="{ height: spacerHeight }">
         <div
@@ -540,6 +739,75 @@ onBeforeUnmount(() => {
 }
 .lsc-gap {
   flex: 1;
+}
+/*
+ * 全文查找条：观感与共享模块 src/searchPanel.ts 的官方面板保持一致
+ * （那边是 CodeMirror 内部 DOM，样式只能由 CM 主题注入，所以这里按同一套配方再写一份）。
+ */
+.lsc-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgb(127 127 127 / 25%);
+  background: rgb(127 127 127 / 12%);
+  font-size: 12px;
+}
+.lsc-find-input {
+  min-width: 200px;
+  padding: 3px 8px;
+  border: 1px solid rgb(127 127 127 / 35%);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.lsc-find-input:focus {
+  border-color: var(--pvf-text-primary);
+}
+.lsc-find-btn {
+  padding: 3px 10px;
+  border: 1px solid rgb(127 127 127 / 35%);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lsc-find-btn:hover {
+  background: rgb(127 127 127 / 18%);
+}
+.lsc-find-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--pvf-text-faint);
+  cursor: pointer;
+}
+.lsc-find-check input {
+  margin: 0;
+  accent-color: var(--pvf-accent, #4a8cff);
+  cursor: pointer;
+}
+.lsc-find-count {
+  color: var(--pvf-text-faint);
+}
+.lsc-find-close {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--pvf-text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lsc-find-close:hover {
+  background: rgb(127 127 127 / 18%);
+  color: inherit;
 }
 /* 滚动容器：整个文件的高度由里面的 spacer 撑开 */
 .lsc-viewport {
