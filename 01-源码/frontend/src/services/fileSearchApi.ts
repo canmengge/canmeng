@@ -32,6 +32,24 @@ export interface FileSearchResult {
  * `segments` 传 `editor.pendingSegmentsOf(index)`，这样用户还没保存的改动也搜得到，
  * 但归档一个字节都不会被改动。
  */
+/**
+ * 把用户输入折成「真正拿去搜的查询」。
+ *
+ * 【2026-10-06 用户实测反馈：搜 `14 10000` 搜不到】PVF 里 token 之间是 **TAB**
+ * （脚本里显示成 `14⇥10000`），而人习惯打**空格**；字面量匹配空格必然落空。
+ * 于是：**多关键词**时折成正则，词之间允许任意空白（`14\s+10000`）——TAB、空格、多个空格都能命中；
+ * **单个关键词**维持原字面行为（不进正则，行为与之前完全一致）。
+ */
+export function queryToSearchPattern(term: string): { query: string; regex: boolean } {
+  const words = term
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length > 0);
+  if (words.length <= 1) return { query: term, regex: false };
+  const escaped = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return { query: escaped.join("\\s+"), regex: true };
+}
+
 export function SearchInFile(
   index: number,
   query: string,

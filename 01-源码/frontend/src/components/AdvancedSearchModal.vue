@@ -25,7 +25,7 @@ import { useExplorerStore, type SearchItem } from "../stores/explorer";
 import { useSearchWindowStore } from "../stores/searchWindow";
 import { useSidebarStore } from "../stores/sidebar";
 import { clearSearchHitLines, publishSearchHitLines } from "../searchMarks";
-import { SearchInFile } from "../services/fileSearchApi";
+import { SearchInFile, queryToSearchPattern } from "../services/fileSearchApi";
 
 /**
  * 「高级搜索」对话框：左侧文件树搜索引擎的图形化版本（原内容/字符串池搜索已停用）。
@@ -334,6 +334,8 @@ async function runScopedContentScan(term: string): Promise<void> {
     }
     scanProgress.value = { done: 0, total: files.length, active: true };
 
+    // 多关键词 ⇒ 词之间允许任意空白（PVF 里是 TAB，用户习惯打空格）
+    const pattern = queryToSearchPattern(term);
     const rows: SearchItem[] = [];
     const lines = new Map<string, number>();
     const byFile = new Map<number, number[]>();
@@ -341,7 +343,15 @@ async function runScopedContentScan(term: string): Promise<void> {
     for (const file of files) {
       if (token !== scanToken || scanStop.value) break;
       try {
-        const found = await SearchInFile(file.fileIndex, term, false, false, false, 50, []);
+        const found = await SearchInFile(
+          file.fileIndex,
+          pattern.query,
+          false,
+          pattern.regex,
+          false,
+          50,
+          []
+        );
         for (const match of found?.matches ?? []) {
           seq += 1;
           const key = `${file.fileIndex}#${match.line}#${seq}`;

@@ -64,7 +64,7 @@ import {
   type FormViewCompletionSection,
 } from "../services/formViewApi";
 import { clearSearchHitLines, publishSearchHitLines, searchHitLines } from "../searchMarks";
-import { SearchInFile, type FileSearchMatch } from "../services/fileSearchApi";
+import { SearchInFile, queryToSearchPattern, type FileSearchMatch } from "../services/fileSearchApi";
 
 const props = defineProps<{
   doc: string;
@@ -1199,7 +1199,17 @@ async function runFileFind(): Promise<void> {
   fileFindError.value = "";
   try {
     // segments 传空：这一版搜的是归档里已保存的文本（未保存改动不入搜，行号才与归档一致）
-    const result = await SearchInFile(props.fileIndex, query, false, false, false, 500, []);
+    // 多关键词 ⇒ 词之间允许任意空白（PVF 里是 TAB，用户习惯打空格，见 fileSearchApi）
+    const pattern = queryToSearchPattern(query);
+    const result = await SearchInFile(
+      props.fileIndex,
+      pattern.query,
+      false,
+      pattern.regex,
+      false,
+      500,
+      []
+    );
     if (request !== fileFindRequest) return;
     const matches = result?.matches ?? [];
     fileFindMatches.value = matches;
