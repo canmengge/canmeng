@@ -102,6 +102,8 @@ const contentByFile = ref(new Map<number, number[]>());
  * 全程**不建索引、不常驻内存**。标记：pvfScopedScanC_20261006
  */
 const contentScope = ref("");
+/** 单次范围扫描最多扫多少个文件（防止一个"整个归档"的范围跑几万个请求）。 */
+const CONTENT_SCAN_MAX_FILES = 1200;
 /** 扫描进度（active = 正在扫，点「停止」即中断）。 */
 const scanProgress = ref({ done: 0, total: 0, active: false });
 const scanStop = ref(false);
@@ -322,15 +324,27 @@ async function runScopedContentScan(term: string): Promise<void> {
   scanProgress.value = { done: 0, total: 0, active: true };
   error.value = "";
   try {
-    // ① 圈文件：范围命中上限 300 个（够了；再多请缩小范围）
-    const listed = await ArchiveService.Search(scope, 0, 300);
+    // ① 圈文件：用**专门**的「列目录下所有文件」接口。
+    //
+    // 【2026-10-06 实测事故】原来这里借的是元数据搜索（`Search("contents/")`）——它按相关度
+    // 截断在前 300 条，而 `contents/` 下文件非常多 ⇒ 深处的目标文件（如
+    // contents/2022/.../grandflores_12.qst）**根本没进被扫列表**，表现就是"明明有却 0 命中"。
+    // `ListDescendantFiles` 是按归档顺序返回该目录下**全部文件**，不截断、不猜语义。
+    const nodes = (await ArchiveService.ListDescendantFiles(scope)) ?? [];
     if (token !== scanToken) return;
-    const files = (listed?.hits ?? [])
-      .map((hit: SearchHit | null) => explorer.toSearchItem(hit as SearchHit))
-      .filter((item) => item.fileIndex >= 0);
-    if (files.length === 0) {
-      error.value = `范围「${scope}」没有匹配到文件`;
+    // 类型守卫写法：`filter(!!node)` 收不窄 `TreeNode | null`，后面用 file.path 会报 TS18047
+    const all = nodes.filter(
+      (node): node is NonNullable<typeof node> => !!node && (node.fileIndex ?? -1) >= 0
+    );
+    if (all.length === 0) {
+      error.value = `范围「${scope}」下没有文件`;
       return;
+    }
+    const files = all.slice(0, CONTENT_SCAN_MAX_FILES);
+    if (all.length > files.length) {
+      message.warning(
+        `范围较大：本次只扫前 ${CONTENT_SCAN_MAX_FILES} 个文件（该目录共 ${all.length} 个），建议缩小范围`
+      );
     }
     scanProgress.value = { done: 0, total: files.length, active: true };
 
