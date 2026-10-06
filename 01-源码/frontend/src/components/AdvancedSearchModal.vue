@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, h, onBeforeUnmount, ref, watch } from "vue";
 import {
   NAlert,
   NButton,
@@ -116,9 +116,11 @@ const scanStop = ref(false);
 interface ScopeNode {
   key: string;
   label: string;
-  isLeaf: boolean;
+  isLeaf?: boolean;
   /** 懒加载：`undefined` = 还没展开过（NTree 会据此显示展开箭头）；`[]` = 已展开且为空。 */
   children?: ScopeNode[];
+  /** 左树那套**中文翻译标签**（`ListChildren` 同一次就带回来了，不必额外请求）。 */
+  annotations?: Array<{ title: string }>;
 }
 
 const scopePickerOpen = ref(false);
@@ -134,7 +136,27 @@ async function fetchScopeChildren(path: string): Promise<ScopeNode[]> {
       // 目录名取路径末段（TreeNode 的 name 是可选字段，这里不依赖它）
       label: node.path.split("/").filter(Boolean).pop() ?? node.path,
       isLeaf: false,
+      // 翻译标签与左侧文件树同源（同一次 ListChildren 的 annotations）
+      annotations: (node.annotations ?? [])
+        .filter((item) => !!item)
+        .map((item) => ({ title: (item?.title ?? "").trim() })),
     }));
+}
+
+/**
+ * C：目录行 = 目录名 + **左树那套中文翻译标签**（2026-10-06 用户要求「把左树的翻译也加进去」）。
+ * 标签数据来自同一次 `ListChildren` 的 `annotations`，没有额外请求。
+ */
+function renderScopeLabel(info: any): any {
+  const option = info?.option as ScopeNode | undefined;
+  if (!option) return "";
+  const titles = (option.annotations ?? [])
+    .map((item) => (item?.title ?? "").trim())
+    .filter((title) => title !== "");
+  return h("span", { class: "as-scope-label" }, [
+    h("span", { class: "as-scope-name" }, option.label),
+    ...titles.map((title) => h("span", { class: "as-scope-tag" }, title)),
+  ]);
 }
 
 /** n-tree onLoad：展开才拉子目录（空目录置为叶子，免得多一个没用的展开箭头）。 */
@@ -630,6 +652,7 @@ function buildSearchIndex(): void {
                       :cancelable="false"
                       :data="scopeTree"
                       :on-load="loadScopeNode"
+                      :render-label="renderScopeLabel"
                       @update:selected-keys="pickScope"
                     />
                     <div v-else class="as-scope-picker-empty">（没有可选的目录）</div>
@@ -974,5 +997,22 @@ function buildSearchIndex(): void {
   padding: 8px 0;
   color: var(--pvf-text-muted, #9aa4b2);
   font-size: 12px;
+}
+/* C：目录行 = 目录名 + 中文翻译标签（与左侧文件树同源；用户 2026-10-06 要求） */
+.as-scope-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.as-scope-name {
+  white-space: nowrap;
+}
+.as-scope-tag {
+  padding: 0 4px;
+  color: var(--pvf-text-muted, #9aa4b2);
+  font-size: 11px;
+  white-space: nowrap;
+  background: rgba(127, 127, 127, 0.16);
+  border-radius: 3px;
 }
 </style>
