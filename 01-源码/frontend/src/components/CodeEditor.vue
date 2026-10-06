@@ -51,7 +51,10 @@ import { luaHighlighting, luaLanguage } from "../luaLanguage";
 import type { EditorAnnotation } from "../../bindings/pvfine/services/models";
 import type { AnnotationTagPlacement } from "../stores/settings";
 import { useImageStore } from "../stores/images";
-import { scriptCompletionSource as declarationCompletionSource } from "../scriptLanguageService";
+import {
+  scriptCompletionSource as declarationCompletionSource,
+  scriptSignatureHelp,
+} from "../scriptLanguageService";
 import type { ResolvedThemeId } from "../theme";
 import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
 import { searchPanelPhrases, searchPanelTheme } from "../searchPanel";
@@ -581,6 +584,67 @@ const annotationField = StateField.define<DecorationSet>({
   },
   provide: (field) => EditorView.decorations.from(field),
 });
+
+/**
+ * A1 剩：Nut/JS 脚本的**函数签名提示** —— 光标停在调用实参位置时，在本行行尾显示
+ * `foo(a: number, b?: string)  ⟵ 第 2/2 个参数：b?: string`。
+ *
+ * 数据来自编辑器已经在用的那个内存 TypeScript 语言服务（`scriptSignatureHelp`），
+ * 不新增后端、不新增依赖；取不到就什么都不画（正常打字时不该有东西跳出来）。
+ * 只装脚本通道，PVF 文本不受影响。
+ * 标记：pvfNutSignatureA1_20261006
+ */
+class SignatureHintWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+  eq(other: SignatureHintWidget): boolean {
+    return other.text === this.text;
+  }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-signature-hint";
+    span.textContent = this.text;
+    return span;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+const setSignatureHint = StateEffect.define<string | null>();
+
+const signatureHintField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setSignatureHint)) continue;
+      if (!effect.value) {
+        next = Decoration.none;
+        continue;
+      }
+      const line = transaction.state.doc.lineAt(transaction.state.selection.main.head);
+      next = Decoration.set([
+        Decoration.widget({
+          widget: new SignatureHintWidget(effect.value),
+          side: 1,
+        }).range(line.to),
+      ]);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/** 请求一次签名提示（异步；只在脚本通道）。 */
+async function refreshSignatureHint(): Promise<void> {
+  if (!view || props.language !== "javascript") return;
+  const head = view.state.selection.main.head;
+  const text = await scriptSignatureHelp(view.state.doc.toString(), head);
+  if (!view) return;
+  view.dispatch({ effects: setSignatureHint.of(text) });
+}
 
 const diagnosticLineField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -1207,6 +1271,13 @@ function makeExtensions(themeId: ResolvedThemeId) {
         ? [
             tooltips({ parent: document.body, position: "fixed" }),
             javascriptHighlighting,
+            // A1 剩：脚本通道的**函数签名提示**（边打边提示第几个参数）。
+            // 只装脚本通道：PVF 文本没有"函数调用"语义，装了纯属噪声。
+            // 标记：pvfNutSignatureA1_20261006
+            signatureHintField,
+            EditorView.updateListener.of((update) => {
+              if (update.selectionSet || update.docChanged) void refreshSignatureHint();
+            }),
             autocompletion({ override: [scriptCompletionSource] }),
           ]
         : isLua
@@ -1771,6 +1842,19 @@ watch(
 /* A6 v2：内容搜索命中（复用既有主题变量，不新增变量避免主题漂移） */
 .overview-mark--hit {
   background: var(--pvf-editor-syntax-number);
+}
+/* A1 剩：脚本通道的函数签名提示（行尾，跟随光标） */
+.code-editor :deep(.cm-signature-hint) {
+  margin-left: 14px;
+  padding: 0 6px;
+  color: var(--pvf-text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+  user-select: none;
+  background: var(--pvf-surface-elevated);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 4px;
+  opacity: 0.92;
 }
 .overview-mark:hover {
   width: 9px;

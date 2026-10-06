@@ -139,6 +139,54 @@ class ScriptDeclarationLanguageService {
     };
   }
 
+  /**
+   * A1（2026-10-06）：**函数签名提示**（"边打边提示参数"）。
+   *
+   * 只在**调用实参位置**（例如 `foo(` 或 `foo(a, ` 之后）才有结果；取不到返回 null
+   * （编辑器侧据此不画任何东西，不打扰打字）。返回一行纯文本，例如：
+   *   `foo(a: number, b?: string)  ← 第 2/2 个参数：b?: string`
+   *
+   * 标记：pvfNutSignatureA1_20261006
+   */
+  async signatureHelp(request: CompletionRequest): Promise<string | null> {
+    try {
+      await this.ensureReady();
+    } catch {
+      // TypeScript 分片没加载上时静默失败：签名提示是"锦上添花"，绝不该影响打字。
+      return null;
+    }
+    if (!this.service || !this.typescript) return null;
+    this.updateScript(request.source);
+    const items = this.service.getSignatureHelpItems(
+      scriptFileName,
+      request.position,
+      undefined,
+    );
+    if (!items || items.items.length === 0) return null;
+
+    const typescript = this.typescript;
+    const active = items.items[Math.min(Math.max(items.selectedItemIndex, 0), items.items.length - 1)];
+    const text: string[] = [];
+    const push = (parts: import("typescript").SymbolDisplayPart[] | undefined) => {
+      if (parts && parts.length > 0) text.push(typescript.displayPartsToString(parts));
+    };
+    push(active.prefixDisplayParts);
+    (active.parameters ?? []).forEach((parameter, index) => {
+      if (index > 0) push(active.separatorDisplayParts);
+      push(parameter.displayParts);
+    });
+    push(active.suffixDisplayParts);
+
+    const parameters = (active.parameters ?? []).map((parameter) =>
+      typescript.displayPartsToString(parameter.displayParts ?? [])
+    );
+    const index = items.argumentIndex ?? 0;
+    const total = items.argumentCount ?? parameters.length;
+    const current = parameters[index] ?? "";
+    const position = current ? `第 ${index + 1}/${total} 个参数：${current}` : `第 ${index + 1} 个参数`;
+    return `${text.join("")}  ⟵ ${position}`;
+  }
+
   private async ensureReady(): Promise<void> {
     if (this.service) return;
     if (!this.loading) {
@@ -204,6 +252,15 @@ export function scriptCompletionSource(
     source: context.state.doc.toString(),
     position: context.pos,
   });
+}
+
+/**
+ * A1：Nut/JS 脚本的**函数签名提示**（边打边提示"第几个参数"）。
+ * 返回一行文本；不在调用实参位置 / 语言服务不可用时返回 null。
+ * 标记：pvfNutSignatureA1_20261006
+ */
+export function scriptSignatureHelp(source: string, position: number): Promise<string | null> {
+  return languageService.signatureHelp({ source, position });
 }
 
 function completionType(kind: string): Completion["type"] {
