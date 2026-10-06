@@ -23,6 +23,7 @@ import { useExplorerStore, type SearchItem } from "../stores/explorer";
 import { useSearchWindowStore } from "../stores/searchWindow";
 import { useSidebarStore } from "../stores/sidebar";
 import { clearSearchHitLines, publishSearchHitLines } from "../searchMarks";
+import { SearchInFile } from "../services/fileSearchApi";
 
 /**
  * 「高级搜索」对话框：左侧文件树搜索引擎的图形化版本（原内容/字符串池搜索已停用）。
@@ -92,6 +93,18 @@ const contentMode = ref(false);
 const hitLines = ref(new Map<string, number>());
 /** 归档文件索引 → 命中行号（给编辑器的概览条打点用，见 ../searchMarks）。 */
 const contentByFile = ref(new Map<number, number[]>());
+/**
+ * C（2026-10-06）：「范围扫描」——**目标文件夹**（必填，如 `etc/`）。
+ * 用户要求"取消建大索引"后，正文搜索改走：① 用元数据搜索按范围圈文件（轻）
+ * ② 对圈出来的文件**逐个**调 `SearchInFile` 扫正文（每次一个小请求，带进度、随时可停）。
+ * 全程**不建索引、不常驻内存**。标记：pvfScopedScanC_20261006
+ */
+const contentScope = ref("");
+/** 扫描进度（active = 正在扫，点「停止」即中断）。 */
+const scanProgress = ref({ done: 0, total: 0, active: false });
+const scanStop = ref(false);
+/** 扫描代次：换关键词/重扫时旧的那轮会自行退出（避免两轮一起写结果）。 */
+let scanToken = 0;
 const hits = ref<SearchItem[]>([]);
 const nextCursor = ref(-1);
 const searching = ref(false);
@@ -196,6 +209,98 @@ function lineOf(item: SearchItem): number {
   return hitLines.value.get(item.key) ?? 0;
 }
 
+/**
+ * C：**范围扫描**（正文搜索，不建索引）。
+ *
+ * ① 用元数据搜索按「目标文件夹」把文件圈出来（路径子串/通配符，很轻，4 秒级小索引）；
+ * ② 对圈出来的文件**逐个**调 `SearchInFile`（每次一个小请求）—— 边扫边出结果、显示进度、
+ *    点「停止」立刻中断；换关键词/重扫时旧的一轮靠 `scanToken` 自行退出。
+ *
+ * 与已停用的"跨归档正文检索"的区别：**不建索引、不常驻内存、不会长时间占全局锁**，
+ * 代价是范围越大越慢（但随时可停，不像建索引那样一旦开始就得等）。
+ * 标记：pvfScopedScanC_20261006
+ */
+async function runScopedContentScan(term: string): Promise<void> {
+  const scope = contentScope.value.trim();
+  if (scope === "") {
+    error.value = "请先填「目标文件夹」（例如 etc/ 或 equipment/character/），再扫描";
+    return;
+  }
+  if (scanProgress.value.active) return;
+  resetResults();
+  const token = ++scanToken;
+  scanStop.value = false;
+  scanProgress.value = { done: 0, total: 0, active: true };
+  error.value = "";
+  try {
+    // ① 圈文件：范围命中上限 300 个（够了；再多请缩小范围）
+    const listed = await ArchiveService.Search(scope, 0, 300);
+    if (token !== scanToken) return;
+    const files = (listed?.hits ?? [])
+      .map((hit: SearchHit | null) => explorer.toSearchItem(hit as SearchHit))
+      .filter((item) => item.fileIndex >= 0);
+    if (files.length === 0) {
+      error.value = `范围「${scope}」没有匹配到文件`;
+      return;
+    }
+    scanProgress.value = { done: 0, total: files.length, active: true };
+
+    const rows: SearchItem[] = [];
+    const lines = new Map<string, number>();
+    const byFile = new Map<number, number[]>();
+    let seq = 0;
+    for (const file of files) {
+      if (token !== scanToken || scanStop.value) break;
+      try {
+        const found = await SearchInFile(file.fileIndex, term, false, false, false, 50, []);
+        for (const match of found?.matches ?? []) {
+          seq += 1;
+          const key = `${file.fileIndex}#${match.line}#${seq}`;
+          lines.set(key, match.line);
+          const bucket = byFile.get(file.fileIndex);
+          if (bucket) bucket.push(match.line);
+          else byFile.set(file.fileIndex, [match.line]);
+          rows.push({
+            key,
+            label: (match.text ?? "").trim() || term,
+            path: file.path,
+            id: "",
+            name: file.name,
+            category: "正文",
+            fileIndex: file.fileIndex,
+            size: file.size,
+            dataType: file.dataType,
+          } as unknown as SearchItem);
+        }
+      } catch {
+        // 单个文件失败（解不开/超大）不打断整轮：继续扫下一个
+      }
+      const done = scanProgress.value.done + 1;
+      scanProgress.value = { done, total: files.length, active: true };
+      // 每 5 个文件刷一次列表：够"边扫边看"，又不会把大数组每文件重渲染一遍
+      if (done % 5 === 0) hits.value = [...rows];
+    }
+
+    hits.value = rows;
+    hitLines.value = lines;
+    contentByFile.value = byFile;
+    // 命中行发布给编辑器：概览条打黄点（与"当前文件搜索"共用同一通道）
+    publishSearchHitLines(byFile);
+    searched.value = true;
+    if (scanStop.value) {
+      message.info(`已停止：扫了 ${scanProgress.value.done} / ${files.length} 个文件，命中 ${rows.length} 处`);
+    } else if (rows.length === 0) {
+      message.info(`扫完 ${files.length} 个文件：没有命中`);
+    } else {
+      message.success(`扫完 ${files.length} 个文件：命中 ${rows.length} 处`);
+    }
+  } catch (e: any) {
+    if (token === scanToken) error.value = String(e?.message ?? e);
+  } finally {
+    if (token === scanToken) scanProgress.value = { ...scanProgress.value, active: false };
+  }
+}
+
 async function runSearch(): Promise<void> {
   const term = query.value.trim();
   if (!term || searching.value) return;
@@ -207,16 +312,8 @@ async function runSearch(): Promise<void> {
   error.value = "";
   try {
     if (contentMode.value) {
-      // A9：内容搜索（带行号）—— 走 AdvancedSearch("string", …)
-      const result = await ArchiveService.AdvancedSearch("string", term, "", false, 0, 200);
-      const built = buildContentRows(result);
-      hits.value = built.rows;
-      hitLines.value = built.lines;
-      // A6 v2：发布命中行号，编辑器右缘的概览条会给这些行打黄点
-      publishSearchHitLines(built.byFile);
-      contentByFile.value = built.byFile;
-      nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
-      searched.value = true;
+      // C：正文搜索走「范围扫描」——不建索引（那份 4.9GB 的索引已按用户要求取消）
+      await runScopedContentScan(term);
       return;
     }
     const result = exact.value
@@ -241,25 +338,8 @@ async function loadMore(): Promise<void> {
   error.value = "";
   try {
     if (contentMode.value) {
-      const result = await ArchiveService.AdvancedSearch("string", term, "", false, nextCursor.value, 200);
-      const built = buildContentRows(result);
-      // 行号表要合并（Map 直接改不会触发 ref 更新 ⇒ 换成新 Map）
-      const merged = new Map(hitLines.value);
-      for (const [key, line] of built.lines) merged.set(key, line);
-      hits.value = [...hits.value, ...built.rows];
-      hitLines.value = merged;
-      // A6 v2：加载更多要把新增命中并进打点数据，不能只发这一页
-      const mergedByFile = new Map(contentByFile.value);
-      for (const [index, list] of built.byFile) {
-        const bucket = mergedByFile.get(index);
-        mergedByFile.set(
-          index,
-          bucket ? [...new Set([...bucket, ...list])].sort((a, b) => a - b) : list
-        );
-      }
-      contentByFile.value = mergedByFile;
-      publishSearchHitLines(mergedByFile);
-      nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
+      // C：范围扫描是"逐个文件扫"的自驱动分页，没有"加载更多"这一步
+      message.info("范围扫描不需要加载更多：改范围或关键词后重新扫描即可");
       return;
     }
     const result = exact.value
@@ -446,9 +526,27 @@ function buildSearchIndex(): void {
           <NCheckbox v-model:checked="exact" size="small" :disabled="searching || contentMode">
             精确匹配（整词相等，不再做子串匹配）
           </NCheckbox>
-          <NCheckbox v-model:checked="contentMode" size="small" :disabled="searching" @update:checked="resetResults">
-            内容搜索（搜文件正文，命中显示**行号**、可精确跳转）
+          <NCheckbox
+            v-model:checked="contentMode"
+            size="small"
+            :disabled="searching || scanProgress.active"
+            @update:checked="resetResults"
+          >
+            正文搜索（范围扫描，不建大索引）
           </NCheckbox>
+          <template v-if="contentMode">
+            <NInput
+              v-model:value="contentScope"
+              size="tiny"
+              style="width: 200px"
+              placeholder="目标文件夹，如 etc/（必填）"
+              :disabled="searching || scanProgress.active"
+            />
+            <span v-if="scanProgress.active" class="as-meta">
+              已扫 {{ scanProgress.done }} / {{ scanProgress.total }}…
+            </span>
+            <NButton v-if="scanProgress.active" size="tiny" secondary @click="scanStop = true">停止</NButton>
+          </template>
         </template>
         <template v-else>
           <NCheckbox

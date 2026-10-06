@@ -26,6 +26,15 @@ const (
 
 var ErrAdvancedSearchIndexing = errors.New("高级搜索字符串索引正在构建")
 
+// ErrAdvancedSearchDisabled 表示"跨归档正文检索"已被停用。
+//
+// 【2026-10-06 用户要求：取消建大索引】实测那份字符串池索引要 438 万条目、常驻约 4.9GB
+// （本机总内存 7.1GB），一旦构建就把整机拖垮（文件树、打开文件全部转圈）。
+// 用户明确要求取消 ⇒ 这里直接拒绝，任何调用者（面板 / 以后新增的入口）都无法再触发构建。
+// 正文搜索改走两条**不建索引**的路：① Ctrl+Shift+F「当前文件搜索」
+// ② 高级搜索面板里的「范围扫描」（按目录圈文件后逐个文件分页扫，随时可停）。
+var ErrAdvancedSearchDisabled = errors.New("跨归档正文检索已停用（原索引约 4.9GB，已按你的要求取消建索引）；请改用「当前文件搜索」或面板里的「范围扫描」")
+
 // AdvancedSearchIndexStatus describes the lazy string reverse-index state.
 type AdvancedSearchIndexStatus struct {
 	State string `json:"state"`
@@ -117,7 +126,10 @@ func (s *ArchiveService) AdvancedSearch(mode, query, scopePath string, regex boo
 	case AdvancedSearchModeBinary:
 		return s.searchAdvancedBinary(query, scope, cursor, limit)
 	case AdvancedSearchModeString:
-		return s.searchAdvancedString(query, scope, regex, cursor, limit)
+		// 【2026-10-06 用户要求：取消建大索引】字符串池索引（438 万条目 / 常驻 4.9GB）不再构建，
+		// 直接拒绝 ⇒ 不会再有"搜一次卡死整机"的情况。正文搜索请走不建索引的两条路
+		// （Ctrl+Shift+F 当前文件搜索 / 面板的「范围扫描」），见 ErrAdvancedSearchDisabled 注释。
+		return nil, ErrAdvancedSearchDisabled
 	default:
 		return nil, fmt.Errorf("未知高级搜索模式: %s", mode)
 	}
