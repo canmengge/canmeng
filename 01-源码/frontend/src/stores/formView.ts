@@ -211,7 +211,11 @@ export const useFormViewStore = defineStore("formView", () => {
     const target = preferredFormatId || formatId.value || formats.value[0]?.id || "";
     if (target !== "") formatId.value = target;
     const format = formats.value.find((entry) => entry.id === formatId.value);
-    if (format && format.files.length > 0 && filePath.value.trim() === "") {
+    if (format && format.files.length > 0) {
+      // 2026-10-06 修：**切板块必配该板块自己的默认文件**（无条件）。
+      // 旧代码只在 filePath 为空时才兜底 —— 主窗口残留着商店文件路径时，点「独立掉落编辑」
+      // 会把 `独立掉落族 + itemshop/xxx.shp` 打包发给新窗口（watch(formatId) 是异步的，
+      // 来不及先把 filePath 换掉）⇒ 用户实测：标题/文件族是独立掉落、内容和文件却是商店的。
       filePath.value = format.files[0];
     }
     await OpenFormViewWindow({
