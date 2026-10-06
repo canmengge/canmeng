@@ -367,3 +367,18 @@ export function AppendShopTab(
 ): $CancellablePromise<FormViewProjection> {
   return $Call.ByID(3470123801, filePath, name, firstItem);
 }
+
+/**
+ * 删除第 `occurrence` 个**整个商店条目**（一个 `[tab]` 块，含它自己的 `[item list]`）。
+ *
+ * 与「删除段内一行」（`DeleteSectionRows`）分开：那是行级，这是块级、整条目。
+ * 商店模块专属；后端删完会重新投影校验（条目数必须正好 -1），不符就整体放弃。
+ * fqn = pvfine/services.FormViewService.DeleteShopTab
+ * 方法 ID 用已知的 `ListFormats`(3541309786) 反验 FNV-1a-32 算法后复算。
+ */
+export function DeleteShopTab(
+  filePath: string,
+  occurrence: number
+): $CancellablePromise<FormViewProjection> {
+  return $Call.ByID(139918680, filePath, occurrence);
+}

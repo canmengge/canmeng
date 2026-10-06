@@ -54,7 +54,12 @@ import { FormViewRuleText } from "../services/saveApi";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
 // 通用段行增删（只给"非独立掉落"文件族用）：与独立掉落那套**分开做、互不影响**
 // （用户 2026-10-06 要求：每个可视化 UI 的 UI 与功能都要独立）。
-import { AppendShopTab, DeleteSectionRows, InsertSectionRow } from "../services/formViewApi";
+import {
+  AppendShopTab,
+  DeleteSectionRows,
+  DeleteShopTab,
+  InsertSectionRow,
+} from "../services/formViewApi";
 
 const formView = useFormViewStore();
 const editor = useEditorStore();
@@ -856,6 +861,16 @@ const canAddItem = computed(() => {
 });
 
 /** 这个文件像不像商店（投影里同时有 `[tab]` 与 `[item list]`）—— 决定显示不显示「新建商店条目」。 */
+/** 商店条目块（`[tab]`）与物品列表块（`[item list]`），按投影顺序。 */
+const shopTabBlocks = computed<FormViewSection[]>(() =>
+  (formView.projection?.sections ?? []).filter((item) => item.section.toLowerCase() === "tab")
+);
+const shopListBlocks = computed<FormViewSection[]>(() =>
+  (formView.projection?.sections ?? []).filter(
+    (item) => item.section.toLowerCase() === "item list"
+  )
+);
+
 const isShopLike = computed(() => {
   const names = new Set(
     (formView.projection?.sections ?? []).map((item) => item.section.toLowerCase())
@@ -869,6 +884,99 @@ const pendingShopTabs = computed<Extract<PendingInsert, { kind: "tab" }>[]>(() =
     (item): item is Extract<PendingInsert, { kind: "tab" }> => item.kind === "tab"
   )
 );
+
+// ---- 商店条目界面（布局 A：左侧 6 个固定条目槽 + 右侧当前条目的物品表）----
+//
+// 条目在文件里是 `[tab]`（条目名），它售卖的东西在紧跟的 `[item list]` 里；两者按出现顺序一一对应
+// （有的文件最外层还有一个"分组 tab"，它自己没有物品列表 ⇒ 用 tabExtra 偏移跳过）。
+// 标记：pvfShopSlots_20261006
+const tabExtra = computed(() => {
+  const tabs = shopTabBlocks.value.length;
+  const lists = shopListBlocks.value.length;
+  return tabs === lists + 1 ? 1 : 0;
+});
+
+/** 条目 → 它自己的物品列表。 */
+const slotEntries = computed(() =>
+  shopListBlocks.value.map((list, index) => {
+    const tab = shopTabBlocks.value[index + tabExtra.value] ?? null;
+    const name = tab
+      ? (tab.rows[0]?.cells[0]?.display || tab.rows[0]?.cells[0]?.value || "").trim()
+      : "";
+    return {
+      key: blockKey(list),
+      name,
+      list,
+      tabOccurrence: tab ? tab.occurrence : 0,
+      count: list.rows.length,
+    };
+  })
+);
+
+/** 每页 6 个槽（固定 6 个位置：不够就空置，超过就翻页，第 7 个回到第 1 槽）。 */
+const slotsPerPage = 6;
+const tabPage = ref(0);
+const slotPageCount = computed(() =>
+  Math.max(1, Math.ceil(slotEntries.value.length / slotsPerPage))
+);
+const slotRows = computed(() => {
+  const start = tabPage.value * slotsPerPage;
+  const rows: (ReturnType<typeof slotEntries.value.slice>)[number][] = [];
+  for (let i = 0; i < slotsPerPage; i += 1) {
+    const entry = slotEntries.value[start + i] ?? null;
+    rows.push(entry as never);
+  }
+  return rows;
+});
+
+/** 当前选中的条目（按主表所在的块反查）。 */
+const currentSlot = computed(() => {
+  const section = mainSection.value;
+  if (!section) return null;
+  const key = blockKey(section);
+  return slotEntries.value.find((entry) => entry.key === key) ?? null;
+});
+
+/** 主表标题：商店条目优先显示**条目名**（如「消耗品」），不再是"商店物品列表 #2"。 */
+const currentBlockTitle = computed(() => {
+  if (currentSlot.value && currentSlot.value.name !== "") return currentSlot.value.name;
+  if (mainSection.value) return sectionTitle(mainSection.value);
+  return "";
+});
+
+function activateSlot(entry: (typeof slotEntries.value)[number] | null): void {
+  if (!entry) return;
+  activeBlockKey.value = entry.key;
+  page.value = 1;
+}
+function prevSlotPage(): void {
+  tabPage.value = (tabPage.value - 1 + slotPageCount.value) % slotPageCount.value;
+}
+function nextSlotPage(): void {
+  tabPage.value = (tabPage.value + 1) % slotPageCount.value;
+}
+
+/** 排队中的「删除整个条目」。 */
+const pendingTabDeletes = ref<{ tabOccurrence: number; name: string }[]>([]);
+const pendingTabDeleteCount = computed(() => pendingTabDeletes.value.length);
+
+function queueDeleteTab(): void {
+  const entry = currentSlot.value;
+  if (!entry) {
+    message.warning("先在左侧选中一个条目，再删");
+    return;
+  }
+  if (pendingTabDeletes.value.some((item) => item.tabOccurrence === entry.tabOccurrence)) {
+    message.info("这个条目已经在待删除列表里了");
+    return;
+  }
+  const label = entry.name || `第 ${entry.tabOccurrence} 个条目`;
+  pendingTabDeletes.value = [
+    ...pendingTabDeletes.value,
+    { tabOccurrence: entry.tabOccurrence, name: label },
+  ];
+  message.success(`已把条目「${label}」加入待删除（点「保存改动」才真删）`);
+}
 
 /** 把「新建商店条目」加入待保存队列（不碰归档）。 */
 function queueShopTab(): void {
@@ -1541,6 +1649,7 @@ function discardDrafts(): void {
     pendingInserts.value.length === 0 &&
     pendingDeletes.value.length === 0 &&
     pendingRowDeletes.value.length === 0 &&
+    pendingTabDeletes.value.length === 0 &&
     pendingCandidateDeletes.value.length === 0
   ) {
     return;
@@ -1549,6 +1658,7 @@ function discardDrafts(): void {
   pendingInserts.value = [];
   pendingDeletes.value = [];
   pendingRowDeletes.value = [];
+  pendingTabDeletes.value = [];
   pendingCandidateDeletes.value = [];
   clearSelection();
   clearViewerSelection();
@@ -1562,12 +1672,14 @@ async function saveDrafts(): Promise<void> {
   const queued = [...pendingInserts.value];
   const deletes = [...pendingDeletes.value];
   const rowDeletes = [...pendingRowDeletes.value];
+  const tabDeleteCount = pendingTabDeletes.value.length;
   const candidateDeletes = [...pendingCandidateDeletes.value];
   if (
     drafts.length === 0 &&
     queued.length === 0 &&
     deletes.length === 0 &&
     rowDeletes.length === 0 &&
+    tabDeleteCount === 0 &&
     candidateDeletes.length === 0
   ) {
     return;
@@ -1661,6 +1773,13 @@ async function saveDrafts(): Promise<void> {
       }
       pendingRowDeletes.value = [];
     }
+    //    ③-d 删除整个条目：按条目序号**从大到小**删（先删靠后的，靠前的序号不受影响）。
+    for (const item of [...pendingTabDeletes.value].sort(
+      (left, right) => right.tabOccurrence - left.tabOccurrence
+    )) {
+      await DeleteShopTab(formView.filePath.trim(), item.tabOccurrence);
+    }
+    pendingTabDeletes.value = [];
     //    ③-b 查看器里排队的**候选**删除：按（段, 出现序号）分组，组内同样从大到小
     if (candidateDeletes.length > 0) {
       const grouped = new Map<
@@ -1701,6 +1820,7 @@ async function saveDrafts(): Promise<void> {
     if (tabCount > 0) parts.push(`新建条目 ${tabCount} 条`);
     if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
     if (rowDeletes.length > 0) parts.push(`删除 ${rowDeletes.length} 行`);
+    if (tabDeleteCount > 0) parts.push(`删除条目 ${tabDeleteCount} 个`);
     if (candidateDeletes.length > 0) parts.push(`删除候选 ${candidateDeletes.length} 条`);
     message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
     // ⚠️ 红线（用户 2026-10-03 明确强调）：**写 PVF 文件只能由用户手动点主工具条
@@ -1999,7 +2119,7 @@ function resetColumnWidths(): void {
                  .fv-grid-scroll 里（用户 2026-10-03："滑动浏览要在固定 UI 界面下面"） -->
             <div class="fv-fixed">
             <div class="fv-section-head">
-              <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
+              <span class="fv-section-title">{{ currentBlockTitle }}</span>
               <!-- 段块切换（2026-10-06）：同一段在本文件里出现多块时（如商店 7 个页签 = 7 处
                    [item list]），默认仍显示"行数最多的那块"（独立掉落观感不变），这里可切到其它块。 -->
               <NSelect
@@ -2025,6 +2145,59 @@ function resetColumnWidths(): void {
             </ul>
 
             <!-- 搜索 + 批量改（都作用在下方这张主表上） -->
+            <div class="fv-main">
+              <!-- 左侧：6 个固定条目槽（只有商店才有） -->
+              <div v-if="isShopLike" class="fv-slots">
+                <div class="fv-slots-head">
+                  <span class="fv-slots-title">条目</span>
+                  <span class="fv-slots-page">{{ tabPage + 1 }}/{{ slotPageCount }}</span>
+                </div>
+                <div class="fv-slot-pager">
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    :disabled="slotPageCount <= 1"
+                    title="上一页（超过 6 个条目时翻页，第 7 个会回到第 1 槽）"
+                    @click="prevSlotPage"
+                  >
+                    ▲
+                  </NButton>
+                </div>
+                <button
+                  v-for="(entry, index) in slotRows"
+                  :key="index"
+                  type="button"
+                  class="fv-slot"
+                  :class="{
+                    'fv-slot--active': entry && currentSlot && entry.key === currentSlot.key,
+                    'fv-slot--empty': !entry,
+                  }"
+                  :title="
+                    entry
+                      ? `${entry.name || '第 ' + entry.tabOccurrence + ' 个条目'}（${entry.count} 个物品）`
+                      : '这个位置没有条目（空置）'
+                  "
+                  @click="activateSlot(entry)"
+                >
+                  <span class="fv-slot-no">{{ tabPage * slotsPerPage + index + 1 }}</span>
+                  <span class="fv-slot-name">{{
+                    entry ? entry.name || `第 ${entry.tabOccurrence} 个条目` : ""
+                  }}</span>
+                  <span v-if="entry" class="fv-slot-count">{{ entry.count }}</span>
+                </button>
+                <div class="fv-slot-pager">
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    :disabled="slotPageCount <= 1"
+                    title="下一页（超过 6 个条目时翻页，第 7 个会回到第 1 槽）"
+                    @click="nextSlotPage"
+                  >
+                    ▼
+                  </NButton>
+                </div>
+              </div>
+              <div class="fv-main-right">
             <div class="fv-tools">
 
               <NSelect
@@ -2169,6 +2342,16 @@ function resetColumnWidths(): void {
                   </NButton>
                 </template>
                 <NButton
+                  v-if="currentSlot"
+                  size="tiny"
+                  type="error"
+                  ghost
+                  title="删除整个条目（含它的物品列表）。先排队，点上方「保存改动」才真删"
+                  @click="queueDeleteTab"
+                >
+                  🗑 删除整个条目
+                </NButton>
+                <NButton
                   size="tiny"
                   type="error"
                   ghost
@@ -2187,15 +2370,15 @@ function resetColumnWidths(): void {
                 未保存 {{ pendingCount }} 格{{
                   pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
                 }}{{
-                  pendingDeleteCount + pendingRowDeleteCount > 0
-                    ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount} 行`
+                  pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0
+                    ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount} 项`
                     : ""
                 }}
               </span>
               <NButton
                 size="tiny"
                 quaternary
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount === 0"
                 @click="discardDrafts"
               >
                 放弃改动
@@ -2203,7 +2386,7 @@ function resetColumnWidths(): void {
               <NButton
                 size="tiny"
                 type="primary"
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount === 0"
                 :loading="saving"
                 title="写进归档内存（等于保存这个掉落文本；写 PVF 文件仍由主工具条「保存 PVF」负责）"
                 @click="saveDrafts"
@@ -2390,6 +2573,8 @@ function resetColumnWidths(): void {
             </table>
             </div>
             <!-- /.fv-grid-scroll -->
+              </div>
+            </div>
           </template>
 
           <!-- 通用段行的"待保存追加"（队列里看得见，与独立掉落的"加一条候选"同一套模型） -->
@@ -3579,5 +3764,93 @@ function resetColumnWidths(): void {
   overflow: auto;
   border: 1px solid var(--pvf-border-faint);
   border-radius: 4px;
+}
+/* 商店条目界面（布局 A）：左侧 6 个固定条目槽 */
+.fv-main {
+  display: flex;
+  min-height: 0;
+  gap: 10px;
+}
+.fv-main-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.fv-slots {
+  width: 168px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--pvf-border-subtle, rgba(128, 128, 128, 0.2));
+  border-radius: 8px;
+  background: var(--pvf-surface-elevated, transparent);
+}
+.fv-slots-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--pvf-text-secondary, inherit);
+}
+.fv-slots-page {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.fv-slot-pager {
+  display: flex;
+  justify-content: center;
+}
+.fv-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--pvf-text-primary, inherit);
+  background: transparent;
+  border: 1px solid var(--pvf-border-subtle, rgba(128, 128, 128, 0.2));
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.fv-slot:hover {
+  border-color: var(--pvf-primary, #18a058);
+}
+.fv-slot-no {
+  flex: none;
+  width: 16px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.fv-slot-name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fv-slot-count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.fv-slot--active {
+  color: var(--pvf-primary, #18a058);
+  background: var(--pvf-success-surface, rgba(24, 160, 88, 0.12));
+  border-color: var(--pvf-primary, #18a058);
+  box-shadow: inset 3px 0 0 var(--pvf-primary, #18a058);
+}
+.fv-slot--empty {
+  border-style: dashed;
+  opacity: 0.45;
+  cursor: default;
+}
+.fv-slot--empty:hover {
+  border-color: var(--pvf-border-subtle, rgba(128, 128, 128, 0.2));
 }
 </style>
