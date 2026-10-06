@@ -965,7 +965,9 @@ async function loadShopFiles(): Promise<void> {
           .map((item) => (item?.title ?? "").trim())
           .filter((title) => title !== "");
         const name = node.path.split("/").filter(Boolean).pop() ?? node.path;
-        return { value: node.path, label: titles.length > 0 ? `${name}　${titles.join(" ")}` : name };
+        // 用户 2026-10-06：跟左树一样，商店 ID 和 NPC 名字都要显示（形如 `xxx.shp [15] [赛丽亚·克鲁敏]`）。
+        const tags = titles.map((title) => (title.startsWith("[") ? title : `[${title}]`));
+        return { value: node.path, label: tags.length > 0 ? `${name} ${tags.join(" ")}` : name };
       });
   } catch {
     // 归档还没打开 / 目录不存在：下拉保持为空，不弹错（用户开档后再进本窗口会重新拉）。
@@ -984,6 +986,10 @@ function onPickShopFile(path: string): void {
 /** 排队中的「删除整个条目」。 */
 const pendingTabDeletes = ref<{ tabOccurrence: number; name: string }[]>([]);
 const pendingTabDeleteCount = computed(() => pendingTabDeletes.value.length);
+/** 待删条目的 tabOccurrence 集合（左侧槽显示红框用，用户 2026-10-06）。 */
+const pendingTabDeleteOccs = computed(
+  () => new Set(pendingTabDeletes.value.map((tab) => tab.tabOccurrence))
+);
 
 // 进入商店界面（或归档打开后投影就绪）时拉一次文件列表；失败静默（下拉为空不碍事）。
 watch(
@@ -992,6 +998,14 @@ watch(
     if (value) void loadShopFiles();
   },
   { immediate: true }
+);
+// 每次投影变化（换文件 / 开档 / 保存回传）都重拉一次：注解引擎是按需缓存的，
+// 刚开档时第一次拉可能拿不到 NPC 名字标签，投影就绪后再拉就有了。
+watch(
+  () => formView.projection,
+  () => {
+    if (isShopLike.value) void loadShopFiles();
+  }
 );
 
 function queueDeleteTab(): void {
@@ -2166,17 +2180,11 @@ function resetColumnWidths(): void {
                 @update:value="onPickShopFile"
               />
             </div>
-            <div class="fv-section-head">
-              <span class="fv-section-title">{{ currentBlockTitle }}</span>
-
-              <span
-                class="fv-section-meta"
-                title="单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 · 带 🔗 的格双击查看关联列表"
-              >
-                {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列
-              </span>
-              <!-- 未保存计数与「放弃改动 / 保存改动」上移到标题行（用户 2026-10-06），字号加大 -->
+            <!-- 用户 2026-10-06：「放弃改动 / 保存改动」+ 未保存计数放到左上（文件下拉下方），字号加大 -->
+            <div class="fv-headrow">
               <span class="fv-head-actions">
+                <NButton size="small" quaternary @click="discardDrafts">放弃改动</NButton>
+                <NButton size="small" type="primary" @click="saveDrafts">保存改动</NButton>
                 <span
                   v-if="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0"
                   class="fv-tools-dirty"
@@ -2189,9 +2197,18 @@ function resetColumnWidths(): void {
                       : ""
                   }}
                 </span>
-                <NButton size="small" quaternary @click="discardDrafts">放弃改动</NButton>
-                <NButton size="small" type="primary" @click="saveDrafts">保存改动</NButton>
               </span>
+            </div>
+            <div class="fv-section-head">
+              <span class="fv-section-title">{{ currentBlockTitle }}</span>
+
+              <span
+                class="fv-section-meta"
+                title="单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 · 带 🔗 的格双击查看关联列表"
+              >
+                {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列
+              </span>
+
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
               <li v-for="(warning, index) in mainSection.warnings" :key="index">
@@ -2200,7 +2217,7 @@ function resetColumnWidths(): void {
             </ul>
 
             <!-- 搜索 + 批量改（都作用在下方这张主表上） -->
-            <div class="fv-main">
+            <div class="fv-main" :class="{ 'fv-main--fixed': isShopLike }">
               <!-- 左侧：6 个固定条目槽（只有商店才有） -->
               <div v-if="isShopLike" class="fv-slots">
                 <div class="fv-slots-head">
@@ -2226,6 +2243,7 @@ function resetColumnWidths(): void {
                   :class="{
                     'fv-slot--active': entry && currentSlot && entry.key === currentSlot.key,
                     'fv-slot--empty': !entry,
+                    'fv-slot--del': entry && pendingTabDeleteOccs.has(entry.tabOccurrence),
                   }"
                   :title="
                     entry
@@ -2328,97 +2346,103 @@ function resetColumnWidths(): void {
                 <!-- 2026-10-06 精简：原来两个输入框 + 两个按钮常驻，工具条太挤。
                      改成"按钮先点开、输入框才出现"，一次只展开一组（功能一个不少）。 -->
                 <span class="fv-tools-sep" />
-                <NButton
-                  v-if="canAddItem"
-                  size="tiny"
-                  :type="addMode === 'item' ? 'primary' : 'default'"
-                  :ghost="addMode !== 'item'"
-                  title="往当前条目（当前页）末尾追加一个物品"
-                  @click="toggleAddMode('item')"
-                >
-                  ＋ 添加物品
-                </NButton>
-                <template v-if="canAddItem && addMode === 'item'">
-                  <NInput
-                    v-model:value="rowEditValue"
-                    size="small"
-                    style="width: 150px"
-                    placeholder="物品编号，如 14400"
-                    @keyup.enter="queueRowInsert"
-                  />
-                  <span v-if="rowEditItemName(rowEditValue)" class="fv-drop-name">
-                    {{ rowEditItemName(rowEditValue) }}
-                  </span>
+              <!-- 用户 2026-10-06：按钮并排两列 —— 左列＝新建条目/删除整个条目，
+                   右列＝添加物品/删除选中物品（「删除选中」改名）。 -->
+              <div class="fv-btn-cols">
+                <div class="fv-btn-col">
+                  <NButton
+                    v-if="isShopLike"
+                    size="tiny"
+                    :type="addMode === 'tab' ? 'primary' : 'default'"
+                    :ghost="addMode !== 'tab'"
+                    title="新建一个商店条目：[tab] + `条目名`（反引号对）+ 含首个物品的 [item list]"
+                    @click="toggleAddMode('tab')"
+                  >
+                    ＋ 新建条目
+                  </NButton>
+                  <template v-if="isShopLike && addMode === 'tab'">
+                    <NInput
+                      v-model:value="shopTabName"
+                      size="small"
+                      style="width: 130px"
+                      placeholder="条目名，如 特色物品"
+                      @keyup.enter="queueShopTab"
+                    />
+                    <NInput
+                      v-model:value="shopTabFirstItem"
+                      size="small"
+                      style="width: 140px"
+                      placeholder="首个物品编号，如 756000007"
+                      @keyup.enter="queueShopTab"
+                    />
+                    <span v-if="rowEditItemName(shopTabFirstItem)" class="fv-drop-name">
+                      {{ rowEditItemName(shopTabFirstItem) }}
+                    </span>
+                    <NButton
+                      size="tiny"
+                      type="primary"
+                      :disabled="shopTabName.trim() === '' || shopTabFirstItem.trim() === ''"
+                      title="加入待保存；点「保存改动」才写进归档内存"
+                      @click="queueShopTab"
+                    >
+                      加入待保存
+                    </NButton>
+                  </template>
+                  <NButton
+                    v-if="currentSlot"
+                    size="tiny"
+                    type="error"
+                    ghost
+                    title="删除整个条目（含它的物品列表）。先排队，点上方「保存改动」才真删"
+                    @click="queueDeleteTab"
+                  >
+                    🗑 删除整个条目
+                  </NButton>
+                </div>
+                <div class="fv-btn-col">
+                  <NButton
+                    v-if="canAddItem"
+                    size="tiny"
+                    :type="addMode === 'item' ? 'primary' : 'default'"
+                    :ghost="addMode !== 'item'"
+                    title="往当前条目（当前页）末尾追加一个物品"
+                    @click="toggleAddMode('item')"
+                  >
+                    ＋ 添加物品
+                  </NButton>
+                  <template v-if="canAddItem && addMode === 'item'">
+                    <NInput
+                      v-model:value="rowEditValue"
+                      size="small"
+                      style="width: 150px"
+                      placeholder="物品编号，如 14400"
+                      @keyup.enter="queueRowInsert"
+                    />
+                    <span v-if="rowEditItemName(rowEditValue)" class="fv-drop-name">
+                      {{ rowEditItemName(rowEditValue) }}
+                    </span>
+                    <NButton
+                      size="tiny"
+                      type="primary"
+                      :disabled="rowEditValue.trim() === ''"
+                      title="加入待保存；点「保存改动」才写进归档内存"
+                      @click="queueRowInsert"
+                    >
+                      加入待保存
+                    </NButton>
+                  </template>
                   <NButton
                     size="tiny"
-                    type="primary"
-                    :disabled="rowEditValue.trim() === ''"
-                    title="加入待保存；点「保存改动」才写进归档内存"
-                    @click="queueRowInsert"
+                    type="error"
+                    ghost
+                    :disabled="selectedRows.size === 0"
+                    title="把选中的行加入待删除。点上方「保存改动」才真正删除"
+                    @click="queueRowDelete"
                   >
-                    加入待保存
+                    删除选中物品{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
                   </NButton>
-                </template>
-                <span class="fv-tools-sep" />
-                <NButton
-                  v-if="isShopLike"
-                  size="tiny"
-                  :type="addMode === 'tab' ? 'primary' : 'default'"
-                  :ghost="addMode !== 'tab'"
-                  title="新建一个商店条目：[tab] + `条目名`（反引号对）+ 含首个物品的 [item list]"
-                  @click="toggleAddMode('tab')"
-                >
-                  ＋ 新建条目
-                </NButton>
-                <template v-if="isShopLike && addMode === 'tab'">
-                  <NInput
-                    v-model:value="shopTabName"
-                    size="small"
-                    style="width: 130px"
-                    placeholder="条目名，如 特色物品"
-                    @keyup.enter="queueShopTab"
-                  />
-                  <NInput
-                    v-model:value="shopTabFirstItem"
-                    size="small"
-                    style="width: 140px"
-                    placeholder="首个物品编号，如 756000007"
-                    @keyup.enter="queueShopTab"
-                  />
-                  <span v-if="rowEditItemName(shopTabFirstItem)" class="fv-drop-name">
-                    {{ rowEditItemName(shopTabFirstItem) }}
-                  </span>
-                  <NButton
-                    size="tiny"
-                    type="primary"
-                    :disabled="shopTabName.trim() === '' || shopTabFirstItem.trim() === ''"
-                    title="加入待保存；点「保存改动」才写进归档内存"
-                    @click="queueShopTab"
-                  >
-                    加入待保存
-                  </NButton>
-                </template>
-                <span class="fv-tools-sep" />
-                <NButton
-                  v-if="currentSlot"
-                  size="tiny"
-                  type="error"
-                  ghost
-                  title="删除整个条目（含它的物品列表）。先排队，点上方「保存改动」才真删"
-                  @click="queueDeleteTab"
-                >
-                  🗑 删除整个条目
-                </NButton>
-                <NButton
-                  size="tiny"
-                  type="error"
-                  ghost
-                  :disabled="selectedRows.size === 0"
-                  title="把选中的行加入待删除。点上方「保存改动」才真正删除"
-                  @click="queueRowDelete"
-                >
-                  删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
-                </NButton>
+                </div>
+              </div>
               </template>
 
               <!-- 「批量改」按钮已按用户 2026-10-03 要求撤下（"现在那个有问题不好用，后续我再改"）：
@@ -3892,11 +3916,57 @@ function resetColumnWidths(): void {
 }
 /* 标题行右侧：未保存计数 + 放弃/保存（字号已用 small 按钮） */
 .fv-head-actions {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 8px;
   flex: none;
+}
+/* 「放弃改动/保存改动+计数」一行，靠左（用户 2026-10-06） */
+.fv-headrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+/* 按钮两列并排（左＝新建条目/删除整个条目，右＝添加物品/删除选中物品） */
+.fv-btn-cols {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.fv-btn-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* 商店界面：UI 高度固定（不随物品数变高/变矮；没物品也照常显示） */
+.fv-main--fixed {
+  min-height: 380px;
+}
+/* 待删除条目的槽：红框（与右侧"删除选中物品"的行同色系） */
+.fv-slot--del {
+  border-color: #e0555a;
+  color: #ff8f8f;
+  background: rgba(224, 85, 90, 0.12);
+}
+.fv-slot--del .fv-slot-count {
+  color: #ff8f8f;
+}
+/* 物品表滚动条显式可见（用户 2026-10-06：62 个物品要能向下滑动看全） */
+.fv-grid-scroll {
+  overscroll-behavior: contain;
+}
+.fv-grid-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.fv-grid-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+}
+.fv-grid-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 .fv-head-actions .fv-tools-dirty {
   font-size: 13px;
