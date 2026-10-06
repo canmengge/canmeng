@@ -73,6 +73,92 @@
           "optional": true
         }
       ]
+    },
+    {
+      "id": "equipment_upgrade_system",
+      "label": "装备升级系统",
+      "files": [
+        "etc/equipmentupgradesystem.etc"
+      ],
+      "notes": "2026-10-06 按真实归档 etc/equipmentupgradesystem.etc（355 行）实测校准：**只纳入形状确定的段** —— 数据 token 数为偶数（能按 2 个一组切行）且有闭合标签。[min upgrade] / [min Separate] 无闭合标签（单值 1 token）、[card enchant need item] 每组 3 个数的中间位含义未确认 ⇒ 这三处**刻意不建**（宁可不显示，也不显示成错表）。外围的 [group] / [index] / [broad cast] / [show effect] 等仍是文本。",
+      "sections": [
+        {
+          "section": "need item",
+          "label": "升级所需材料",
+          "kind": "table",
+          "rowTokens": 2,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
+            { "label": "数量", "type": "int" }
+          ]
+        },
+        {
+          "section": "fusion need item",
+          "label": "合成所需材料",
+          "kind": "table",
+          "rowTokens": 2,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
+            { "label": "数量", "type": "int" }
+          ]
+        },
+        {
+          "section": "addition need item",
+          "label": "附加升级所需材料",
+          "kind": "table",
+          "rowTokens": 2,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
+            { "label": "数量", "type": "int" }
+          ]
+        },
+        {
+          "section": "add upgrade rate",
+          "label": "追加升级成功率",
+          "kind": "table",
+          "rowTokens": 2,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "等级", "type": "int" },
+            { "label": "成功率（原始值，待确认是否百分比）", "type": "text" }
+          ]
+        },
+        {
+          "section": "add separate rate",
+          "label": "追加分解成功率",
+          "kind": "table",
+          "rowTokens": 2,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "等级", "type": "int" },
+            { "label": "分解成功率（原始值，待确认是否百分比）", "type": "text" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "itemshop",
+      "label": "NPC 商店物品",
+      "files": [
+        "itemshop/(r)equipmentshop7.shp",
+        "itemshop/*.shp"
+      ],
+      "notes": "2026-10-06 按真实归档实测校准：itemshop/*.shp 的 [item list] 是**纯物品 ID 列表**（实测 4 个文件：0 个 / 1 个 / 15 个 / 7 段各 15~22 个，**均无成对**），故按 1 token = 1 行。files 的第一项是实文件（开窗默认打开它），第二项通配覆盖其它商店。商店的外围段（[NPC] / [type] / [sell info] / [tab] / [message]）未建模，仍按文本显示。",
+      "sections": [
+        {
+          "section": "item list",
+          "label": "商店物品列表",
+          "kind": "table",
+          "rowTokens": 1,
+          "maxOccurrences": 200,
+          "columns": [
+            { "label": "物品", "type": "ref", "ref": "equipment|stackable" }
+          ]
+        }
+      ]
     }
   ]
 }
