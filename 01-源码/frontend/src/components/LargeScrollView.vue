@@ -161,6 +161,27 @@ const windowAnnotationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/**
+ * Ctrl+F 查找面板中文文案（2026-10-06：面板默认是英文）。
+ *
+ * 键名 = `@codemirror/search` 源码里 `phrase(view, "...")` 的原始字符串，**不能改**；
+ * 它走官方 EditorState.phrases 机制，所以不动 DOM、不接管行为，升级 CodeMirror 也不会坏。
+ * 标记串（供 check-frontend-live.ps1 校验）：pvfSearchPanelCN_20261006
+ */
+const searchPanelPhrases = EditorState.phrases.of({
+  Find: "查找",
+  Replace: "替换",
+  next: "下一个",
+  previous: "上一个",
+  all: "全部选中",
+  "match case": "区分大小写",
+  regexp: "正则",
+  "by word": "全词匹配",
+  replace: "替换",
+  "replace all": "全部替换",
+  close: "关闭",
+});
+
 const largeWindowTheme = EditorView.theme({
   // 高度交给内容自己撑开：搜索面板出现时不会把正文顶掉（窗口是顶部锚定的，
   // 向下长出去不会让行号与 spacer 错位）。
@@ -184,6 +205,82 @@ const largeWindowTheme = EditorView.theme({
   ".cm-line": { padding: "0", lineHeight: "20px" },
   ".cm-cursor": { borderLeftWidth: "1px" },
   "&.cm-focused": { outline: "none" },
+  // ── Ctrl+F 查找面板外观（DOM 仍是官方 SearchPanel，这里只覆盖样式）──────────
+  ".cm-panel.cm-search": {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px 8px",
+    padding: "7px 10px",
+    borderTop: "1px solid rgb(127 127 127 / 25%)",
+    background: "rgb(127 127 127 / 12%)",
+    backdropFilter: "blur(3px)",
+    fontFamily: "inherit",
+    fontSize: "12px",
+  },
+  // `<br>` 在 flex 容器里不会换行，给它占满一行来把「替换」那排分开
+  ".cm-panel.cm-search br": { flexBasis: "100%", height: "0" },
+  ".cm-panel.cm-search .cm-textfield": {
+    minWidth: "150px",
+    padding: "3px 8px",
+    border: "1px solid rgb(127 127 127 / 35%)",
+    borderRadius: "5px",
+    background: "transparent",
+    color: "inherit",
+    fontFamily: "inherit",
+    fontSize: "12px",
+    outline: "none",
+  },
+  ".cm-panel.cm-search .cm-textfield:focus": {
+    borderColor: "var(--pvf-text-primary)",
+  },
+  ".cm-panel.cm-search .cm-button": {
+    padding: "3px 10px",
+    border: "1px solid rgb(127 127 127 / 35%)",
+    borderRadius: "5px",
+    // 官方按钮自带渐变底/内阴影，清掉换成平面胶囊
+    background: "transparent",
+    backgroundImage: "none",
+    boxShadow: "none",
+    color: "inherit",
+    fontFamily: "inherit",
+    fontSize: "12px",
+    cursor: "pointer",
+  },
+  ".cm-panel.cm-search .cm-button:hover": {
+    background: "rgb(127 127 127 / 18%)",
+  },
+  ".cm-panel.cm-search label": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    whiteSpace: "nowrap",
+    color: "var(--pvf-text-faint)",
+    cursor: "pointer",
+  },
+  ".cm-panel.cm-search input[type=checkbox]": {
+    margin: "0",
+    accentColor: "var(--pvf-accent, #4a8cff)",
+    cursor: "pointer",
+  },
+  // 关闭键是面板最后一个子元素：推到最右，做成图标位
+  ".cm-panel.cm-search button[name=close]": {
+    marginLeft: "auto",
+    padding: "2px 7px",
+    border: "none",
+    background: "transparent",
+    backgroundImage: "none",
+    boxShadow: "none",
+    borderRadius: "5px",
+    color: "var(--pvf-text-faint)",
+    fontSize: "15px",
+    lineHeight: "1",
+    cursor: "pointer",
+  },
+  ".cm-panel.cm-search button[name=close]:hover": {
+    background: "rgb(127 127 127 / 18%)",
+    color: "inherit",
+  },
 });
 
 function makeExtensions(): Extension[] {
@@ -197,6 +294,8 @@ function makeExtensions(): Extension[] {
     highlightSelectionMatches(),
     // 段内搜索（Ctrl+F）：只在当前视口这几千行里找，不碰后端、不影响秒开
     search(),
+    // 面板文案中文化（官方 phrases 机制；只影响文字，不改行为）
+    searchPanelPhrases,
     windowAnnotationField,
     // PVF 语法着色（与普通编辑器同一套语言与高亮规则）
     pvfLanguage.extension,
