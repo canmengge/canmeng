@@ -354,7 +354,10 @@ async function* walkScopeFiles(
 }
 
 async function runScopedContentScan(term: string): Promise<void> {
-  const scope = contentScope.value.trim();
+  // 【2026-10-06 实测事故】归档接口的路径**不带结尾斜杠**（左树里是 `etc/xxx` 这种），
+  // 而选择器填进来的是 `contents/` ⇒ `ListChildren("contents/")` 返回空 ⇒ 队列一开始就空，
+  // 表现就是"扫完 0 个文件"。这里统一去掉结尾斜杠。
+  const scope = contentScope.value.trim().replace(/\/+$/, "");
   if (scope === "") {
     error.value = "请先填「目标文件夹」（例如 etc/ 或 equipment/character/），再扫描";
     return;
@@ -365,6 +368,16 @@ async function runScopedContentScan(term: string): Promise<void> {
   scanStop.value = false;
   scanProgress.value = { done: 0, total: 0, active: true };
   error.value = "";
+  // 先探一下范围目录：路径不对/空目录时给明确提示，而不是让用户看到"扫完 0 个文件"
+  try {
+    const probe = ((await ArchiveService.ListChildren(scope)) ?? []).filter((node) => !!node);
+    if (probe.length === 0) {
+      error.value = `范围目录「${scope}」下没有任何条目（路径可能不对）`;
+      return;
+    }
+  } catch {
+    // 探测失败不阻断扫描本身
+  }
   try {
     // ① 文件来源 = 懒枚举（`walkScopeFiles`）：逐层展开目录、逐个吐出文件。
     //    没有"前 N 个"这种上限，也不会把 140 万条路径搬到前端。
