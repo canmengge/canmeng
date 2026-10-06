@@ -621,18 +621,20 @@ function buildSearchIndex(): void {
                   <span>点选要搜索的目录</span>
                   <NButton size="tiny" quaternary @click="contentScope = ''">清空</NButton>
                 </div>
-                <NSpin :show="scopeTreeLoading" size="small">
-                  <NTree
-                    v-if="scopeTree.length > 0"
-                    block-line
-                    selectable
-                    :cancelable="false"
-                    :data="scopeTree"
-                    :on-load="loadScopeNode"
-                    @update:selected-keys="pickScope"
-                  />
-                  <div v-else class="as-scope-picker-empty">（没有可选的目录）</div>
-                </NSpin>
+                <div class="as-scope-picker-body">
+                  <NSpin :show="scopeTreeLoading" size="small">
+                    <NTree
+                      v-if="scopeTree.length > 0"
+                      block-line
+                      selectable
+                      :cancelable="false"
+                      :data="scopeTree"
+                      :on-load="loadScopeNode"
+                      @update:selected-keys="pickScope"
+                    />
+                    <div v-else class="as-scope-picker-empty">（没有可选的目录）</div>
+                  </NSpin>
+                </div>
               </div>
             </NPopover>
             <span v-if="scanProgress.active" class="as-meta">
@@ -793,6 +795,10 @@ function buildSearchIndex(): void {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* 【2026-10-06 用户要求】整块高度固定：搜索框/选项行不再被滚动带走，只有结果区滚动；
+     高度与结果区一起钉住 ⇒ 打开不同结果时窗口不再忽长忽短。 */
+  max-height: calc(100vh - 190px);
+  overflow: hidden;
 }
 .as-search-row {
   display: flex;
@@ -813,8 +819,9 @@ function buildSearchIndex(): void {
   flex: 0 0 auto;
 }
 .as-results {
-  min-height: 240px;
-  max-height: min(52vh, 520px);
+  min-height: 200px;
+  /* 高度交给上面的固定容器分配（不再自己定 max-height），保证"搜索框固定 + 结果区占满" */
+  flex: 1 1 auto;
   overflow: auto;
   border: 1px solid var(--pvf-border-normal, rgba(255, 255, 255, 0.09));
   border-radius: 8px;
@@ -939,5 +946,33 @@ function buildSearchIndex(): void {
 .as-footer-actions {
   display: flex;
   gap: 8px;
+}
+/* C 目录选择弹层：**固定高度 + 头部固定 + 树内部滚动**（2026-10-06 用户要求：
+   "太长了，改为固定项下滑动，搜索框和列表要固定、上下一样长"）。 */
+.as-scope-picker {
+  display: flex;
+  flex-direction: column;
+  height: min(46vh, 380px);
+}
+.as-scope-picker-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--pvf-border-normal, rgba(255, 255, 255, 0.09));
+}
+.as-scope-picker-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 6px;
+  overflow: auto;
+}
+.as-scope-picker-empty {
+  padding: 8px 0;
+  color: var(--pvf-text-muted, #9aa4b2);
+  font-size: 12px;
 }
 </style>
