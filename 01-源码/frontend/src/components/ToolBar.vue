@@ -212,13 +212,8 @@ const visualMenuOptions = computed<DropdownOption[]>(() => [
     disabled: !archive.open,
   },
   {
-    // B1 第 1 批（2026-10-06）：新增两个文件族的可视化编辑入口。
-    label: "装备升级系统编辑",
-    key: "equipment-upgrade",
-    icon: renderEmoji("🛠️"),
-    disabled: !archive.open,
-  },
-  {
+    // B1 第 1 批（2026-10-06）：新增文件族的可视化编辑入口。
+    // 「装备升级系统编辑」已按用户 2026-10-06 要求撤下（没用的模块；规则数据暂留 formats.json，不影响任何界面）。
     label: "商店物品编辑",
     key: "itemshop",
     icon: renderEmoji("🏪"),
@@ -481,8 +476,7 @@ function onMoreMenuSelect(key: string | number): void {
 /** 「可视化编辑区」下拉的选择处理。 */
 function onVisualMenuSelect(key: string | number): void {
   if (key === "independent-drop") void formView.openInWindow("independent_drop");
-  // B1 第 1 批（2026-10-06）：两个新文件族（规则见 config/formats.json）。
-  if (key === "equipment-upgrade") void formView.openInWindow("equipment_upgrade_system");
+  // B1 第 1 批（2026-10-06）：文件族入口（「装备升级系统」已按用户要求撤下）。
   if (key === "itemshop") void formView.openInWindow("itemshop");
 }
 
