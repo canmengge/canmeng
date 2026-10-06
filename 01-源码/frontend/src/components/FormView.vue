@@ -865,7 +865,10 @@ const isShopLike = computed(() => {
   const names = new Set(
     (formView.projection?.sections ?? []).map((item) => item.section.toLowerCase())
   );
-  return names.has("tab") && names.has("item list");
+  return names.has("item list"); // 2026-10-06 放宽：只要投影里有 [item list] 就算商店 ——
+      // 实测 itemshop/100000124_repair_machine.shp 这类"无页签商店"只有 [NPC]/[type]/[sell info]
+      // 包着 [item list]，没有 [tab] 段，旧判定（tab && item list）会把整套商店 UI 挡没
+      //（用户实测：换到这个商店后条目槽/新建条目全消失）。独立掉落没有 [item list]，不受影响。
 });
 
 /** 排队中的"新建商店条目"。 */
