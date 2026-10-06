@@ -26,29 +26,101 @@
             {
               "column": 16,
               "displayColumn": 2,
-              "when": ["1", "2"],
+              "when": [
+                "1",
+                "2"
+              ],
               "targetSection": "list",
               "title": "掉落候选"
             }
           ],
           "columns": [
-            { "label": "类型", "type": "enum", "values": { "0": "怪物", "1": "APC" } },
-            { "label": "怪物/APC", "type": "ref", "ref": "monster" },
-            { "label": "掉落物品", "type": "ref", "ref": "equipment|stackable" },
-            { "label": "难度1 掉落率", "type": "rate", "scale": 1000000 },
-            { "label": "难度2 掉落率", "type": "rate", "scale": 1000000 },
-            { "label": "难度3 掉落率", "type": "rate", "scale": 1000000 },
-            { "label": "难度4 掉落率", "type": "rate", "scale": 1000000 },
-            { "label": "难度5 掉落率", "type": "rate", "scale": 1000000 },
-            { "label": "难度1 个数", "type": "int" },
-            { "label": "难度2 个数", "type": "int" },
-            { "label": "难度3 个数", "type": "int" },
-            { "label": "难度4 个数", "type": "int" },
-            { "label": "难度5 个数", "type": "int" },
-            { "label": "等级下限", "type": "int" },
-            { "label": "等级上限", "type": "int" },
-            { "label": "职业限制", "type": "ref", "ref": "character", "noneValue": "-1" },
-            { "label": "掉落方式", "type": "enum", "values": { "0": "单一物品", "1": "内联列表", "2": "外部文件" } }
+            {
+              "label": "类型",
+              "type": "enum",
+              "values": {
+                "0": "怪物",
+                "1": "APC"
+              }
+            },
+            {
+              "label": "怪物/APC",
+              "type": "ref",
+              "ref": "monster"
+            },
+            {
+              "label": "掉落物品",
+              "type": "ref",
+              "ref": "equipment|stackable"
+            },
+            {
+              "label": "难度1 掉落率",
+              "type": "rate",
+              "scale": 1000000
+            },
+            {
+              "label": "难度2 掉落率",
+              "type": "rate",
+              "scale": 1000000
+            },
+            {
+              "label": "难度3 掉落率",
+              "type": "rate",
+              "scale": 1000000
+            },
+            {
+              "label": "难度4 掉落率",
+              "type": "rate",
+              "scale": 1000000
+            },
+            {
+              "label": "难度5 掉落率",
+              "type": "rate",
+              "scale": 1000000
+            },
+            {
+              "label": "难度1 个数",
+              "type": "int"
+            },
+            {
+              "label": "难度2 个数",
+              "type": "int"
+            },
+            {
+              "label": "难度3 个数",
+              "type": "int"
+            },
+            {
+              "label": "难度4 个数",
+              "type": "int"
+            },
+            {
+              "label": "难度5 个数",
+              "type": "int"
+            },
+            {
+              "label": "等级下限",
+              "type": "int"
+            },
+            {
+              "label": "等级上限",
+              "type": "int"
+            },
+            {
+              "label": "职业限制",
+              "type": "ref",
+              "ref": "character",
+              "noneValue": "-1"
+            },
+            {
+              "label": "掉落方式",
+              "type": "enum",
+              "values": {
+                "0": "单一物品",
+                "1": "内联列表",
+                "2": "外部文件"
+              }
+            }
           ]
         },
         {
@@ -58,8 +130,15 @@
           "rowTokens": 2,
           "maxOccurrences": 2000,
           "columns": [
-            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
-            { "label": "权重", "type": "int" }
+            {
+              "label": "物品",
+              "type": "ref",
+              "ref": "equipment|stackable"
+            },
+            {
+              "label": "权重",
+              "type": "int"
+            }
           ]
         },
         {
@@ -68,74 +147,12 @@
           "kind": "table",
           "rowTokens": 1,
           "columns": [
-            { "label": "数值", "type": "int" }
+            {
+              "label": "数值",
+              "type": "int"
+            }
           ],
           "optional": true
-        }
-      ]
-    },
-    {
-      "id": "equipment_upgrade_system",
-      "label": "装备升级系统",
-      "files": [
-        "etc/equipmentupgradesystem.etc"
-      ],
-      "notes": "2026-10-06 按真实归档 etc/equipmentupgradesystem.etc（355 行）实测校准：**只纳入形状确定的段** —— 数据 token 数为偶数（能按 2 个一组切行）且有闭合标签。[min upgrade] / [min Separate] 无闭合标签（单值 1 token）、[card enchant need item] 每组 3 个数的中间位含义未确认 ⇒ 这三处**刻意不建**（宁可不显示，也不显示成错表）。外围的 [group] / [index] / [broad cast] / [show effect] 等仍是文本。",
-      "sections": [
-        {
-          "section": "need item",
-          "label": "升级所需材料",
-          "kind": "table",
-          "rowTokens": 2,
-          "maxOccurrences": 200,
-          "columns": [
-            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
-            { "label": "数量", "type": "int" }
-          ]
-        },
-        {
-          "section": "fusion need item",
-          "label": "合成所需材料",
-          "kind": "table",
-          "rowTokens": 2,
-          "maxOccurrences": 200,
-          "columns": [
-            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
-            { "label": "数量", "type": "int" }
-          ]
-        },
-        {
-          "section": "addition need item",
-          "label": "附加升级所需材料",
-          "kind": "table",
-          "rowTokens": 2,
-          "maxOccurrences": 200,
-          "columns": [
-            { "label": "物品", "type": "ref", "ref": "equipment|stackable" },
-            { "label": "数量", "type": "int" }
-          ]
-        },
-        {
-          "section": "add upgrade rate",
-          "label": "追加升级成功率",
-          "kind": "table",
-          "rowTokens": 2,
-          "maxOccurrences": 200,
-          "columns": [
-            { "label": "等级", "type": "int" },
-            { "label": "成功率（原始值，待确认是否百分比）", "type": "text" }
-          ]
-        },
-        {
-          "section": "add separate rate",
-          "label": "追加分解成功率",
-          "kind": "table",
-          "rowTokens": 2,
-          "maxOccurrences": 200,
-          "columns": [
-            { "label": "等级", "type": "int" },
-            { "label": "分解成功率（原始值，待确认是否百分比）", "type": "text" }
-          ]
         }
       ]
     },
@@ -155,7 +172,11 @@
           "rowTokens": 1,
           "maxOccurrences": 200,
           "columns": [
-            { "label": "物品", "type": "ref", "ref": "equipment|stackable" }
+            {
+              "label": "物品",
+              "type": "ref",
+              "ref": "equipment|stackable"
+            }
           ]
         },
         {
@@ -166,7 +187,10 @@
           "maxOccurrences": 100,
           "optional": true,
           "columns": [
-            { "label": "条目名", "type": "text" }
+            {
+              "label": "条目名",
+              "type": "text"
+            }
           ]
         },
         {
@@ -176,7 +200,11 @@
           "rowTokens": 1,
           "maxOccurrences": 10,
           "columns": [
-            { "label": "NPC", "type": "ref", "ref": "npc" }
+            {
+              "label": "NPC",
+              "type": "ref",
+              "ref": "npc"
+            }
           ]
         },
         {
@@ -186,7 +214,10 @@
           "rowTokens": 1,
           "maxOccurrences": 10,
           "columns": [
-            { "label": "类型", "type": "text" }
+            {
+              "label": "类型",
+              "type": "text"
+            }
           ]
         },
         {
@@ -196,7 +227,10 @@
           "rowTokens": 1,
           "maxOccurrences": 10,
           "columns": [
-            { "label": "提示语", "type": "text" }
+            {
+              "label": "提示语",
+              "type": "text"
+            }
           ]
         }
       ]
