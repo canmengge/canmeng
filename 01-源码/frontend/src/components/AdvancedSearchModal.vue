@@ -8,7 +8,9 @@ import {
   NIcon,
   NInput,
   NModal,
+  NPopover,
   NSpin,
+  NTree,
   NTag,
   NTooltip,
   useMessage,
@@ -103,6 +105,71 @@ const contentScope = ref("");
 /** 扫描进度（active = 正在扫，点「停止」即中断）。 */
 const scanProgress = ref({ done: 0, total: 0, active: false });
 const scanStop = ref(false);
+
+/**
+ * C（2026-10-06 用户要求）：**从左树点选目标文件夹**，不再手打路径。
+ *
+ * 树数据直接来自归档自身的懒加载接口 `ArchiveService.ListChildren(path)`（与左侧文件树
+ * 同一套数据、同一个约定：`""` = 根），展开哪层才拉哪层；只列**目录**（范围就是"这个目录
+ * 及其下属子目录与文件"）。选中即把 `目录路径 + "/"` 填进范围。标记：pvfScopePickerC_20261006
+ */
+interface ScopeNode {
+  key: string;
+  label: string;
+  isLeaf: boolean;
+  /** 懒加载：`undefined` = 还没展开过（NTree 会据此显示展开箭头）；`[]` = 已展开且为空。 */
+  children?: ScopeNode[];
+}
+
+const scopePickerOpen = ref(false);
+const scopeTree = ref<ScopeNode[]>([]);
+const scopeTreeLoading = ref(false);
+
+async function fetchScopeChildren(path: string): Promise<ScopeNode[]> {
+  const nodes = (await ArchiveService.ListChildren(path)) ?? [];
+  return nodes
+    .filter((node) => !!node)
+    .map((node) => ({
+      key: node.path,
+      // 目录名取路径末段（TreeNode 的 name 是可选字段，这里不依赖它）
+      label: node.path.split("/").filter(Boolean).pop() ?? node.path,
+      isLeaf: false,
+    }));
+}
+
+/** n-tree onLoad：展开才拉子目录（空目录置为叶子，免得多一个没用的展开箭头）。 */
+async function loadScopeNode(node: any): Promise<void> {
+  // 参数类型放宽到 any：naive-ui 的 on-load 是 TreeOption 泛型，结构上兼容但显式标注容易挑刺
+  try {
+    const children = await fetchScopeChildren(node.key);
+    node.children = children;
+    if (children.length === 0) node.isLeaf = true;
+  } catch {
+    node.children = [];
+    node.isLeaf = true;
+  }
+}
+
+/** 打开选择器：首次只拉顶层目录。 */
+async function openScopePicker(): Promise<void> {
+  scopePickerOpen.value = true;
+  if (scopeTree.value.length > 0) return;
+  scopeTreeLoading.value = true;
+  try {
+    scopeTree.value = await fetchScopeChildren("");
+  } catch {
+    scopeTree.value = [];
+  } finally {
+    scopeTreeLoading.value = false;
+  }
+}
+
+function pickScope(keys: Array<string | number>): void {
+  const key = keys.length > 0 ? String(keys[0]) : "";
+  if (!key) return;
+  contentScope.value = key.endsWith("/") ? key : `${key}/`;
+  scopePickerOpen.value = false;
+}
 /** 扫描代次：换关键词/重扫时旧的那轮会自行退出（避免两轮一起写结果）。 */
 let scanToken = 0;
 const hits = ref<SearchItem[]>([]);
@@ -538,10 +605,36 @@ function buildSearchIndex(): void {
             <NInput
               v-model:value="contentScope"
               size="tiny"
-              style="width: 200px"
-              placeholder="目标文件夹，如 etc/（必填）"
+              style="width: 190px"
+              placeholder="目标文件夹（可点右侧选择）"
               :disabled="searching || scanProgress.active"
             />
+            <!-- C：点这里从左树选目录（展开哪层拉哪层），选中即填范围 -->
+            <NPopover v-model:show="scopePickerOpen" trigger="click" placement="bottom-start" :width="300">
+              <template #trigger>
+                <NButton size="tiny" secondary :disabled="searching || scanProgress.active" @click="openScopePicker">
+                  选择文件夹
+                </NButton>
+              </template>
+              <div class="as-scope-picker">
+                <div class="as-scope-picker-head">
+                  <span>点选要搜索的目录</span>
+                  <NButton size="tiny" quaternary @click="contentScope = ''">清空</NButton>
+                </div>
+                <NSpin :show="scopeTreeLoading" size="small">
+                  <NTree
+                    v-if="scopeTree.length > 0"
+                    block-line
+                    selectable
+                    :cancelable="false"
+                    :data="scopeTree"
+                    :on-load="loadScopeNode"
+                    @update:selected-keys="pickScope"
+                  />
+                  <div v-else class="as-scope-picker-empty">（没有可选的目录）</div>
+                </NSpin>
+              </div>
+            </NPopover>
             <span v-if="scanProgress.active" class="as-meta">
               已扫 {{ scanProgress.done }} / {{ scanProgress.total }}…
             </span>
