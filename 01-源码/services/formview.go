@@ -3,11 +3,13 @@ package services
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	appconfig "pvfine/config"
+	annotationrules "pvfine/internal/annotations"
 	"pvfine/internal/formview"
 	"pvfine/internal/pvf"
 )
@@ -115,6 +117,184 @@ func (s *FormViewService) ListFormats() (*FormViewFormatListResult, error) {
 		FormatCount: len(formats),
 		Formats:     formats,
 	}, nil
+}
+
+// FormViewCompletionColumn 是补全用的一列（只带界面提示需要的最小信息）。
+type FormViewCompletionColumn struct {
+	Label     string            `json:"label"`
+	Type      string            `json:"type,omitempty"`
+	Values    map[string]string `json:"values,omitempty"`
+	Ref       string            `json:"ref,omitempty"`
+	Scale     int64             `json:"scale,omitempty"`
+	NoneValue string            `json:"noneValue,omitempty"`
+}
+
+// FormViewCompletionToken 描述「段内第 Index 个 token 该填什么」。
+// 数据来自注释数据（`target.section` + `target.index` + `annotation.values`）。
+type FormViewCompletionToken struct {
+	Index  int               `json:"index"`
+	Label  string            `json:"label"`
+	Type   string            `json:"type,omitempty"`
+	Values map[string]string `json:"values,omitempty"`
+}
+
+// FormViewCompletionSection 是一段在补全里的描述：段名（可补全）+ 段内位置提示。
+type FormViewCompletionSection struct {
+	Section   string                     `json:"section"`
+	Label     string                     `json:"label,omitempty"`
+	RowTokens int                        `json:"rowTokens,omitempty"`
+	Columns   []FormViewCompletionColumn `json:"columns,omitempty"`
+	Tokens    []FormViewCompletionToken  `json:"tokens,omitempty"`
+	Formats   []string                   `json:"formats,omitempty"`
+	// Source 说明段名主要来源：format（结构化视图规则）/ annotation（注释数据）。
+	Source string `json:"source"`
+}
+
+// FormViewCompletionCatalog 是编辑器脚本补全用的段目录（只读）。
+//
+// 为什么不让前端自己拼：段名、段内字段、枚举取值分散在 `config/formats.json`
+// （结构化视图规则）与「注释数据」两处；前端各自解析既容易漂移，也拿不到**原始段名**
+// （`ListFormats` 下发的是段显示名）。这里一次性合并好，编辑器只消费结果。
+type FormViewCompletionCatalog struct {
+	RulePath string                      `json:"rulePath"`
+	Sections []FormViewCompletionSection `json:"sections"`
+}
+
+// CompletionCatalog 汇总「全量段名 + 段内字段/取值」，供编辑器脚本补全（A1）使用。
+//
+// 两个来源合并、按段名去重（结构化规则优先，它带 rowTokens，能算「第 N 个 token」的循环位置）：
+//  1. `config/formats.json`：段名 + rowTokens + 每列 label/type/values；
+//  2. 「注释数据」：`target.section` 并集（段名更全）+ `target.index` 上的字段名与枚举取值。
+func (s *FormViewService) CompletionCatalog() (*FormViewCompletionCatalog, error) {
+	catalog, err := s.catalog()
+	if err != nil {
+		return nil, err
+	}
+
+	appendUnique := func(list []string, value string) []string {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return list
+		}
+		for _, existing := range list {
+			if strings.EqualFold(existing, value) {
+				return list
+			}
+		}
+		return append(list, value)
+	}
+
+	order := make([]string, 0, 64)
+	byKey := make(map[string]*FormViewCompletionSection, 64)
+	ensure := func(name string) *FormViewCompletionSection {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			return nil
+		}
+		if existing, ok := byKey[key]; ok {
+			return existing
+		}
+		item := &FormViewCompletionSection{Section: strings.TrimSpace(name), Source: "annotation"}
+		byKey[key] = item
+		order = append(order, key)
+		return item
+	}
+
+	for _, format := range catalog.Formats {
+		for _, section := range format.Sections {
+			item := ensure(section.Section)
+			if item == nil {
+				continue
+			}
+			item.Source = "format"
+			if label := strings.TrimSpace(section.Label); label != "" {
+				item.Label = label
+			}
+			if section.RowTokens > 0 {
+				item.RowTokens = section.RowTokens
+			}
+			item.Formats = appendUnique(item.Formats, format.ID)
+			if len(item.Columns) > 0 {
+				continue
+			}
+			columns := make([]FormViewCompletionColumn, 0, len(section.Columns))
+			for _, column := range section.Columns {
+				columns = append(columns, FormViewCompletionColumn{
+					Label:     strings.TrimSpace(column.Label),
+					Type:      strings.TrimSpace(column.Type),
+					Values:    column.Values,
+					Ref:       strings.TrimSpace(column.Ref),
+					Scale:     column.Scale,
+					NoneValue: strings.TrimSpace(column.NoneValue),
+				})
+			}
+			item.Columns = columns
+		}
+	}
+
+	for section, tokens := range s.annotationCompletionTokens() {
+		item := ensure(section)
+		if item == nil || len(item.Tokens) > 0 {
+			continue
+		}
+		sort.SliceStable(tokens, func(i, j int) bool { return tokens[i].Index < tokens[j].Index })
+		item.Tokens = tokens
+	}
+
+	sections := make([]FormViewCompletionSection, 0, len(order))
+	for _, key := range order {
+		sections = append(sections, *byKey[key])
+	}
+	sort.SliceStable(sections, func(i, j int) bool {
+		return strings.ToLower(sections[i].Section) < strings.ToLower(sections[j].Section)
+	})
+	return &FormViewCompletionCatalog{RulePath: s.rulePath(), Sections: sections}, nil
+}
+
+// annotationCompletionTokens 汇总注释数据里的「段 → 段内 token 位置 → 字段名/取值」。
+// 键统一小写（段名匹配大小写不敏感，与内核其余入口一致）。
+func (s *FormViewService) annotationCompletionTokens() map[string][]FormViewCompletionToken {
+	s.c.mu.RLock()
+	engine := s.c.annotationEngine
+	s.c.mu.RUnlock()
+	if engine == nil {
+		return nil
+	}
+	document := engine.Document()
+
+	result := make(map[string][]FormViewCompletionToken)
+	seen := make(map[string]bool)
+	add := func(target annotationrules.TargetSpec, annotation annotationrules.AnnotationSpec) {
+		section := strings.ToLower(strings.TrimSpace(target.Section))
+		if section == "" || target.Index == nil {
+			return
+		}
+		key := section + "#" + strconv.Itoa(*target.Index)
+		if seen[key] {
+			return
+		}
+		label := strings.TrimSpace(annotation.Title)
+		if label == "" {
+			label = strings.TrimSpace(annotation.Content)
+		}
+		if label == "" && len(annotation.Values) == 0 {
+			return
+		}
+		seen[key] = true
+		result[section] = append(result[section], FormViewCompletionToken{
+			Index:  *target.Index,
+			Label:  label,
+			Type:   strings.TrimSpace(annotation.Type),
+			Values: annotation.Values,
+		})
+	}
+	for _, field := range document.Fields {
+		add(field.Target, field.Annotation)
+	}
+	for _, rule := range document.Rules {
+		add(rule.Target, rule.Annotation)
+	}
+	return result
 }
 
 // ReloadRules 重新读取规则文件；校验失败时保留原有规则不变。

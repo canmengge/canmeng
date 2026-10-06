@@ -39,7 +39,7 @@ import {
   insertTab,
 } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
@@ -53,6 +53,11 @@ import { scriptCompletionSource as declarationCompletionSource } from "../script
 import type { ResolvedThemeId } from "../theme";
 import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
 import { searchPanelPhrases, searchPanelTheme } from "../searchPanel";
+import {
+  CompletionCatalog,
+  type FormViewCompletionColumn,
+  type FormViewCompletionSection,
+} from "../services/formViewApi";
 
 const props = defineProps<{
   doc: string;
@@ -706,27 +711,159 @@ function sectionNames(state: EditorState): string[] {
   return list;
 }
 
+/* ── A1 段目录（全量段名 + 段内字段/枚举取值）────────────────────────────────
+   数据来自后端 `FormViewService.CompletionCatalog`：它把 `config/formats.json`
+   （结构化视图规则）与「注释数据」合并去重后下发 —— 前端不各自解析，避免口径漂移。
+   只读一次、进程内缓存；取不到就静默降级为「本文件已有段名」，绝不影响打字。
+   标记：pvfSectionCatalogA1_20261006
+   ──────────────────────────────────────────────────────────────────────────── */
+let sectionCatalog: FormViewCompletionSection[] = [];
+let sectionCatalogLoading: Promise<void> | null = null;
+
+function loadSectionCatalog(): Promise<void> {
+  if (sectionCatalog.length > 0) return Promise.resolve();
+  if (!sectionCatalogLoading) {
+    sectionCatalogLoading = CompletionCatalog()
+      .then((result) => {
+        sectionCatalog = result?.sections ?? [];
+      })
+      .catch(() => {
+        // 后端没起来 / 服务未注册：退化为只提示本文件段名，不弹错、不影响打字。
+        sectionCatalog = [];
+      })
+      .then(() => {
+        sectionCatalogLoading = null;
+      });
+  }
+  return sectionCatalogLoading;
+}
+
+/** 按段名（大小写不敏感）取段目录条目。 */
+function catalogSection(name: string): FormViewCompletionSection | null {
+  const key = name.trim().toLowerCase();
+  if (!key) return null;
+  for (const item of sectionCatalog) {
+    if (item.section.trim().toLowerCase() === key) return item;
+  }
+  return null;
+}
+
+/** 段内第 index 个 token 对应的列定义（与后端表格投影同一套 `index % rowTokens`）。 */
+function columnAt(item: FormViewCompletionSection, index: number): FormViewCompletionColumn | null {
+  const columns = item.columns ?? [];
+  if (columns.length === 0) return null;
+  const rowTokens = item.rowTokens && item.rowTokens > 0 ? item.rowTokens : columns.length;
+  return columns[index % rowTokens] ?? null;
+}
+
+/** 段内 token 位置：index = 光标前已输入完的 token 数，word = 正在输入的这一段。 */
+function tokenPosition(text: string): { index: number; word: string } {
+  const leading = text.replace(/^\s+/, "");
+  if (leading === "") return { index: 0, word: "" };
+  const parts = leading.split(/\s+/).filter(Boolean);
+  if (/\s$/.test(leading)) return { index: parts.length, word: "" };
+  return { index: Math.max(0, parts.length - 1), word: parts[parts.length - 1] };
+}
+
+/** 当前光标所在段（向上找最近的段头行）与段内位置；光标在段头行上、或闭合标签行内返回 null。 */
+function sectionPositionAt(
+  state: EditorState,
+  pos: number
+): { name: string; index: number; word: string } | null {
+  const line = state.doc.lineAt(pos);
+  for (let n = line.number; n >= 1; n -= 1) {
+    const row = state.doc.line(n);
+    const header = /^\[(\/?)([^\]\n]+)\]$/.exec(row.text.trim());
+    if (!header) continue;
+    if (n === line.number || header[1] === "/") return null;
+    const body = state.doc.sliceString(state.doc.line(n + 1).from, pos);
+    return { name: header[2].trim(), ...tokenPosition(body) };
+  }
+  return null;
+}
+
 /**
- * A1 段名补全：只在「行首方括号内」触发，提示**本文件里出现过的段名**
- * （含 `[/xxx]` 闭合写法）。零新增数据源 —— 全量段名表与枚举取值需要后端把
- * 注释数据下发到前端，留待后续批次（见 02-文档规则\编辑器可加功能一览.md）。
+ * A1 脚本补全（只作用于普通文件通道）：
+ *  ① 行首 `[` 内 → **全量段名**（后端段目录）+ 本文件已有段名 + `[/xxx]` 闭合写法；
+ *  ② 段内任意位置 → 该位置的**字段名**（`Columns[N % rowTokens]`，与表格投影同源）
+ *     与**合法取值**（枚举）；位置提示写在候选的 detail / info 里，边打边看。
+ * 后端目录拿不到时退化为 ①（只提示本文件段名），不报错。
  */
 function pvfCompletionSource(context: CompletionContext): CompletionResult | null {
-  const line = context.state.doc.lineAt(context.pos);
+  const state = context.state;
+  const line = state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
-  const m = /^(\s*)\[(\/?)([A-Za-z0-9_ -]*)$/.exec(before);
-  if (!m) return null;
-  const typed = `${m[2]}${m[3]}`;
-  const options = sectionNames(context.state)
-    .filter((name) => name.toLowerCase().startsWith(typed.toLowerCase()))
-    .slice(0, 200)
-    .map((name) => ({ label: name, type: "keyword", detail: "本文件已有段名" }));
+
+  // ① 段头：行首方括号内
+  const headerMatch = /^(\s*)\[(\/?)([A-Za-z0-9_ -]*)$/.exec(before);
+  if (headerMatch) {
+    void loadSectionCatalog(); // 首次触发时异步取目录；本次先用已有数据
+    const typed = `${headerMatch[2]}${headerMatch[3]}`.toLowerCase();
+    const options: Completion[] = [];
+    const seen = new Set<string>();
+    const push = (name: string, detail: string) => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      options.push({
+        label: name,
+        type: "keyword",
+        detail,
+        boost: detail === "本文件已有段名" ? 1 : 0,
+      });
+    };
+    // 本文件已出现过的段名排前面（补起来最稳）
+    for (const name of sectionNames(state)) {
+      if (name.toLowerCase().startsWith(typed)) push(name, "本文件已有段名");
+    }
+    for (const item of sectionCatalog) {
+      const name = item.section.trim();
+      if (!name || !name.toLowerCase().startsWith(typed)) continue;
+      push(name, item.label ? `${item.label}（段目录）` : "段目录");
+      if (!typed.startsWith("/")) push(`/${name}`, "闭合写法");
+    }
+    if (options.length === 0) return null;
+    return {
+      from: context.pos - typed.length,
+      options: options.slice(0, 300),
+      validFor: /^\/?[A-Za-z0-9_ -]*$/,
+    };
+  }
+
+  // ② 段内位置：字段名 + 合法取值
+  const spot = sectionPositionAt(state, context.pos);
+  if (!spot) return null;
+  const item = catalogSection(spot.name);
+  if (!item) return null;
+  const column = columnAt(item, spot.index);
+  const token = (item.tokens ?? []).find((entry) => entry.index === spot.index) ?? null;
+  const values = column?.values ?? token?.values ?? null;
+  const label = (column?.label ?? "").trim() || (token?.label ?? "").trim();
+  const where = `段 [${item.section}] 第 ${spot.index + 1} 个 token${label ? `：${label}` : ""}`;
+  const options: Completion[] = [];
+  if (values) {
+    for (const [value, text] of Object.entries(values)) {
+      if (spot.word && !value.startsWith(spot.word) && !text.includes(spot.word)) continue;
+      options.push({
+        label: text ? `${value}　${text}` : value,
+        apply: value,
+        type: column?.type || token?.type || "text",
+        detail: label || where,
+        info: `${where}${text ? `\n\n取值：${value} = ${text}` : ""}`,
+      });
+    }
+  } else if (label) {
+    // 没有枚举取值时，用一条「不改动文本」的候选把字段名显示出来（= 参数提示）。
+    options.push({
+      label,
+      apply: spot.word,
+      type: "info",
+      detail: where,
+      info: `${where}\n\n（该位置暂无合法取值表，仅提示字段名）`,
+    });
+  }
   if (options.length === 0) return null;
-  return {
-    from: context.pos - typed.length,
-    options,
-    validFor: /^\/?[A-Za-z0-9_ -]*$/,
-  };
+  return { from: context.pos - spot.word.length, options: options.slice(0, 200) };
 }
 
 /* A8 跳行（Ctrl/Cmd+G）：复用既有的 revealPosition，只补一个输入入口。 */

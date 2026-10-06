@@ -275,3 +275,48 @@ export function ApplyCellEdits(
 ): $CancellablePromise<FormViewProjection> {
   return $Call.ByID(394327007, filePath, edits);
 }
+
+/** 对应 Go `services.FormViewCompletionColumn`。 */
+export interface FormViewCompletionColumn {
+  label: string;
+  type?: string;
+  values?: Record<string, string> | null;
+  ref?: string;
+  scale?: number;
+  noneValue?: string;
+}
+
+/** 对应 Go `services.FormViewCompletionToken`（注释数据里的「段内第 N 个 token」）。 */
+export interface FormViewCompletionToken {
+  index: number;
+  label: string;
+  type?: string;
+  values?: Record<string, string> | null;
+}
+
+/** 对应 Go `services.FormViewCompletionSection`。 */
+export interface FormViewCompletionSection {
+  section: string;
+  label?: string;
+  rowTokens?: number;
+  columns?: FormViewCompletionColumn[] | null;
+  tokens?: FormViewCompletionToken[] | null;
+  formats?: string[] | null;
+  /** `format` = 结构化视图规则；`annotation` = 注释数据。 */
+  source: string;
+}
+
+/** 对应 Go `services.FormViewCompletionCatalog`。 */
+export interface FormViewCompletionCatalog {
+  rulePath: string;
+  sections: FormViewCompletionSection[];
+}
+
+/**
+ * 编辑器脚本补全用的段目录：**全量段名 + 段内字段/枚举取值**（后端把结构化视图规则
+ * 与「注释数据」合并去重后下发；前端不各自解析，避免两处口径漂移）。
+ * fqn = pvfine/services.FormViewService.CompletionCatalog
+ */
+export function CompletionCatalog(): $CancellablePromise<FormViewCompletionCatalog> {
+  return $Call.ByID(3329411431);
+}
