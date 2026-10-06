@@ -985,6 +985,15 @@ function onPickShopFile(path: string): void {
 const pendingTabDeletes = ref<{ tabOccurrence: number; name: string }[]>([]);
 const pendingTabDeleteCount = computed(() => pendingTabDeletes.value.length);
 
+// 进入商店界面（或归档打开后投影就绪）时拉一次文件列表；失败静默（下拉为空不碍事）。
+watch(
+  isShopLike,
+  (value) => {
+    if (value) void loadShopFiles();
+  },
+  { immediate: true }
+);
+
 function queueDeleteTab(): void {
   const entry = currentSlot.value;
   if (!entry) {
