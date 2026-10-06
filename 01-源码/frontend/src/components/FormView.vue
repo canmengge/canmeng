@@ -2130,14 +2130,12 @@ function resetColumnWidths(): void {
     <section class="fv-form">
       <div class="fv-form-row">
         <span class="fv-label">文件族</span>
-        <NSelect
-          v-model:value="formView.formatId"
-          :options="formView.formatOptions"
-          :loading="formView.formatsLoading"
-          size="small"
-          placeholder="选择文件族"
-          class="fv-select"
-        />
+        <!-- 2026-10-06（用户最终裁定）：**删掉文件族下拉，窗口锁死板块** ——
+             打开什么板块就是什么板块（独立掉落 / 商店互不串），要换板块从
+             主工具条「可视化编辑区」菜单另开窗口。窗口内不再有任何切换入口。 -->
+        <span class="fv-format-locked" :title="formView.currentFormat?.label ?? ''">
+          {{ formView.currentFormat?.label ?? "—" }}
+        </span>
         <span class="fv-label">文件</span>
         <NInput
           v-model:value="formView.filePath"
@@ -4010,6 +4008,16 @@ function resetColumnWidths(): void {
 }
 .fv-head-actions .fv-tools-dirty {
   font-size: 13px;
+}
+.fv-format-locked {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--pvf-border-faint);
+  border-radius: 4px;
+  background: var(--pvf-surface-subtle);
+  color: var(--pvf-text-secondary, inherit);
+  font-size: 13px;
+  line-height: 20px;
 }
 /* 商店文件下拉行 */
 .fv-filepick {
