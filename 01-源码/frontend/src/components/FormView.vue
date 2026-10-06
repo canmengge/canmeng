@@ -2180,8 +2180,9 @@ function resetColumnWidths(): void {
                 @update:value="onPickShopFile"
               />
             </div>
-            <!-- 用户 2026-10-06：「放弃改动 / 保存改动」+ 未保存计数放到左上（文件下拉下方），字号加大 -->
-            <div class="fv-headrow">
+            <!-- 用户 2026-10-06：「放弃改动 / 保存改动」+ 未保存计数放到左上（文件下拉下方）。
+                 **只给商店**（用户追加重申：独立掉落与商店是两套独立 UI，不能互相影响） -->
+            <div v-if="isShopLike" class="fv-headrow">
               <span class="fv-head-actions">
                 <NButton size="small" quaternary @click="discardDrafts">放弃改动</NButton>
                 <NButton size="small" type="primary" @click="saveDrafts">保存改动</NButton>
@@ -2209,6 +2210,24 @@ function resetColumnWidths(): void {
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列
               </span>
 
+              <!-- 独立掉落等**非商店**文件族：计数 + 放弃/保存保留在标题行右侧（原位置、原功能）。
+                   用户 2026-10-06 重申：独立掉落与商店两套 UI 完全分开 —— 左上那套只给商店。 -->
+              <span v-if="!isShopLike" class="fv-head-actions">
+                <span
+                  v-if="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0"
+                  class="fv-tools-dirty"
+                >
+                  未保存 {{ pendingCount }} 格{{
+                    pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
+                  }}{{
+                    pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0
+                      ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount} 项`
+                      : ""
+                  }}
+                </span>
+                <NButton size="small" quaternary @click="discardDrafts">放弃改动</NButton>
+                <NButton size="small" type="primary" @click="saveDrafts">保存改动</NButton>
+              </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
               <li v-for="(warning, index) in mainSection.warnings" :key="index">
