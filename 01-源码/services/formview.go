@@ -345,6 +345,8 @@ func (s *FormViewService) ProjectFile(filePath string) (*formview.Projection, er
 	}
 	projection := formview.Project(a.Path(index), format, pvf.ParseScriptView(text))
 	s.fillRefNames(projection.Sections, format, a, &projection.Warnings)
+	// 商店条目名（`[tab]`）是字符串表引用，翻成「消耗品」这类文字后再给界面。
+	s.fillShopTabNames(projection.Sections, a)
 	return projection, nil
 }
 

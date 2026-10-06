@@ -245,3 +245,201 @@ func latestSection(projection *formview.Projection, section string) *formview.Pr
 	}
 	return best
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 以下两个能力服务于「可视化商店」的条目界面（2026-10-06 用户要求）：
+//  1) 条目名解析：条目名在文件里是字符串表引用（`<5::tab_name_shit1>`），要显示成「消耗品」；
+//  2) 删除整个条目：`[tab]` 块（含它自己的 `[item list]`）整块删掉。
+// 与「段内一行」的增删（InsertSectionRow / DeleteSectionRows）**分开**：那是行级，这是块级。
+// ─────────────────────────────────────────────────────────────────────────
+
+// fillShopTabNames 把商店条目名翻译成可读文本（写进 Display，界面优先显示 Display）。
+//
+// 条目名在文件里通常是字符串表引用（`<5::tab_name_shit1>` 一类），原样显示是一串占位符；
+// 这里查字符串表翻成「消耗品」这类文字后再交给界面。
+func (s *FormViewService) fillShopTabNames(sections []formview.ProjectedSection, a *pvf.Archive) {
+	if a == nil {
+		return
+	}
+	for index := range sections {
+		section := &sections[index]
+		if !strings.EqualFold(strings.TrimSpace(section.Section), shopTabSection) {
+			continue
+		}
+		for row := range section.Rows {
+			cells := section.Rows[row].Cells
+			if len(cells) == 0 {
+				continue
+			}
+			tableIndex, key, ok := pvf.ParsePlaceholder(cells[0].Value)
+			if !ok {
+				continue
+			}
+			resolution, found := a.ResolveStringTable(tableIndex, key)
+			if !found || strings.TrimSpace(resolution.Text) == "" {
+				continue
+			}
+			cells[0].Display = resolution.Text
+		}
+	}
+}
+
+// DeleteShopTab 删除第 occurrence 个商店条目（`[tab]` 块，含它自己的 `[item list]`）。
+//
+// 格式（与其它写入一致）：只写**归档内存**、不落盘；删完重新投影校验（条目数必须正好 -1），
+// 不符就整体放弃，不写入任何内容。
+func (s *FormViewService) DeleteShopTab(
+	filePath string,
+	occurrence int,
+) (*formview.Projection, error) {
+	filePath = normalizeFormViewPath(filePath)
+	if filePath == "" {
+		return nil, fmt.Errorf("文件路径不能为空")
+	}
+	if occurrence < 1 {
+		return nil, fmt.Errorf("条目序号必须 ≥ 1")
+	}
+	catalog, err := s.catalog()
+	if err != nil {
+		return nil, err
+	}
+	format, ok := catalog.LookupFile(filePath)
+	if !ok {
+		return nil, fmt.Errorf("该文件没有结构化视图规则: %s", filePath)
+	}
+	if _, ok := format.LookupSection(shopTabSection); !ok {
+		return nil, fmt.Errorf("规则里这个文件族没有段 [%s]，不是商店文件（%s）", shopTabSection, filePath)
+	}
+
+	s.c.mu.RLock()
+	a := s.c.archive
+	if a == nil {
+		s.c.mu.RUnlock()
+		return nil, ErrNoArchive
+	}
+	index, found := a.Find(filePath)
+	if !found {
+		s.c.mu.RUnlock()
+		return nil, fmt.Errorf("归档内找不到文件: %s", filePath)
+	}
+	text, err := a.Text(index)
+	if err != nil {
+		s.c.mu.RUnlock()
+		return nil, fmt.Errorf("读取文件失败（%s）: %w", filePath, err)
+	}
+	s.c.mu.RUnlock()
+
+	before := countSectionOccurrences(pvf.ParseScriptView(text), shopTabSection)
+	if occurrence > before {
+		return nil, fmt.Errorf("条目序号 %d 超出范围（本文件共 %d 个条目）", occurrence, before)
+	}
+	start, end, err := shopTabBlockRange(text, occurrence)
+	if err != nil {
+		return nil, err
+	}
+	updatedText := text[:start] + text[end:]
+
+	// 校验：重新投影，条目数必须正好少一个。
+	view := pvf.ParseScriptView(updatedText)
+	after := countSectionOccurrences(view, shopTabSection)
+	if after != before-1 {
+		return nil, fmt.Errorf(
+			"删除后校验失败：条目数应为 %d，实际 %d。已取消本次删除（没有写入任何内容）",
+			before-1, after)
+	}
+
+	if _, _, err := s.c.setText(index, updatedText); err != nil {
+		return nil, err
+	}
+	emitFormViewFileChanged(index)
+
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	reopened := s.c.archive
+	if reopened == nil {
+		return nil, ErrNoArchive
+	}
+	afterIndex, found := reopened.Find(filePath)
+	if !found {
+		return nil, fmt.Errorf("写回后找不到文件: %s", filePath)
+	}
+	afterText, err := reopened.Text(afterIndex)
+	if err != nil {
+		return nil, fmt.Errorf("写回后读取失败: %w", err)
+	}
+	result := formview.Project(filePath, format, pvf.ParseScriptView(afterText))
+	s.fillRefNames(result.Sections, format, reopened, &result.Warnings)
+	s.fillShopTabNames(result.Sections, reopened)
+	return result, nil
+}
+
+// shopTabBlockRange 返回第 occurrence 个 `[tab]` 块的范围 [start, end)：
+// start 含该块**行首的缩进**（不吃上一行的换行，避免把上一行吃掉），
+// end 含收口 `[/tab]` 那一行的**换行**（整块连行一起删掉，不留空行）。
+func shopTabBlockRange(text string, occurrence int) (int, int, error) {
+	type lineRef struct {
+		start   int
+		end     int // 含该行行尾换行
+		indent  string
+		trimmed string
+	}
+	var lines []lineRef
+	for start := 0; start <= len(text); {
+		rest := text[start:]
+		cut := strings.IndexAny(rest, "\r\n")
+		lineEnd := len(text)
+		next := len(text)
+		if cut >= 0 {
+			lineEnd = start + cut
+			next = lineEnd
+			for next < len(text) && (text[next] == '\r' || text[next] == '\n') {
+				next++
+			}
+		}
+		line := text[start:lineEnd]
+		lines = append(lines, lineRef{
+			start:   start,
+			end:     next,
+			indent:  line[:len(line)-len(strings.TrimLeft(line, " \t"))],
+			trimmed: strings.TrimSpace(line),
+		})
+		if next <= start {
+			break
+		}
+		start = next
+	}
+
+	openTag := "[" + shopTabSection + "]"
+	closeTag := "[/" + shopTabSection + "]"
+	openIndex := -1
+	seen := 0
+	for i := range lines {
+		if strings.EqualFold(lines[i].trimmed, openTag) {
+			seen++
+			if seen == occurrence {
+				openIndex = i
+				break
+			}
+		}
+	}
+	if openIndex < 0 {
+		return 0, 0, fmt.Errorf("找不到第 %d 个商店条目（%s）", occurrence, openTag)
+	}
+	depth := 0
+	for i := openIndex; i < len(lines); i++ {
+		switch {
+		case strings.EqualFold(lines[i].trimmed, openTag):
+			depth++
+		case strings.EqualFold(lines[i].trimmed, closeTag):
+			depth--
+			if depth == 0 {
+				begin := lines[openIndex].start
+				for begin > 0 && (text[begin-1] == ' ' || text[begin-1] == '\t') {
+					begin--
+				}
+				return begin, lines[i].end, nil
+			}
+		}
+	}
+	return 0, 0, fmt.Errorf("第 %d 个商店条目没有配对的 %s（为安全起见不删）", occurrence, closeTag)
+}
