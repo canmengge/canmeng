@@ -183,6 +183,19 @@ export const useFormViewStore = defineStore("formView", () => {
         // 关不掉也不挡流程：OpenFormViewWindow 自己会处理已存在的情况。
       }
       windowOpen.value = false;
+      // 关窗是**异步**的：不等它真关完就重开，后端 findWindow 仍找得到旧窗口 ⇒ 只 Focus 直接返回，
+      // 新 session 根本进不了窗口初始化（窗口的 initFromSession 只在启动时跑一次）⇒
+      // 「独立掉落的壳 + 商店的表」混搭依旧（用户 2026-10-06 二次实测）。所以这里轮询等真关完。
+      for (let attempt = 0; attempt < 60; attempt++) {
+        let stillOpen = true;
+        try {
+          stillOpen = await IsFormViewWindowOpen();
+        } catch {
+          stillOpen = false;
+        }
+        if (!stillOpen) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     }
     await loadFormats();
     const target = preferredFormatId || formatId.value || formats.value[0]?.id || "";
