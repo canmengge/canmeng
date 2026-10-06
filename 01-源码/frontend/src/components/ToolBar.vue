@@ -33,6 +33,7 @@ import { CancelSave } from "../services/saveApi";
 import { ExportFilesTo } from "../services/exportApi";
 import ExportDialog from "./ExportDialog.vue";
 import { useUnsavedChanges } from "../composables/unsavedChanges";
+import { useEquipTemplateStore } from "../stores/equipTemplate";
 import { PickKeyFileDialog } from "../services/keyApi";
 
 const archive = useArchiveStore();
@@ -46,6 +47,7 @@ const sidebar = useSidebarStore();
 const bookmarks = useBookmarkStore();
 const dev = useDevStore();
 const formView = useFormViewStore();
+const equipTemplate = useEquipTemplateStore();
 const message = useMessage();
 const dialog = useDialog();
 const hashRegistrationVisible = ref(false);
@@ -251,6 +253,11 @@ const moreMenuOptions = computed<DropdownOption[]>(() => {
       disabled: !archive.open,
     });
   }
+  options.push({
+    label: "装备属性模板",
+    key: "equip-template",
+    icon: renderEmoji("⚔️"),
+  });
   options.push({ type: "divider", key: "more-divider" });
   return options;
 });
@@ -469,6 +476,9 @@ function onMoreMenuSelect(key: string | number): void {
       break;
     case "register-hash":
       hashRegistrationVisible.value = true;
+      break;
+    case "equip-template":
+      equipTemplate.open();
       break;
   }
 }

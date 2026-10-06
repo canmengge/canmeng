@@ -58,6 +58,9 @@ const baseAttributes = computed(() => document.value?.baseAttributes ?? []);
 const fourDimensions = computed(() => document.value?.fourDimensions ?? []);
 const otherAttributes = computed(() => document.value?.otherAttributes ?? []);
 const skillLevelups = computed(() => document.value?.skillLevelups ?? []);
+const setBonuses = computed(() => (document.value as { setBonuses?: Array<{ setName: string; pieces: Array<{ pieceCount: number; attributes: EquipmentPreviewAttribute[] }> }> } | null)?.setBonuses ?? []);
+const appendageEffect = computed(() => (document.value as { appendageEffect?: { appendageName: string; typeName: string; entries: Array<{ statName: string; value: number; negative: boolean }> } } | null)?.appendageEffect ?? null);
+const avatarSelectAbilities = computed(() => (document.value as { avatarSelectAbilities?: Array<{ key: string; label: string; operator: string; value: number; isSkill: boolean; skillJob?: string; skillID?: string; skillLevel?: number }> } | null)?.avatarSelectAbilities ?? []);
 const footerNeedsSeparator = computed(() => {
   const current = document.value;
   if (!current) return false;
@@ -170,6 +173,11 @@ function formatIssue(issue: PreviewIssue): string {
   return `${issue.line > 0 ? `第 ${issue.line} 行：` : ""}${issue.message}`;
 }
 
+function formatAppendageValue(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(1).replace(/\.?0+$/, "");
+}
+
 watch(
   () => [props.file.path, props.file.text] as const,
   ([path], previous) => {
@@ -254,6 +262,42 @@ onBeforeUnmount(() => {
         <div v-for="(skill, index) in skillLevelups" :key="`skill:${skill.job}:${skill.skill}:${index}`" class="equ-attribute">
           <div class="equ-skill-job">{{ skill.job }}</div>
           <div class="equ-skill-name">{{ skillText(skill) }}</div>
+        </div>
+      </div>
+
+      <div v-if="avatarSelectAbilities.length" class="equ-section equ-avatar-ability">
+        <div class="equ-avatar-ability-title">选择能力</div>
+        <div v-for="(ability, ai) in avatarSelectAbilities" :key="`ava:${ability.key}:${ai}`" class="equ-avatar-ability-entry">
+          <template v-if="ability.isSkill">
+            <span class="equ-avatar-ability-skill-job">{{ ability.skillJob }}</span>
+            <span class="equ-avatar-ability-skill">[{{ ability.skillID }}] 技能 Lv +{{ ability.skillLevel }}</span>
+          </template>
+          <template v-else>
+            <span class="equ-avatar-ability-label">{{ ability.label }}</span>
+            <span class="equ-avatar-ability-value">{{ ability.operator }}{{ formatAppendageValue(ability.value) }}</span>
+          </template>
+        </div>
+      </div>
+
+      <div v-if="setBonuses.length" class="equ-section equ-set-bonus">
+        <div v-for="(set, si) in setBonuses" :key="`set:${si}`">
+          <div class="equ-set-name">{{ set.setName || "套装" }}</div>
+          <template v-for="piece in set.pieces" :key="`set:${si}:${piece.pieceCount}`">
+            <div class="equ-set-piece-header">{{ piece.pieceCount }}件套属性</div>
+            <div v-for="attr in piece.attributes" :key="`set:${si}:${piece.pieceCount}:${attr.label}`" :class="attributeClass(attr)">
+              {{ attr.label }}{{ attr.value }}
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div v-if="appendageEffect" class="equ-section equ-appendage">
+        <div class="equ-appendage-header">
+          <span v-if="appendageEffect.appendageName" class="equ-appendage-name">{{ appendageEffect.appendageName }}</span>
+          <span v-if="appendageEffect.typeName" class="equ-appendage-type">{{ appendageEffect.typeName }}</span>
+        </div>
+        <div v-for="(entry, ei) in appendageEffect.entries" :key="`apd:${ei}`" :class="entry.negative ? 'equ-attribute equ-attribute--negative' : 'equ-attribute equ-attribute--appendage'">
+          {{ entry.statName }}{{ entry.value >= 0 ? '+' : '' }}{{ formatAppendageValue(entry.value) }}
         </div>
       </div>
 
@@ -434,6 +478,57 @@ onBeforeUnmount(() => {
   color: #ffc32b;
 }
 .equ-skill-name {
+  padding-left: 12px;
+  color: #eee;
+}
+.equ-set-name {
+  color: #ffd438;
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.equ-set-piece-header {
+  color: #ffc32b;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.equ-appendage-header {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+.equ-appendage-name {
+  color: #b46cff;
+  font-weight: 700;
+}
+.equ-appendage-type {
+  color: #999;
+  font-size: 11px;
+}
+.equ-attribute--appendage {
+  color: #b8a0ff;
+}
+.equ-avatar-ability-title {
+  color: #6ef0a7;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.equ-avatar-ability-entry {
+  min-height: 17px;
+  color: #eee;
+}
+.equ-avatar-ability-label {
+  color: #6ef0a7;
+}
+.equ-avatar-ability-value {
+  color: #fff;
+  margin-left: 4px;
+}
+.equ-avatar-ability-skill-job {
+  color: #ffc32b;
+}
+.equ-avatar-ability-skill {
   padding-left: 12px;
   color: #eee;
 }

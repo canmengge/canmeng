@@ -1535,6 +1535,20 @@ func enrichItemShopNames(a *pvf.Archive, records []searchRecord, npcNames map[st
 	if a == nil || len(records) == 0 {
 		return
 	}
+	// 先确认这批记录里**确实有商店条目**再建 NPC 名字索引。
+	// 2026-10-06 发版前实测踩坑：不加这道判断时，任何归档（包括单测里 3 个 .equ 的合成归档）
+	// 都会触发一次建表 ⇒ 索引构建被拖到 30 秒超时（`TestAdvancedSearchModesAndInvalidation`
+	// 报 "advanced index build timed out"，`go test ./...` 不全绿，卡住 §12.5 自检第 2 项）。
+	hasShop := false
+	for index := range records {
+		if isItemShopEntry("", records[index].hit.Path) {
+			hasShop = true
+			break
+		}
+	}
+	if !hasShop {
+		return
+	}
 	if npcNames == nil {
 		npcNames = buildNPCNameIndexFromArchive(a)
 	}

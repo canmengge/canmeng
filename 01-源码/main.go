@@ -376,6 +376,11 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		Windows: application.WindowsOptions{
+			// WebView2 数据目录：必须指向一个真实目录，不能留空（留空时 Wails
+			// 默认用 exe 路径拼 EBWebView，exe 是文件不是目录 ⇒ 启动弹错）。
+			WebviewUserDataPath: cacheDir,
+		},
 	})
 	updaterSvc = services.NewUpdateService(app)
 	app.RegisterService(application.NewService(updaterSvc))

@@ -23,6 +23,7 @@ import CommandPalette from "./components/CommandPalette.vue";
 import CloseGuard from "./components/CloseGuard.vue";
 import EditorCloseGuard from "./components/EditorCloseGuard.vue";
 import ArchiveErrorDialog from "./components/ArchiveErrorDialog.vue";
+import EquipTemplateGen from "./components/EquipTemplateGen.vue";
 import LogPanel from "./components/LogPanel.vue";
 import { useArchiveStore } from "./stores/archive";
 import { useEditorStore } from "./stores/editor";
@@ -215,6 +216,7 @@ async function onKeydown(e: KeyboardEvent) {
         <div class="app-root" data-file-drop-target :class="{ 'app-root--mac': isMac }">
           <ToolBar />
           <AdvancedSearchModal />
+          <EquipTemplateGen />
           <AnnotationEditModal />
           <BatchProcessModal />
           <ImportModal />

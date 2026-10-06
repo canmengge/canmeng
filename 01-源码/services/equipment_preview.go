@@ -25,6 +25,50 @@ type EquipmentSkillLevelup struct {
 	Level int32  `json:"level"`
 }
 
+// EquipmentSetPieceBonus is the attribute list for one piece-count threshold
+// of a set bonus (e.g. "3-piece bonus: +50 physical attack").
+type EquipmentSetPieceBonus struct {
+	PieceCount int32                       `json:"pieceCount"`
+	Attributes []EquipmentPreviewAttribute `json:"attributes"`
+}
+
+// EquipmentSetBonus describes a full equipment part set: its display name and
+// the per-threshold attribute bonuses (3-piece, 5-piece, 8-piece, etc.).
+type EquipmentSetBonus struct {
+	SetName string                   `json:"setName"`
+	Pieces  []EquipmentSetPieceBonus `json:"pieces"`
+}
+
+// EquipmentAppendageEffectEntry is one stat modifier from an appendage effect.
+type EquipmentAppendageEffectEntry struct {
+	StatName string  `json:"statName"`
+	Value    float64 `json:"value"`
+	Negative bool    `json:"negative"`
+}
+
+// EquipmentAppendageEffect is the appendage (词条) effect attached to an
+// equipment. TypeName is the translated effect category (e.g. "状态变化"),
+// Entries lists the individual stat modifications.
+type EquipmentAppendageEffect struct {
+	AppendageName string                          `json:"appendageName"`
+	TypeName      string                          `json:"typeName"`
+	Entries       []EquipmentAppendageEffectEntry `json:"entries"`
+}
+
+// EquipmentAvatarSelectAbility is one entry in the [avatar select ability]
+// block of a costume .equ file. Stat entries have Operator/Value; skill
+// entries have SkillJob/SkillID/SkillLevel (key is "SKILL_LEVEL").
+type EquipmentAvatarSelectAbility struct {
+	Key        string  `json:"key"`
+	Label      string  `json:"label"`
+	Operator   string  `json:"operator"`
+	Value      float64 `json:"value"`
+	IsSkill    bool    `json:"isSkill"`
+	SkillJob   string  `json:"skillJob,omitempty"`
+	SkillID    string  `json:"skillID,omitempty"`
+	SkillLevel int32   `json:"skillLevel,omitempty"`
+}
+
 // EquipmentPreviewDocument is the game-style data model rendered by the
 // frontend. Optional sections are represented by empty strings/slices.
 type EquipmentPreviewDocument struct {
@@ -52,6 +96,15 @@ type EquipmentPreviewDocument struct {
 	WeightText       string                      `json:"weightText"`
 	PriceText        string                      `json:"priceText"`
 	Issues           []PreviewIssue              `json:"issues"`
+	// SetBonuses 是装备所属套装的各件数属性加成（来自 [part set index] →
+	// etc/equipmentpartset.etc → 套装 .equ 的 [piece set ability] 段）。
+	SetBonuses []EquipmentSetBonus `json:"setBonuses"`
+	// AppendageEffect 是装备的词条效果（来自 [appendage] → list/appendage.lst
+	// → .apd 文件里的属性修正）。
+	AppendageEffect *EquipmentAppendageEffect `json:"appendageEffect,omitempty"`
+	// AvatarSelectAbilities 是时装的选择能力（[avatar select ability] 段），
+	// 仅在时装类 .equ 里有值。
+	AvatarSelectAbilities []EquipmentAvatarSelectAbility `json:"avatarSelectAbilities"`
 }
 
 // ParseEQU parses the current editor text. Archive state is only used for the
@@ -101,6 +154,11 @@ func (s *PreviewService) ParseEQU(fileIndex int32, text string) (*EquipmentPrevi
 	doc.DetailExplain = normalizeExplain(resolvePreviewText(s.c.archive, doc.DetailExplain))
 	// 风味文本沿用原语义（不做 `%%`→`%`），只补占位符解析与换行规范化。
 	doc.FlavorText = normalizeDisplayText(resolvePreviewText(s.c.archive, doc.FlavorText))
+	// 套装属性与词条效果：从当前装备脚本里取 [part set index] / [appendage]
+	// 的 ID，跨文件查到套装 .equ 或 .apd 并解析属性加成（2026-10-07 C2）。
+	view := pvf.ParseScriptView(text)
+	doc.SetBonuses = s.resolveSetBonusesLocked(view)
+	doc.AppendageEffect = s.resolveAppendageEffectLocked(view)
 	return doc, nil
 }
 
@@ -270,6 +328,7 @@ func buildEquipmentPreview(filePath, text string, engine *annotationrules.Engine
 		document.PriceText = formatPrice(value, text, &document.Issues)
 	}
 
+	document.AvatarSelectAbilities = extractAvatarSelectAbilities(view)
 	return document
 }
 
@@ -506,4 +565,469 @@ func lineAtUTF16Offset(text string, target int) int {
 		offset += len(utf16.Encode([]rune{value}))
 	}
 	return line
+}
+
+// ---------------------------------------------------------------------------
+// 套装属性 & 词条效果（C2 — 2026-10-07）
+// ---------------------------------------------------------------------------
+
+// resolveSetBonusesLocked 从当前装备脚本的 [part set index] 出发，查
+// etc/equipmentpartset.etc 找到套装 .equ 路径，再解析里面的 [piece set ability]
+// 各件数属性加成。调用方须持有 c.mu。
+func (s *PreviewService) resolveSetBonusesLocked(view pvf.ScriptView) []EquipmentSetBonus {
+	if s == nil || s.c == nil || s.c.archive == nil {
+		return nil
+	}
+	var partSetID string
+	for _, elem := range view.Elements {
+		if elem.Kind == "token" && strings.EqualFold(elem.Section, "part set index") && elem.Index == 0 {
+			partSetID = strings.TrimSpace(elem.Value)
+			break
+		}
+	}
+	if partSetID == "" {
+		return nil
+	}
+	setName, setPath := s.lookupPartSetLocked(partSetID)
+	if setPath == "" {
+		return nil
+	}
+	fullPath := "equipment/" + setPath
+	idx, ok := s.c.archive.Find(fullPath)
+	if !ok {
+		return nil
+	}
+	setText, err := s.c.cachedDecodedText(idx, s.c.archive)
+	if err != nil {
+		return nil
+	}
+	resolvedName := resolvePreviewText(s.c.archive, setName)
+	if resolvedName == "" {
+		resolvedName = setName
+	}
+	pieces := parseSetBonusFile(setText)
+	if len(pieces) == 0 {
+		return nil
+	}
+	return []EquipmentSetBonus{{SetName: resolvedName, Pieces: pieces}}
+}
+
+// lookupPartSetLocked 在 etc/equipmentpartset.etc 里找 ID 匹配的
+// [equipment part set] 段，返回套装显示名和套装 .equ 相对路径。
+func (s *PreviewService) lookupPartSetLocked(setID string) (name, path string) {
+	idx, ok := s.c.archive.Find("etc/equipmentpartset.etc")
+	if !ok {
+		return "", ""
+	}
+	text, err := s.c.cachedDecodedText(idx, s.c.archive)
+	if err != nil {
+		return "", ""
+	}
+	view := pvf.ParseScriptView(text)
+	inMatching := false
+	depth := 0
+	for _, elem := range view.Elements {
+		if elem.Kind == "section" {
+			if strings.EqualFold(elem.Value, "[equipment part set]") {
+				depth++
+				continue
+			}
+			if elem.Value == "[/equipment part set]" && depth > 0 {
+				depth--
+				inMatching = false
+				continue
+			}
+			continue
+		}
+		if depth <= 0 {
+			continue
+		}
+		if strings.EqualFold(elem.Section, "equipment part set") && elem.Index == 0 {
+			if strings.TrimSpace(elem.Value) == setID {
+				inMatching = true
+				continue
+			}
+		}
+		if !inMatching {
+			continue
+		}
+		if strings.EqualFold(elem.Section, "equipment part set") {
+			switch elem.Index {
+			case 1:
+				path = strings.Trim(strings.TrimSpace(elem.Value), "`")
+			case 2:
+				name = strings.Trim(strings.TrimSpace(elem.Value), "`")
+			}
+		}
+	}
+	return name, path
+}
+
+// parseSetBonusFile 解析套装 .equ 文件里的全部 [piece set ability] 段，
+// 每段第一 token 是件数门槛，后续嵌套段是属性名 + 属性值。
+func parseSetBonusFile(text string) []EquipmentSetPieceBonus {
+	view := pvf.ParseScriptView(text)
+	var bonuses []EquipmentSetPieceBonus
+	var currentAttrs []EquipmentPreviewAttribute
+	currentPiece := int32(0)
+	inPieceSet := false
+	inNested := false
+
+	for _, elem := range view.Elements {
+		if elem.Kind == "section" {
+			if strings.EqualFold(elem.Value, "[piece set ability]") && !inPieceSet {
+				inPieceSet = true
+				currentAttrs = nil
+				currentPiece = 0
+				continue
+			}
+			if elem.Value == "[/piece set ability]" && inPieceSet && !inNested {
+				if currentPiece > 0 {
+					bonuses = append(bonuses, EquipmentSetPieceBonus{
+						PieceCount: currentPiece,
+						Attributes: currentAttrs,
+					})
+				}
+				inPieceSet = false
+				continue
+			}
+			if inPieceSet && !strings.EqualFold(elem.Value, "[piece set ability]") && !strings.EqualFold(elem.Value, "[/piece set ability]") {
+				if !inNested {
+					inNested = true
+				}
+				continue
+			}
+			if inNested && strings.HasPrefix(elem.Value, "[/") {
+				inNested = false
+				continue
+			}
+			continue
+		}
+		if !inPieceSet {
+			continue
+		}
+		if strings.EqualFold(elem.Section, "piece set ability") && elem.Index == 0 && currentPiece == 0 {
+			if n, err := strconv.ParseInt(strings.TrimSpace(elem.Value), 10, 32); err == nil {
+				currentPiece = int32(n)
+			}
+			continue
+		}
+		if inNested && elem.Kind == "token" && elem.Index == 0 {
+			label := translateStatName(elem.Section)
+			val, err := strconv.ParseFloat(strings.TrimSpace(elem.Value), 64)
+			if err == nil && label != "" {
+				currentAttrs = append(currentAttrs, EquipmentPreviewAttribute{
+					Label:    label,
+					Value:    signedNumber(val),
+					Negative: val < 0,
+				})
+			}
+		}
+	}
+	return bonuses
+}
+
+// resolveAppendageEffectLocked 从 [appendage] 的 ID 出发，查 list/appendage.lst
+// 找到 .apd 路径，解析属性修正。调用方须持有 c.mu。
+func (s *PreviewService) resolveAppendageEffectLocked(view pvf.ScriptView) *EquipmentAppendageEffect {
+	if s == nil || s.c == nil || s.c.archive == nil {
+		return nil
+	}
+	var appendageID string
+	for _, elem := range view.Elements {
+		if elem.Kind == "token" && strings.EqualFold(elem.Section, "appendage") && elem.Index == 0 {
+			appendageID = strings.TrimSpace(elem.Value)
+			break
+		}
+	}
+	if appendageID == "" {
+		return nil
+	}
+	apdPath := s.lookupAppendagePathLocked(appendageID)
+	if apdPath == "" {
+		return nil
+	}
+	idx, ok := s.c.archive.Find(apdPath)
+	if !ok {
+		return nil
+	}
+	apdText, err := s.c.cachedDecodedText(idx, s.c.archive)
+	if err != nil {
+		return nil
+	}
+	return parseAppendageFile(apdText, s.c.archive)
+}
+
+// lookupAppendagePathLocked 在 list/appendage.lst（flat 格式，2 token/记录）
+// 里找 ID 匹配的记录，返回 .apd 文件的归档路径。
+func (s *PreviewService) lookupAppendagePathLocked(id string) string {
+	idx, ok := s.c.archive.FindList("list/appendage.lst")
+	if !ok {
+		idx, ok = s.c.archive.Find("list/appendage.lst")
+		if !ok {
+			return ""
+		}
+	}
+	text, err := s.c.cachedDecodedText(idx, s.c.archive)
+	if err != nil {
+		return ""
+	}
+	view := pvf.ParseScriptView(text)
+	tokens := make([]string, 0, len(view.Elements))
+	for _, elem := range view.Elements {
+		if elem.Kind == "token" {
+			tokens = append(tokens, strings.TrimSpace(elem.Value))
+		}
+	}
+	for i := 0; i+1 < len(tokens); i += 2 {
+		if tokens[i] == id {
+			return strings.Trim(tokens[i+1], "`")
+		}
+	}
+	return ""
+}
+
+// parseAppendageFile 解析 .apd 文件，提取名称、类型与属性修正条目。
+func parseAppendageFile(text string, archive *pvf.Archive) *EquipmentAppendageEffect {
+	view := pvf.ParseScriptView(text)
+	result := &EquipmentAppendageEffect{}
+	var stringData, intDataStr, floatDataStr []string
+	for _, elem := range view.Elements {
+		if elem.Kind != "token" {
+			continue
+		}
+		switch {
+		case strings.EqualFold(elem.Section, "name") && elem.Index == 0:
+			raw := strings.Trim(strings.TrimSpace(elem.Value), "`")
+			if archive != nil {
+				result.AppendageName = archive.ResolvePlaceholdersMarked(raw, untranslatedMark)
+			} else {
+				result.AppendageName = raw
+			}
+		case strings.EqualFold(elem.Section, "type") && elem.Index == 0:
+			result.TypeName = translateAppendageType(strings.Trim(strings.TrimSpace(elem.Value), "`"))
+		case strings.EqualFold(elem.Section, "buff") && elem.Index == 0:
+			// buff=1 正面 / buff=0 中性或负面，暂不在 UI 上区分颜色。
+		case strings.EqualFold(elem.Section, "string data"):
+			stringData = append(stringData, strings.Trim(strings.TrimSpace(elem.Value), "`"))
+		case strings.EqualFold(elem.Section, "int data"):
+			intDataStr = append(intDataStr, strings.TrimSpace(elem.Value))
+		case strings.EqualFold(elem.Section, "float data"):
+			floatDataStr = append(floatDataStr, strings.TrimSpace(elem.Value))
+		}
+	}
+	floatVals := make([]float64, len(floatDataStr))
+	for i, s := range floatDataStr {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			floatVals[i] = v
+		}
+	}
+	result.Entries = buildAppendageEntries(result.TypeName, stringData, intDataStr, floatVals)
+	if result.AppendageName == "" && len(result.Entries) == 0 {
+		return nil
+	}
+	return result
+}
+
+// buildAppendageEntries 按词条类型把 string/int/float 原始数据组合成可显示的属性条目。
+func buildAppendageEntries(typeName string, stringData []string, intData []string, floatData []float64) []EquipmentAppendageEffectEntry {
+	if len(stringData) == 0 {
+		return nil
+	}
+	var entries []EquipmentAppendageEffectEntry
+	switch typeName {
+	case "状态变化", "attack type", "change basic attack type":
+		for i, name := range stringData {
+			if name == "" {
+				continue
+			}
+			val := 0.0
+			if i < len(floatData) {
+				val = floatData[i]
+			}
+			entries = append(entries, EquipmentAppendageEffectEntry{
+				StatName: translateStatName(name),
+				Value:    val,
+				Negative: val < 0,
+			})
+		}
+	case "技能数据强化":
+		for i := 0; i+6 < len(stringData); i += 7 {
+			label := stringData[i+3]
+			if label == "" {
+				continue
+			}
+			val, _ := strconv.ParseFloat(stringData[i+6], 64)
+			entries = append(entries, EquipmentAppendageEffectEntry{
+				StatName: translateStatName(label),
+				Value:    val,
+				Negative: val < 0,
+			})
+		}
+	default:
+		for i, name := range stringData {
+			if name == "" {
+				continue
+			}
+			val := 0.0
+			if i < len(floatData) {
+				val = floatData[i]
+			}
+			entries = append(entries, EquipmentAppendageEffectEntry{
+				StatName: translateStatName(name),
+				Value:    val,
+				Negative: val < 0,
+			})
+		}
+	}
+	return entries
+}
+
+// translateAppendageType 把 .apd 的 [type] 原始值译成中文显示名。
+func translateAppendageType(raw string) string {
+	m := map[string]string{
+		"change status":            "状态变化",
+		"attack type":              "攻击类型",
+		"change basic attack type": "改变普攻类型",
+		"skill data up":            "技能数据强化",
+	}
+	if cn, ok := m[strings.ToLower(strings.TrimSpace(raw))]; ok {
+		return cn
+	}
+	return raw
+}
+
+// translateStatName 把 .apd / 套装里的英文属性名译成中文。
+func translateStatName(raw string) string {
+	m := map[string]string{
+		"physical attack":                "物理攻击力",
+		"magical attack":                 "魔法攻击力",
+		"physical defense":               "物理防御力",
+		"magical defense":                "魔法防御力",
+		"independent attack":             "独立攻击力",
+		"physical critical hit rate":     "物理暴击率",
+		"magical critical hit rate":      "魔法暴击率",
+		"HP MAX":                         "HP 上限",
+		"MP MAX":                         "MP 上限",
+		"HP regen speed":                 "HP 回复量",
+		"MP regen speed":                 "MP 回复量",
+		"move speed":                     "移动速度",
+		"attack speed":                   "攻击速度",
+		"cast speed":                     "施放速度",
+		"stuck resistance":               "硬直",
+		"jump force":                     "跳跃力",
+		"all elemental resistance":       "全属性抗性",
+		"all elemental attack":           "全属性强化",
+		"fire elemental attack":          "火属性强化",
+		"water elemental attack":         "水属性强化",
+		"dark elemental attack":          "暗属性强化",
+		"light elemental attack":         "光属性强化",
+		"fire elemental resistance":      "火属性抗性",
+		"water elemental resistance":     "水属性抗性",
+		"dark elemental resistance":      "暗属性抗性",
+		"light elemental resistance":     "光属性抗性",
+		"stuck":                          "僵直",
+		"inventory limit":                "负重上限",
+		"dark element":                   "暗属性",
+		"light element":                  "光属性",
+		"fire element":                   "火属性",
+		"water element":                  "水属性",
+		"[cooltime]":                     "冷却时间",
+		"[all]":                          "全部技能",
+	}
+	if cn, ok := m[raw]; ok {
+		return cn
+	}
+	return raw
+}
+
+// ---------------------------------------------------------------------------
+// 时装选择能力（C3 — 2026-10-07）
+// ---------------------------------------------------------------------------
+
+// extractAvatarSelectAbilities 从 ScriptView 里提取 [avatar select ability] 段
+// 的全部条目。属性条目 3 token（key / operator / value），技能条目 4 token
+// （[SKILL_LEVEL] / job / skillID / level）。
+func extractAvatarSelectAbilities(view pvf.ScriptView) []EquipmentAvatarSelectAbility {
+	tokens := make([]string, 0, len(view.Elements))
+	for _, elem := range view.Elements {
+		if elem.Kind == "token" && strings.EqualFold(elem.Section, "avatar select ability") {
+			tokens = append(tokens, strings.TrimSpace(elem.Value))
+		}
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+	var abilities []EquipmentAvatarSelectAbility
+	i := 0
+	for i < len(tokens) {
+		if strings.EqualFold(tokens[i], "[SKILL_LEVEL]") {
+			if i+3 >= len(tokens) {
+				break
+			}
+			level, _ := strconv.ParseInt(tokens[i+3], 10, 32)
+			abilities = append(abilities, EquipmentAvatarSelectAbility{
+				Key:        "SKILL_LEVEL",
+				Label:      "技能等级",
+				IsSkill:    true,
+				SkillJob:   tokens[i+1],
+				SkillID:    tokens[i+2],
+				SkillLevel: int32(level),
+			})
+			i += 4
+			continue
+		}
+		if i+2 >= len(tokens) {
+			break
+		}
+		key := strings.Trim(tokens[i], "`")
+		op := strings.Trim(tokens[i+1], "`")
+		val, _ := strconv.ParseFloat(tokens[i+2], 64)
+		abilities = append(abilities, EquipmentAvatarSelectAbility{
+			Key:      key,
+			Label:    translateAvatarAbilityKey(key),
+			Operator: op,
+			Value:    val,
+		})
+		i += 3
+	}
+	return abilities
+}
+
+// translateAvatarAbilityKey 把 [avatar select ability] 里的英文键译成中文。
+func translateAvatarAbilityKey(key string) string {
+	m := map[string]string{
+		"HP_MAX":              "HP最大值",
+		"MP_MAX":              "MP最大值",
+		"HP_REGEN":            "HP回复量",
+		"MP_REGEN":            "MP回复量",
+		"MOVE_SPEED":          "移动速度",
+		"ATTACK_SPEED":        "攻击速度",
+		"CAST_SPEED":          "施放速度",
+		"PHYSICAL_ATTACK":     "物理攻击力",
+		"MAGICAL_ATTACK":      "魔法攻击力",
+		"PHYSICAL_DEFENSE":    "物理防御力",
+		"MAGICAL_DEFENSE":     "魔法防御力",
+		"INDEPENDENT_ATTACK":  "独立攻击力",
+		"PHYSICAL_CRITICAL":   "物理暴击率",
+		"MAGICAL_CRITICAL":    "魔法暴击率",
+		"STUCK_RESISTANCE":    "硬直",
+		"JUMP_FORCE":          "跳跃力",
+		"ALL_ELEMENTAL_ATTACK":  "全属性强化",
+		"FIRE_ELEMENTAL_ATTACK":  "火属性强化",
+		"WATER_ELEMENTAL_ATTACK": "水属性强化",
+		"DARK_ELEMENTAL_ATTACK":  "暗属性强化",
+		"LIGHT_ELEMENTAL_ATTACK": "光属性强化",
+		"ALL_ELEMENTAL_RESISTANCE":  "全属性抗性",
+		"FIRE_ELEMENTAL_RESISTANCE":  "火属性抗性",
+		"WATER_ELEMENTAL_RESISTANCE": "水属性抗性",
+		"DARK_ELEMENTAL_RESISTANCE":  "暗属性抗性",
+		"LIGHT_ELEMENTAL_RESISTANCE": "光属性抗性",
+		"INVENTORY_LIMIT":     "负重上限",
+		"SKILL_LEVEL":         "技能等级",
+	}
+	if cn, ok := m[key]; ok {
+		return cn
+	}
+	return key
 }
