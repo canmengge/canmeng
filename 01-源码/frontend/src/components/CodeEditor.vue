@@ -60,6 +60,7 @@ import {
   type FormViewCompletionColumn,
   type FormViewCompletionSection,
 } from "../services/formViewApi";
+import { searchHitLines } from "../searchMarks";
 
 const props = defineProps<{
   doc: string;
@@ -91,6 +92,11 @@ const props = defineProps<{
    * 在滚动条旁打一个绿色标记；不传就不显示改动标记（其它两类标记不受影响）。
    */
   baseline?: string | null;
+  /**
+   * A6 v2 概览标记条用：本标签在归档里的**文件索引**。有了它才能到 `../searchMarks`
+   * 取「内容搜索命中行」（那个模块是搜索弹窗 → 编辑器 的单向通道）。
+   */
+  fileIndex?: number;
   /**
    * 本标签当前是否可见。标签切换走 v-show（NTabPane 的 `show:lazy`），隐藏时
    * display:none 会把编辑器滚动位置归零 —— 靠这个信号在重新可见时把位置写回去。
@@ -678,7 +684,7 @@ const problemsGutter = gutter({
 interface OverviewMark {
   from: number;
   to: number;
-  kind: "problem" | "change";
+  kind: "problem" | "change" | "hit";
   label: string;
 }
 
@@ -701,10 +707,12 @@ watch(
 const overview = computed(() => {
   const marks: OverviewMark[] = [];
   const problems = [...(props.problems ?? [])].sort((a, b) => a.line - b.line);
+  // A6 v2：本文件的内容搜索命中行（来自搜索弹窗，见 ../searchMarks）
+  const hits = props.fileIndex != null ? searchHitLines.value.get(props.fileIndex) ?? [] : [];
   const base = props.baseline;
   const canDiff = base != null && base !== overviewDoc.value;
   // 自查修复：没有标记可画时**不做整份 split**（纯打字场景最常见的路径）
-  if (problems.length === 0 && !canDiff) return { total: 1, marks };
+  if (problems.length === 0 && hits.length === 0 && !canDiff) return { total: 1, marks };
 
   const current = overviewDoc.value.split("\n");
   const total = Math.max(1, current.length);
@@ -716,6 +724,17 @@ const overview = computed(() => {
       continue;
     }
     marks.push({ from: item.line, to: item.line, kind: "problem", label: item.message });
+  }
+
+  // A6 v2：内容搜索命中行（相邻行并成一段；颜色与"问题/改动"区分开）
+  for (const line of hits) {
+    if (!Number.isFinite(line) || line < 1 || line > total) continue;
+    const last = marks[marks.length - 1];
+    if (last && last.kind === "hit" && line <= last.to + 1) {
+      last.to = line;
+      continue;
+    }
+    marks.push({ from: line, to: line, kind: "hit", label: "内容搜索命中" });
   }
 
   if (canDiff && base != null) {
@@ -1748,6 +1767,10 @@ watch(
 }
 .overview-mark--change {
   background: var(--pvf-success);
+}
+/* A6 v2：内容搜索命中（复用既有主题变量，不新增变量避免主题漂移） */
+.overview-mark--hit {
+  background: var(--pvf-editor-syntax-number);
 }
 .overview-mark:hover {
   width: 9px;

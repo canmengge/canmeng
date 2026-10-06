@@ -1271,6 +1271,7 @@ function onDrop(event: DragEvent): void {
             :list-names="isListFile(tab.path)"
             :problems="problemsFor(tab)"
             :baseline="tab.original"
+            :file-index="tab.index"
             @change="(text: string) => onEditorChange(tab.index, tab.path, text)"
             @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"
             @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"

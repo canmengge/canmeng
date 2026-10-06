@@ -22,6 +22,7 @@ import { useEditorStore } from "../stores/editor";
 import { useExplorerStore, type SearchItem } from "../stores/explorer";
 import { useSearchWindowStore } from "../stores/searchWindow";
 import { useSidebarStore } from "../stores/sidebar";
+import { clearSearchHitLines, publishSearchHitLines } from "../searchMarks";
 
 /**
  * 「高级搜索」对话框：左侧文件树搜索引擎的图形化版本（原内容/字符串池搜索已停用）。
@@ -89,6 +90,8 @@ const exact = ref(false);
 const contentMode = ref(false);
 /** key → 行号（1 基）。只有内容搜索模式下才会有值。 */
 const hitLines = ref(new Map<string, number>());
+/** 归档文件索引 → 命中行号（给编辑器的概览条打点用，见 ../searchMarks）。 */
+const contentByFile = ref(new Map<number, number[]>());
 const hits = ref<SearchItem[]>([]);
 const nextCursor = ref(-1);
 const searching = ref(false);
@@ -110,6 +113,8 @@ watch(
       window.setTimeout(() => inputEl.value?.focus(), 60);
     } else {
       window.removeEventListener("keydown", onResultsKeydown);
+      // A6 v2：面板关闭后命中点不再可信（用户可能已改文件），一起清掉
+      clearSearchHitLines();
     }
   }
 );
@@ -123,6 +128,9 @@ function resetResults(): void {
   nextCursor.value = -1;
   searched.value = false;
   checkedKeys.value = new Set();
+  // A6 v2：结果清了，编辑器上的命中点也要一起清（否则留下"幽灵点"）
+  contentByFile.value = new Map();
+  clearSearchHitLines();
 }
 
 /**
@@ -130,9 +138,14 @@ function resetResults(): void {
  * `line` 是 Go 侧新加的字段 —— 本机无法重生成 bindings，所以这里按 `unknown` 窄化读取，
  * 不碰 `bindings/`（与 `services/formViewApi.ts` 同一种做法）。
  */
-function buildContentRows(result: unknown): { rows: SearchItem[]; lines: Map<string, number> } {
+function buildContentRows(result: unknown): {
+  rows: SearchItem[];
+  lines: Map<string, number>;
+  byFile: Map<number, number[]>;
+} {
   const rows: SearchItem[] = [];
   const lines = new Map<string, number>();
+  const byFile = new Map<number, number[]>();
   const source = (result ?? {}) as { hits?: unknown[] };
   let seq = 0;
   for (const hitRaw of source.hits ?? []) {
@@ -152,7 +165,13 @@ function buildContentRows(result: unknown): { rows: SearchItem[]; lines: Map<str
       seq += 1;
       const key = `${hit.fileIndex ?? -1}#${detail.poolOffset ?? 0}#${seq}`;
       const line = Number(detail.line ?? 0);
-      if (line > 0) lines.set(key, line);
+      if (line > 0) {
+        lines.set(key, line);
+        // A6 v2：同一文件的行号归集到一处（给概览条打点用；后面统一去重排序）
+        const bucket = byFile.get(hit.fileIndex ?? -1);
+        if (bucket) bucket.push(line);
+        else byFile.set(hit.fileIndex ?? -1, [line]);
+      }
       rows.push({
         key,
         label: value || hit.path || "",
@@ -166,7 +185,10 @@ function buildContentRows(result: unknown): { rows: SearchItem[]; lines: Map<str
       } as unknown as SearchItem);
     }
   }
-  return { rows, lines };
+  for (const [index, list] of byFile) {
+    byFile.set(index, [...new Set(list)].sort((a, b) => a - b));
+  }
+  return { rows, lines, byFile };
 }
 
 /** A9：命中行号（没有就返回 0 ⇒ 调用方退化为 needle 模糊定位）。 */
@@ -190,6 +212,9 @@ async function runSearch(): Promise<void> {
       const built = buildContentRows(result);
       hits.value = built.rows;
       hitLines.value = built.lines;
+      // A6 v2：发布命中行号，编辑器右缘的概览条会给这些行打黄点
+      publishSearchHitLines(built.byFile);
+      contentByFile.value = built.byFile;
       nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
       searched.value = true;
       return;
@@ -223,6 +248,17 @@ async function loadMore(): Promise<void> {
       for (const [key, line] of built.lines) merged.set(key, line);
       hits.value = [...hits.value, ...built.rows];
       hitLines.value = merged;
+      // A6 v2：加载更多要把新增命中并进打点数据，不能只发这一页
+      const mergedByFile = new Map(contentByFile.value);
+      for (const [index, list] of built.byFile) {
+        const bucket = mergedByFile.get(index);
+        mergedByFile.set(
+          index,
+          bucket ? [...new Set([...bucket, ...list])].sort((a, b) => a - b) : list
+        );
+      }
+      contentByFile.value = mergedByFile;
+      publishSearchHitLines(mergedByFile);
       nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
       return;
     }
