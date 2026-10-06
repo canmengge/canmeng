@@ -78,6 +78,17 @@ function addCheckedToWindow(): void {
 
 const query = ref("");
 const exact = ref(false);
+/**
+ * A9（2026-10-06）：**内容搜索**模式。
+ *
+ * 面板原本只搜「文件记录」（路径/名称/ID —— `ArchiveService.Search`），文件记录没有"行"，
+ * 所以永远显示不了行号。勾上它改走 `ArchiveService.AdvancedSearch("string", …)`（内容/字符串池
+ * 搜索），命中带 **Line**（后端在分页出口用现成的行偏移表算出来）⇒ 可以显示行号并按行精确跳转。
+ * 标记：pvfContentSearchLineA9_20261006
+ */
+const contentMode = ref(false);
+/** key → 行号（1 基）。只有内容搜索模式下才会有值。 */
+const hitLines = ref(new Map<string, number>());
 const hits = ref<SearchItem[]>([]);
 const nextCursor = ref(-1);
 const searching = ref(false);
@@ -114,6 +125,55 @@ function resetResults(): void {
   checkedKeys.value = new Set();
 }
 
+/**
+ * A9：把内容搜索的命中摊平成面板用的行（一个文件可能有多条命中）。
+ * `line` 是 Go 侧新加的字段 —— 本机无法重生成 bindings，所以这里按 `unknown` 窄化读取，
+ * 不碰 `bindings/`（与 `services/formViewApi.ts` 同一种做法）。
+ */
+function buildContentRows(result: unknown): { rows: SearchItem[]; lines: Map<string, number> } {
+  const rows: SearchItem[] = [];
+  const lines = new Map<string, number>();
+  const source = (result ?? {}) as { hits?: unknown[] };
+  let seq = 0;
+  for (const hitRaw of source.hits ?? []) {
+    const hit = hitRaw as {
+      name?: string;
+      path?: string;
+      size?: number;
+      dataType?: number;
+      fileIndex?: number;
+      details?: unknown[];
+    } | null;
+    if (!hit) continue;
+    for (const detailRaw of hit.details ?? []) {
+      const detail = detailRaw as { value?: string; poolOffset?: number; line?: number } | null;
+      if (!detail) continue;
+      const value = (detail.value ?? "").trim();
+      seq += 1;
+      const key = `${hit.fileIndex ?? -1}#${detail.poolOffset ?? 0}#${seq}`;
+      const line = Number(detail.line ?? 0);
+      if (line > 0) lines.set(key, line);
+      rows.push({
+        key,
+        label: value || hit.path || "",
+        path: hit.path ?? "",
+        id: "",
+        name: hit.name ?? "",
+        category: "内容",
+        fileIndex: hit.fileIndex ?? -1,
+        size: hit.size ?? 0,
+        dataType: hit.dataType ?? 0,
+      } as unknown as SearchItem);
+    }
+  }
+  return { rows, lines };
+}
+
+/** A9：命中行号（没有就返回 0 ⇒ 调用方退化为 needle 模糊定位）。 */
+function lineOf(item: SearchItem): number {
+  return hitLines.value.get(item.key) ?? 0;
+}
+
 async function runSearch(): Promise<void> {
   const term = query.value.trim();
   if (!term || searching.value) return;
@@ -124,10 +184,21 @@ async function runSearch(): Promise<void> {
   searching.value = true;
   error.value = "";
   try {
+    if (contentMode.value) {
+      // A9：内容搜索（带行号）—— 走 AdvancedSearch("string", …)
+      const result = await ArchiveService.AdvancedSearch("string", term, "", false, 0, 200);
+      const built = buildContentRows(result);
+      hits.value = built.rows;
+      hitLines.value = built.lines;
+      nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
+      searched.value = true;
+      return;
+    }
     const result = exact.value
       ? await ArchiveService.SearchExact(term, 0, 200)
       : await ArchiveService.Search(term, 0, 200);
     hits.value = (result?.hits ?? []).map((hit: SearchHit | null) => explorer.toSearchItem(hit as SearchHit));
+    hitLines.value = new Map();
     nextCursor.value = result?.nextCursor ?? -1;
     searched.value = true;
   } catch (e: any) {
@@ -144,6 +215,17 @@ async function loadMore(): Promise<void> {
   searching.value = true;
   error.value = "";
   try {
+    if (contentMode.value) {
+      const result = await ArchiveService.AdvancedSearch("string", term, "", false, nextCursor.value, 200);
+      const built = buildContentRows(result);
+      // 行号表要合并（Map 直接改不会触发 ref 更新 ⇒ 换成新 Map）
+      const merged = new Map(hitLines.value);
+      for (const [key, line] of built.lines) merged.set(key, line);
+      hits.value = [...hits.value, ...built.rows];
+      hitLines.value = merged;
+      nextCursor.value = (result as unknown as { nextCursor?: number })?.nextCursor ?? -1;
+      return;
+    }
     const result = exact.value
       ? await ArchiveService.SearchExact(term, nextCursor.value, 200)
       : await ArchiveService.Search(term, nextCursor.value, 200);
@@ -198,10 +280,15 @@ async function openItem(item: SearchItem): Promise<void> {
     if (explorer.mode === "search") {
       explorer.clearSearch();
     }
-    // A9：不再只是"打开文件"——直接把编辑器**滚到并高亮命中内容**（needles 依次尝试，
-    // 全部落空才退化为"只打开文件"；见 stores/editor.ts 的 revealInFile）。
-    // 标记：pvfAdvancedSearchStepA9_20261006
-    await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
+    // A9：不再只是"打开文件"——直接把编辑器**滚到并高亮命中内容**。
+    // 内容搜索模式下有**准确行号** ⇒ 按行跳（最准）；否则退回按 needle 模糊定位。
+    // 标记：pvfAdvancedSearchStepA9_20261006 / pvfContentSearchLineA9_20261006
+    const line = lineOf(item);
+    if (line > 0) {
+      await editor.revealFileLine(item.fileIndex, line);
+    } else {
+      await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
+    }
     await explorer.revealPath(item.path);
     search.close();
   } catch (e: any) {
@@ -226,7 +313,12 @@ async function jumpTo(index: number): Promise<void> {
     if (explorer.mode === "search") {
       explorer.clearSearch();
     }
-    await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
+    const line = lineOf(item);
+    if (line > 0) {
+      await editor.revealFileLine(item.fileIndex, line);
+    } else {
+      await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
+    }
     await explorer.revealPath(item.path);
   } catch (e: any) {
     error.value = String(e?.message ?? e);
@@ -315,8 +407,11 @@ function buildSearchIndex(): void {
 
       <div class="as-options-row">
         <template v-if="viewMode === 'locate'">
-          <NCheckbox v-model:checked="exact" size="small" :disabled="searching">
+          <NCheckbox v-model:checked="exact" size="small" :disabled="searching || contentMode">
             精确匹配（整词相等，不再做子串匹配）
+          </NCheckbox>
+          <NCheckbox v-model:checked="contentMode" size="small" :disabled="searching" @update:checked="resetResults">
+            内容搜索（搜文件正文，命中显示**行号**、可精确跳转）
           </NCheckbox>
         </template>
         <template v-else>
@@ -387,6 +482,8 @@ function buildSearchIndex(): void {
             </span>
             <span class="col-resizer" title="拖动调整列宽" @mousedown.stop="startResize($event, 'id')" @dblclick.stop />
             <span class="as-row-path" :title="item.path">{{ item.path }}</span>
+            <!-- A9：内容搜索的命中行号（点行/按钮即按行精确跳转） -->
+            <span v-if="lineOf(item) > 0" class="as-row-line">第 {{ lineOf(item) }} 行</span>
             <span v-if="viewMode === 'locate'" class="as-row-actions">
               <NTooltip trigger="hover">
                 <template #trigger>

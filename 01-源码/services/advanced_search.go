@@ -58,6 +58,12 @@ type AdvancedSearchDetail struct {
 	TokenOffsets     []int    `json:"tokenOffsets,omitempty"`
 	Hex              string   `json:"hex,omitempty"`
 	OffsetsTruncated bool     `json:"offsetsTruncated,omitempty"`
+	// Line 是命中内容在**反编译文本**里的 1 基行号（0 = 没算出来/算不到）。
+	//
+	// 为什么在分页出口才算：字符串索引是"池值维度"的（只记哪些文件引用了该池值），
+	// **不存文件内偏移**，所以行号只能拿文本正查一次 Value 得到；放索引阶段会拖慢索引
+	// 且要改持久化格式。只对用户要看的那一页算，代价 ≈ 页内涉及文件各一次解码（走缓存）。
+	Line int32 `json:"line,omitempty"`
 }
 
 // AdvancedSearchResult is a paged file-level advanced-search response.
@@ -647,15 +653,33 @@ func (c *core) refreshAdvancedBinaryLocked(dirty []int32) {
 }
 
 func (s *ArchiveService) paginateAdvancedView(matches []advancedFileMatch, cursor, limit int) (*AdvancedSearchResult, error) {
+	result, pending, err := s.paginateAdvancedViewLocked(matches, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	// 行号换算必须在锁**外**做：它可能要解码文件（写文本缓存，而 cachedDecodedText 要求持写锁），
+	// 在分页的 RLock 段里做会互斥卡死。只对**当前这一页**的命中算。
+	s.fillAdvancedLines(pending)
+	return result, nil
+}
+
+// pendingAdvancedLine 记下"哪个文件的哪条命中还要算行号"，等锁外统一处理。
+type pendingAdvancedLine struct {
+	fileIndex int32
+	detail    *AdvancedSearchDetail
+}
+
+func (s *ArchiveService) paginateAdvancedViewLocked(matches []advancedFileMatch, cursor, limit int) (*AdvancedSearchResult, []pendingAdvancedLine, error) {
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	if s.c.archive == nil {
-		return nil, ErrNoArchive
+		return nil, nil, ErrNoArchive
 	}
 	result := &AdvancedSearchResult{Hits: []*AdvancedSearchHit{}, NextCursor: -1}
 	if cursor > len(matches) {
 		cursor = len(matches)
 	}
+	pending := make([]pendingAdvancedLine, 0, limit)
 	i := cursor
 	for ; i < len(matches) && len(result.Hits) < limit; i++ {
 		match := matches[i]
@@ -672,12 +696,60 @@ func (s *ArchiveService) paginateAdvancedView(matches []advancedFileMatch, curso
 			FileIndex: index,
 			Details:   match.details,
 		})
+		for _, detail := range match.details {
+			if detail == nil || strings.TrimSpace(detail.Value) == "" {
+				continue
+			}
+			pending = append(pending, pendingAdvancedLine{fileIndex: index, detail: detail})
+		}
 	}
 	if i < len(matches) {
 		result.NextCursor = i
 	}
 	result.Scanned = i
-	return result, nil
+	return result, pending, nil
+}
+
+// fillAdvancedLines 给命中回填 1 基行号（字符串/内容搜索的"按行跳转"靠它）。
+//
+// 只用**反编译文本里的首个匹配**定位：字符串模式命中的是池值文本，索引里没有文件内偏移
+// （索引是"池值维度"的），所以拿 Value 在文本里正查一次最直接，行为与前端原先的
+// needle 定位等价、但**能给出准确行号**。解不开或找不到就留 0，前端退化为"只打开文件"。
+func (s *ArchiveService) fillAdvancedLines(pending []pendingAdvancedLine) {
+	for _, item := range pending {
+		if item.detail == nil || item.detail.Line > 0 {
+			continue
+		}
+		text, ok := s.decodedTextForLine(item.fileIndex)
+		if !ok || text == "" {
+			continue
+		}
+		at := strings.Index(text, item.detail.Value)
+		if at < 0 {
+			continue
+		}
+		item.detail.Line = int32(lineOfOffset(lineOffsetsFor(item.fileIndex, text), at))
+	}
+}
+
+// decodedTextForLine 取某文件的当前文本（未保存草稿优先，其次解码缓存）。
+//
+// `cachedDecodedText` 要求调用方持 `c.mu`，所以这里自己加写锁 —— **调用方不得已持锁**，
+// 否则就是死锁（这正是行号计算被推出 RLock 段的原因）。
+func (s *ArchiveService) decodedTextForLine(index int32) (string, bool) {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	if s.c.archive == nil || index < 0 || index >= s.c.archive.FileCount() {
+		return "", false
+	}
+	if text, ok := s.c.editorText[index]; ok && text != "" {
+		return text, true
+	}
+	text, err := s.c.cachedDecodedText(index, s.c.archive)
+	if err != nil {
+		return "", false
+	}
+	return text, true
 }
 
 func (c *core) indexedFileNameLocked(index int32) string {
