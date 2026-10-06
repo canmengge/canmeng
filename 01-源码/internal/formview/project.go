@@ -193,6 +193,18 @@ func collectGroups(view pvf.ScriptView) []*tokenGroup {
 	groups := make([]*tokenGroup, 0)
 	byID := make(map[int]*tokenGroup)
 	for _, element := range view.Elements {
+		// 2026-10-06 修：**空段也要建组**。实测 itemshop/100000124_repair_machine.shp 的
+		// [item list][/item list] 之间一个 token 都没有，旧逻辑（只认 token 元素）连组都不建，
+		// 投影里就没有这一段 ⇒ 前端整套商店 UI 判定失败（用户实测：换到这个商店后
+		// 条目槽/新建条目/物品表全消失，主表退化成「归属 NPC」）。空组建组后投影为 0 行表。
+		if element.Kind == pvf.ScriptElementSection {
+			if _, ok := byID[element.SectionID]; !ok {
+				group := &tokenGroup{section: element.Section, id: element.SectionID}
+				byID[element.SectionID] = group
+				groups = append(groups, group)
+			}
+			continue
+		}
 		if element.Kind != pvf.ScriptElementToken {
 			continue
 		}

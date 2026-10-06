@@ -196,8 +196,16 @@ const sectionBlocks = computed<FormViewSection[]>(
   () => formView.projection?.sections ?? []
 );
 
-/** 默认主块 = 行数最多的那一段（沿用 2026-10-03 的口径）。 */
+/** 默认主块 = 行数最多的那一段（沿用 2026-10-03 的口径）；**商店例外：优先 [item list]**。 */
 const defaultBlockKey = computed(() => {
+  // 2026-10-06：商店文件里「归属 NPC / 商店类型 / 提示语」这类 1 行小段会比空物品表多一行，
+  // 旧行数口径会让主表变成「归属 NPC」（用户实测截图）；商店的主角是物品表，空也优先选它。
+  if (isShopLike.value) {
+    const itemList = sectionBlocks.value.find(
+      (section) => section.section.toLowerCase() === "item list"
+    );
+    if (itemList) return blockKey(itemList);
+  }
   let best: FormViewSection | null = null;
   for (const section of sectionBlocks.value) {
     if (!best || section.rows.length > best.rows.length) best = section;
@@ -865,10 +873,10 @@ const isShopLike = computed(() => {
   const names = new Set(
     (formView.projection?.sections ?? []).map((item) => item.section.toLowerCase())
   );
-  return names.has("item list"); // 2026-10-06 放宽：只要投影里有 [item list] 就算商店 ——
-      // 实测 itemshop/100000124_repair_machine.shp 这类"无页签商店"只有 [NPC]/[type]/[sell info]
-      // 包着 [item list]，没有 [tab] 段，旧判定（tab && item list）会把整套商店 UI 挡没
-      //（用户实测：换到这个商店后条目槽/新建条目全消失）。独立掉落没有 [item list]，不受影响。
+  // 2026-10-06 再修：直接按文件族判定 —— 空物品表的商店（如 100000124_repair_machine.shp）
+  // 之前连投影段都凑不齐（内核不给空段建组，已改），按段集合判定随时会漏。按 formatId 判最稳，
+  // 与 isIndependentDrop 同一套模式；独立掉落 formatId 不同，互不影响。
+  return (formView.formatId ?? "").trim().toLowerCase() === "itemshop";
 });
 
 /** 排队中的"新建商店条目"。 */
