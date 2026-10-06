@@ -102,8 +102,6 @@ const contentByFile = ref(new Map<number, number[]>());
  * 全程**不建索引、不常驻内存**。标记：pvfScopedScanC_20261006
  */
 const contentScope = ref("");
-/** 单次范围扫描最多扫多少个文件（防止一个"整个归档"的范围跑几万个请求）。 */
-const CONTENT_SCAN_MAX_FILES = 1200;
 /** 扫描进度（active = 正在扫，点「停止」即中断）。 */
 const scanProgress = ref({ done: 0, total: 0, active: false });
 const scanStop = ref(false);
@@ -311,6 +309,50 @@ function lineOf(item: SearchItem): number {
  * 代价是范围越大越慢（但随时可停，不像建索引那样一旦开始就得等）。
  * 标记：pvfScopedScanC_20261006
  */
+/**
+ * C：**懒枚举**范围内的文件 —— 逐层展开目录（BFS），一次只吐一个文件。
+ *
+ * 为什么不"先列全再扫"（两版都栽在这上面）：
+ *   ① 借元数据搜索枚举 ⇒ 按相关度截断前 300 条 ⇒ 深处文件漏扫（"明明有却搜不到"）；
+ *   ② 换成一次列全部 ⇒ `contents/` 下 **140 万个**文件，前端接不住、还白等半天。
+ * 现在：队列里只放"待展开的目录"（内存与目录数同量级），逐个文件交给 `SearchInFile`，
+ * 因此**没有数量上限**；想停随时点「停止」（`keepGoing` 返回 false 即中断）。
+ */
+async function* walkScopeFiles(
+  scope: string,
+  keepGoing: () => boolean
+): AsyncGenerator<{ fileIndex: number; path: string; name: string; size: number; dataType: number }> {
+  const queue: string[] = [scope];
+  while (queue.length > 0) {
+    if (!keepGoing()) return;
+    const dir = queue.shift() as string;
+    let children: any[] = [];
+    try {
+      children = ((await ArchiveService.ListChildren(dir)) ?? []).filter((node: unknown) => !!node);
+    } catch {
+      children = []; // 单个目录失败（权限/异常）不打断整轮
+    }
+    for (const node of children) {
+      if (!keepGoing()) return;
+      // 目录/文件的判定复用左树自己那套（toTreeItem 的 isDir），不在这里猜 dataType
+      const item = explorer.toTreeItem(node);
+      if (item.isDir) {
+        queue.push(item.key);
+        continue;
+      }
+      if (item.fileIndex < 0) continue;
+      yield {
+        fileIndex: item.fileIndex,
+        // TreeItem 的 `key` 就是归档路径、`label` 是显示名（它没有 path/name 字段）
+        path: item.key,
+        name: String(item.label ?? ""),
+        size: item.size,
+        dataType: item.dataType,
+      };
+    }
+  }
+}
+
 async function runScopedContentScan(term: string): Promise<void> {
   const scope = contentScope.value.trim();
   if (scope === "") {
@@ -324,29 +366,8 @@ async function runScopedContentScan(term: string): Promise<void> {
   scanProgress.value = { done: 0, total: 0, active: true };
   error.value = "";
   try {
-    // ① 圈文件：用**专门**的「列目录下所有文件」接口。
-    //
-    // 【2026-10-06 实测事故】原来这里借的是元数据搜索（`Search("contents/")`）——它按相关度
-    // 截断在前 300 条，而 `contents/` 下文件非常多 ⇒ 深处的目标文件（如
-    // contents/2022/.../grandflores_12.qst）**根本没进被扫列表**，表现就是"明明有却 0 命中"。
-    // `ListDescendantFiles` 是按归档顺序返回该目录下**全部文件**，不截断、不猜语义。
-    const nodes = (await ArchiveService.ListDescendantFiles(scope)) ?? [];
-    if (token !== scanToken) return;
-    // 类型守卫写法：`filter(!!node)` 收不窄 `TreeNode | null`，后面用 file.path 会报 TS18047
-    const all = nodes.filter(
-      (node): node is NonNullable<typeof node> => !!node && (node.fileIndex ?? -1) >= 0
-    );
-    if (all.length === 0) {
-      error.value = `范围「${scope}」下没有文件`;
-      return;
-    }
-    const files = all.slice(0, CONTENT_SCAN_MAX_FILES);
-    if (all.length > files.length) {
-      message.warning(
-        `范围较大：本次只扫前 ${CONTENT_SCAN_MAX_FILES} 个文件（该目录共 ${all.length} 个），建议缩小范围`
-      );
-    }
-    scanProgress.value = { done: 0, total: files.length, active: true };
+    // ① 文件来源 = 懒枚举（`walkScopeFiles`）：逐层展开目录、逐个吐出文件。
+    //    没有"前 N 个"这种上限，也不会把 140 万条路径搬到前端。
 
     // 多关键词 ⇒ 词之间允许任意空白（PVF 里是 TAB，用户习惯打空格）
     const pattern = queryToSearchPattern(term);
@@ -354,7 +375,10 @@ async function runScopedContentScan(term: string): Promise<void> {
     const lines = new Map<string, number>();
     const byFile = new Map<number, number[]>();
     let seq = 0;
-    for (const file of files) {
+    for await (const file of walkScopeFiles(
+      scope,
+      () => token === scanToken && !scanStop.value
+    )) {
       if (token !== scanToken || scanStop.value) break;
       try {
         const found = await SearchInFile(
@@ -390,7 +414,7 @@ async function runScopedContentScan(term: string): Promise<void> {
         // 单个文件失败（解不开/超大）不打断整轮：继续扫下一个
       }
       const done = scanProgress.value.done + 1;
-      scanProgress.value = { done, total: files.length, active: true };
+      scanProgress.value = { done, total: scanProgress.value.done, active: true };
       // 每 5 个文件刷一次列表：够"边扫边看"，又不会把大数组每文件重渲染一遍
       if (done % 5 === 0) hits.value = [...rows];
     }
@@ -402,11 +426,11 @@ async function runScopedContentScan(term: string): Promise<void> {
     publishSearchHitLines(byFile);
     searched.value = true;
     if (scanStop.value) {
-      message.info(`已停止：扫了 ${scanProgress.value.done} / ${files.length} 个文件，命中 ${rows.length} 处`);
+      message.info(`已停止：扫了 ${scanProgress.value.done} / ${scanProgress.value.done} 个文件，命中 ${rows.length} 处`);
     } else if (rows.length === 0) {
-      message.info(`扫完 ${files.length} 个文件：没有命中`);
+      message.info(`扫完 ${scanProgress.value.done} 个文件：没有命中`);
     } else {
-      message.success(`扫完 ${files.length} 个文件：命中 ${rows.length} 处`);
+      message.success(`扫完 ${scanProgress.value.done} 个文件：命中 ${rows.length} 处`);
     }
   } catch (e: any) {
     if (token === scanToken) error.value = String(e?.message ?? e);
@@ -724,7 +748,7 @@ function buildSearchIndex(): void {
               </div>
             </NPopover>
             <span v-if="scanProgress.active" class="as-meta">
-              已扫 {{ scanProgress.done }} / {{ scanProgress.total }}…
+              已扫 {{ scanProgress.done }} 个文件…
             </span>
             <NButton v-if="scanProgress.active" size="tiny" secondary @click="scanStop = true">停止</NButton>
           </template>
