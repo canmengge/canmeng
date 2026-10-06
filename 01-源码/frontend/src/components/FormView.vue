@@ -3970,6 +3970,16 @@ function resetColumnWidths(): void {
   align-items: flex-start;
   gap: 8px;
 }
+/* 非商店文件族（独立掉落等）——**用 4.10 那套布局**：工具条直接全宽一行（DOM 里虽然还套着
+   fv-main/fv-main-right 这两层为商店加的壳，这里让它们退化成块级 ⇒ 宽度 100%，与 4.10 的
+   `fv-fixed > fv-tools` 视觉等价）。用户 2026-10-06 红线：商店与独立掉落是两个独立板块，
+   商店那套左槽右工具的骨架不得影响独立掉落。 */
+.fv-main:not(.fv-main--fixed) {
+  display: block;
+}
+.fv-main:not(.fv-main--fixed) > .fv-main-right {
+  display: block;
+}
 /* 商店界面：UI 高度固定（不随物品数变高/变矮；没物品也照常显示） */
 .fv-main--fixed {
   min-height: 380px;
