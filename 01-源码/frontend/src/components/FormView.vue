@@ -54,7 +54,7 @@ import { FormViewRuleText } from "../services/saveApi";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
 // 通用段行增删（只给"非独立掉落"文件族用）：与独立掉落那套**分开做、互不影响**
 // （用户 2026-10-06 要求：每个可视化 UI 的 UI 与功能都要独立）。
-import { DeleteSectionRows, InsertSectionRow } from "../services/formViewApi";
+import { AppendShopTab, DeleteSectionRows, InsertSectionRow } from "../services/formViewApi";
 
 const formView = useFormViewStore();
 const editor = useEditorStore();
@@ -781,7 +781,9 @@ type PendingInsert =
   | { kind: "candidate"; section: string; occurrence: number; item: FormViewDropItem }
   | { kind: "drop"; entry: FormViewDropEntry }
   // 通用段行（非独立掉落文件族，如商店物品列表）：按规则列数往某个段块末尾追加一行。
-  | { kind: "row"; section: string; occurrence: number; values: string[] };
+  | { kind: "row"; section: string; occurrence: number; values: string[] }
+  // 商店模块专属：新建一个商店条目（`[tab]` + `` `条目名` `` + 含首个物品的 `[item list]`）。
+  | { kind: "tab"; name: string; firstItem: string };
 
 const pendingInserts = ref<PendingInsert[]>([]);
 const pendingInsertCount = computed(() => pendingInserts.value.length);
@@ -827,6 +829,58 @@ const selectedRows = ref<Set<number>>(new Set());
 // 一套 UI / 功能的改动不能影响别的可视化模块。
 // 标记：pvfRowEditModule_20261006
 const rowEditValue = ref("");
+
+// ---- 商店模块：新建条目（D2；与独立掉落、通用段行增删互不影响）----
+//
+// 「商店条目」= 文件里一个 `[tab]` 块（条目名 + 它自己的 `[item list]`，用户 2026-10-06 指认）。
+// 条目名按用户要求写成**反引号对** `` `名字` ``（与文件里 `` `[weapon shop]` `` 同一个符号）。
+// 交互与其它模块一致：先排队，点「保存改动」才写进归档内存。
+// 标记：pvfShopTabModule_20261006
+const shopTabName = ref("");
+const shopTabFirstItem = ref("");
+
+/** 当前段块的唯一一列是不是"物品"（ref 含 equipment / stackable）—— 决定显示不显示「添加物品」。 */
+const canAddItem = computed(() => {
+  const section = mainSection.value;
+  if (!section || section.columns.length !== 1) return false;
+  return (section.columnRefs?.[0] ?? "")
+    .toLowerCase()
+    .split("|")
+    .some((part) => part.trim() === "equipment" || part.trim() === "stackable");
+});
+
+/** 这个文件像不像商店（投影里同时有 `[tab]` 与 `[item list]`）—— 决定显示不显示「新建商店条目」。 */
+const isShopLike = computed(() => {
+  const names = new Set(
+    (formView.projection?.sections ?? []).map((item) => item.section.toLowerCase())
+  );
+  return names.has("tab") && names.has("item list");
+});
+
+/** 排队中的"新建商店条目"。 */
+const pendingShopTabs = computed<Extract<PendingInsert, { kind: "tab" }>[]>(() =>
+  pendingInserts.value.filter(
+    (item): item is Extract<PendingInsert, { kind: "tab" }> => item.kind === "tab"
+  )
+);
+
+/** 把「新建商店条目」加入待保存队列（不碰归档）。 */
+function queueShopTab(): void {
+  const name = shopTabName.value.trim();
+  const firstItem = shopTabFirstItem.value.trim();
+  if (name === "") {
+    message.warning("先填条目名（如 特色物品）");
+    return;
+  }
+  if (firstItem === "") {
+    message.warning("先填首个物品编号（空的 [item list] 暂时加不进物品，所以新建时必须带一个）");
+    return;
+  }
+  pendingInserts.value = [...pendingInserts.value, { kind: "tab", name, firstItem }];
+  shopTabName.value = "";
+  shopTabFirstItem.value = "";
+  message.success(`已加入待保存：新建条目「${name}」（点「保存改动」才写进归档内存）`);
+}
 
 /** 当前文件族是不是独立掉落（独立掉落走它自己那套 UI 与后端方法）。 */
 const isIndependentDrop = computed(
@@ -1546,6 +1600,9 @@ async function saveDrafts(): Promise<void> {
     for (const item of queued) {
       if (item.kind === "drop") {
         await AddIndependentDrop(formView.filePath.trim(), item.entry);
+      } else if (item.kind === "tab") {
+        // 商店模块专属：新建一个 [tab] 条目（含首个物品，格式照抄文件里已有条目）。
+        await AppendShopTab(formView.filePath.trim(), item.name, item.firstItem);
       } else if (item.kind === "row") {
         // 通用段行（非独立掉落文件族）：按规则列数追加到该段块末尾。
         await InsertSectionRow(
@@ -1634,6 +1691,8 @@ async function saveDrafts(): Promise<void> {
     const parts: string[] = [];
     if (drafts.length > 0) parts.push(`${drafts.length} 格`);
     if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
+    const tabCount = queued.filter((item) => item.kind === "tab").length;
+    if (tabCount > 0) parts.push(`新建条目 ${tabCount} 条`);
     if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
     if (rowDeletes.length > 0) parts.push(`删除 ${rowDeletes.length} 行`);
     if (candidateDeletes.length > 0) parts.push(`删除候选 ${candidateDeletes.length} 条`);
@@ -2031,7 +2090,7 @@ function resetColumnWidths(): void {
                    交互模型与独立掉落**完全一致**（用户 2026-10-06 要求）：先排队（表格里看得到），
                    点「保存改动」才写进归档内存；后端方法各用各的（标记 pvfRowEditQueue_20261006）。 -->
               <template v-else>
-                <template v-if="mainSection.columns.length === 1">
+                <template v-if="canAddItem">
                   <span class="fv-label">物品</span>
                   <NInput
                     v-model:value="rowEditValue"
@@ -2051,6 +2110,36 @@ function resetColumnWidths(): void {
                     @click="queueRowInsert"
                   >
                     添加物品
+                  </NButton>
+                </template>
+                <template v-if="isShopLike">
+                  <span class="fv-label">新条目</span>
+                  <NInput
+                    v-model:value="shopTabName"
+                    size="small"
+                    style="width: 110px"
+                    placeholder="条目名，如 特色物品"
+                    @keyup.enter="queueShopTab"
+                  />
+                  <span class="fv-label">首个物品</span>
+                  <NInput
+                    v-model:value="shopTabFirstItem"
+                    size="small"
+                    style="width: 130px"
+                    placeholder="物品编号，如 756000007"
+                    @keyup.enter="queueShopTab"
+                  />
+                  <span v-if="rowEditItemName(shopTabFirstItem)" class="fv-drop-name">
+                    {{ rowEditItemName(shopTabFirstItem) }}
+                  </span>
+                  <NButton
+                    size="tiny"
+                    type="primary"
+                    :disabled="shopTabName.trim() === '' || shopTabFirstItem.trim() === ''"
+                    title="新建一个商店条目：`[tab]` + `条目名`（反引号对）+ 一个含首个物品的 `[item list]`。先排队，点上方「保存改动」才写进归档内存"
+                    @click="queueShopTab"
+                  >
+                    新建商店条目
                   </NButton>
                 </template>
                 <NButton
@@ -2278,10 +2367,20 @@ function resetColumnWidths(): void {
           </template>
 
           <!-- 通用段行的"待保存追加"（队列里看得见，与独立掉落的"加一条候选"同一套模型） -->
-          <div v-if="!isIndependentDrop && pendingRowInserts.length > 0" class="fv-rowedit-pending">
-            待保存追加 {{ pendingRowInserts.length }} 项：{{
-              pendingRowInserts.map((item) => item.values.join(" / ")).join("、")
-            }}（点上方「保存改动」才写进归档内存）
+          <div
+            v-if="!isIndependentDrop && (pendingRowInserts.length > 0 || pendingShopTabs.length > 0)"
+            class="fv-rowedit-pending"
+          >
+            <template v-if="pendingRowInserts.length > 0">
+              待保存追加 {{ pendingRowInserts.length }} 项：{{
+                pendingRowInserts.map((item) => item.values.join(" / ")).join("、")
+              }}
+            </template>
+            <template v-if="pendingShopTabs.length > 0">
+              {{ pendingRowInserts.length > 0 ? " · " : "" }}待保存新建条目
+              {{ pendingShopTabs.length }} 个：{{ pendingShopTabs.map((item) => item.name).join("、") }}
+            </template>
+            （点上方「保存改动」才写进归档内存）
           </div>
 
           <div v-if="otherSections.length" class="fv-others">

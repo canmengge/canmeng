@@ -157,6 +157,47 @@
           "columns": [
             { "label": "物品", "type": "ref", "ref": "equipment|stackable" }
           ]
+        },
+        {
+          "section": "tab",
+          "label": "商店条目（页签）",
+          "kind": "table",
+          "rowTokens": 1,
+          "maxOccurrences": 100,
+          "optional": true,
+          "columns": [
+            { "label": "条目名", "type": "text" }
+          ]
+        },
+        {
+          "section": "npc",
+          "label": "归属 NPC",
+          "kind": "table",
+          "rowTokens": 1,
+          "maxOccurrences": 10,
+          "columns": [
+            { "label": "NPC", "type": "ref", "ref": "npc" }
+          ]
+        },
+        {
+          "section": "type",
+          "label": "商店类型",
+          "kind": "table",
+          "rowTokens": 1,
+          "maxOccurrences": 10,
+          "columns": [
+            { "label": "类型", "type": "text" }
+          ]
+        },
+        {
+          "section": "message",
+          "label": "提示语",
+          "kind": "table",
+          "rowTokens": 1,
+          "maxOccurrences": 10,
+          "columns": [
+            { "label": "提示语", "type": "text" }
+          ]
         }
       ]
     }

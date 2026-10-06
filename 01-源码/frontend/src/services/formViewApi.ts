@@ -351,3 +351,19 @@ export function DeleteSectionRows(
 ): $CancellablePromise<FormViewSection> {
   return $Call.ByID(4041113065, filePath, section, occurrence, rowIndexes);
 }
+
+/**
+ * 新建一个「商店条目」：往商店文件里追加 `[tab]` + `` `条目名` `` + 内置首个物品的 `[item list]`。
+ *
+ * 商店模块专属（与独立掉落、通用段行增删**互不影响**）。按商店文件现有格式写：
+ * 条目名用**反引号对**包住（与文件里 `` `[weapon shop]` `` 同一个符号）。
+ * fqn = pvfine/services.FormViewService.AppendShopTab
+ * 方法 ID 用已知的 `ListFormats`(3541309786) 反验 FNV-1a-32 算法后复算。
+ */
+export function AppendShopTab(
+  filePath: string,
+  name: string,
+  firstItem: string
+): $CancellablePromise<FormViewProjection> {
+  return $Call.ByID(3470123801, filePath, name, firstItem);
+}
