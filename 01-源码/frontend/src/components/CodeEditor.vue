@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   EditorView,
   keymap,
@@ -24,6 +24,10 @@ import {
 } from "@codemirror/state";
 import {
   HighlightStyle,
+  codeFolding,
+  foldGutter,
+  foldKeymap,
+  foldService,
   indentUnit,
   syntaxHighlighting,
 } from "@codemirror/language";
@@ -652,6 +656,105 @@ function flushPendingChange(): void {
   if (view) reportChange(view.state.doc.toString());
 }
 
+/* ── 本轮新增：A2 段折叠 / A1 段名补全 / A8 跳行 ───────────────────────────────
+   标记串（供 check-frontend-live.ps1 校验 dev server 是否已吐新代码）：
+   pvfFoldGotoA2A8_20261006
+   三条都只作用于普通文件通道；大文件通道（largeFile）一律不装
+   （用户 2026-10-06 明确：大文件先不要动）。全部只读渲染层，不改文本。
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** PVF 段头：独占一行、形如 `[名称]`（闭合写法 `[/名称]` 也匹配）。 */
+const PVF_SECTION_LINE = /^\s*\[\/?[^\]\n]+\]\s*$/;
+/** PVF 闭合标签行（如 `[/if]`）：并入上一段的折叠范围。 */
+const PVF_CLOSE_LINE = /^\s*\[\/[^\]\n]+\]\s*$/;
+
+/**
+ * A2 段折叠：从段头行末折叠到「下一个段头行」之前；若该段以闭合标签收尾，
+ * 闭合标签一并折进去。纯读计算，不触碰文本。
+ */
+const pvfFoldService = foldService.of((state, lineStart) => {
+  const startLine = state.doc.lineAt(lineStart);
+  if (!PVF_SECTION_LINE.test(startLine.text)) return null;
+  let last = startLine.number;
+  for (let n = startLine.number + 1; n <= state.doc.lines; n += 1) {
+    const text = state.doc.line(n).text;
+    if (PVF_SECTION_LINE.test(text)) {
+      if (PVF_CLOSE_LINE.test(text)) last = n;
+      break;
+    }
+    last = n;
+  }
+  if (last === startLine.number) return null;
+  return { from: startLine.to, to: state.doc.line(last).to };
+});
+
+/** 段名补全缓存：Text 不可变，按引用比较即可，只在文档变动后重扫一次。 */
+let sectionNamesCache: { doc: unknown; names: string[] } | null = null;
+
+function sectionNames(state: EditorState): string[] {
+  if (sectionNamesCache && sectionNamesCache.doc === state.doc) return sectionNamesCache.names;
+  const names = new Set<string>();
+  for (let n = 1; n <= state.doc.lines; n += 1) {
+    const m = /^\[(\/?)([^\]\n]+)\]$/.exec(state.doc.line(n).text.trim());
+    if (!m) continue;
+    const name = m[2].trim();
+    if (name) names.add(`${m[1]}${name}`);
+  }
+  const list = [...names].sort();
+  sectionNamesCache = { doc: state.doc, names: list };
+  return list;
+}
+
+/**
+ * A1 段名补全：只在「行首方括号内」触发，提示**本文件里出现过的段名**
+ * （含 `[/xxx]` 闭合写法）。零新增数据源 —— 全量段名表与枚举取值需要后端把
+ * 注释数据下发到前端，留待后续批次（见 02-文档规则\编辑器可加功能一览.md）。
+ */
+function pvfCompletionSource(context: CompletionContext): CompletionResult | null {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  const m = /^(\s*)\[(\/?)([A-Za-z0-9_ -]*)$/.exec(before);
+  if (!m) return null;
+  const typed = `${m[2]}${m[3]}`;
+  const options = sectionNames(context.state)
+    .filter((name) => name.toLowerCase().startsWith(typed.toLowerCase()))
+    .slice(0, 200)
+    .map((name) => ({ label: name, type: "keyword", detail: "本文件已有段名" }));
+  if (options.length === 0) return null;
+  return {
+    from: context.pos - typed.length,
+    options,
+    validFor: /^\/?[A-Za-z0-9_ -]*$/,
+  };
+}
+
+/* A8 跳行（Ctrl/Cmd+G）：复用既有的 revealPosition，只补一个输入入口。 */
+const gotoOpen = ref(false);
+const gotoText = ref("");
+const gotoInput = ref<HTMLInputElement | null>(null);
+const gotoPos = ref({ left: 0, top: 0 });
+
+function openGotoLine(): void {
+  if (!view) return;
+  const rect = view.dom.getBoundingClientRect();
+  gotoPos.value = { left: rect.left + 12, top: rect.top + 12 };
+  gotoText.value = "";
+  gotoOpen.value = true;
+  void nextTick(() => gotoInput.value?.focus());
+}
+
+function closeGotoLine(): void {
+  gotoOpen.value = false;
+  view?.focus();
+}
+
+function submitGotoLine(): void {
+  const n = Number.parseInt(gotoText.value.trim(), 10);
+  closeGotoLine();
+  if (!Number.isFinite(n) || n <= 0) return;
+  revealPosition(n);
+}
+
 function makeExtensions(themeId: ResolvedThemeId) {
   const isJavaScript = props.language === "javascript";
   // Lua 只给 .lua 用（判定见 EditorPane.vue 的 editorLanguage）：110 版 PVF 的 AI
@@ -673,11 +776,24 @@ function makeExtensions(themeId: ResolvedThemeId) {
     rectangularSelection(),
     crosshairCursor(),
     highlightSelectionMatches(),
+    // A2 段折叠：折叠边栏 + 折起占位 + 自定义「按 [段] 折叠」规则。
+    // 大文件通道不装（用户 2026-10-06 明确）。
+    ...(large ? [] : [codeFolding(), foldGutter(), pvfFoldService]),
     vimComp.of(props.vimMode ? vim() : []),
     keymap.of([
+      // A8 跳行：Ctrl/Cmd+G。放在最前 ⇒ 覆盖 searchKeymap 的「查找下一个」，
+      // 与主流编辑器一致；查找下一个仍可用 F3 / 搜索面板按钮。
+      {
+        key: "Mod-g",
+        run: () => {
+          openGotoLine();
+          return true;
+        },
+      },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,
+      ...foldKeymap,
       { key: "Tab", run: insertTab, shift: indentLess },
     ]),
     EditorView.domEventHandlers({
@@ -748,7 +864,11 @@ function makeExtensions(themeId: ResolvedThemeId) {
           ]
         : isLua
           ? [luaHighlighting]
-          : [pvfHighlighting]),
+          : [
+              pvfHighlighting,
+              // A1 段名补全：只在行首 `[` 内触发，提示本文件已有段名。
+              autocompletion({ override: [pvfCompletionSource] }),
+            ]),
     editorThemeComp.of(createEditorTheme(themeId)),
     // 折行：长行（[item list] 一长串 ID）必须换行显示，否则要横向滚动、看不全。
     // 大文件也保留折行（2026-09-27 用户明确要求）。
@@ -1009,6 +1129,22 @@ watch(
 
 <template>
   <div ref="host" class="code-editor" />
+  <!-- A8 跳行浮层：Ctrl/Cmd+G 唤起；回车跳转、Esc 关闭 -->
+  <div
+    v-if="gotoOpen"
+    class="goto-line"
+    :style="{ left: `${gotoPos.left}px`, top: `${gotoPos.top}px` }"
+  >
+    <input
+      ref="gotoInput"
+      v-model="gotoText"
+      class="goto-line-input"
+      placeholder="行号，回车跳转"
+      @keydown.stop
+      @keydown.enter.prevent="submitGotoLine"
+      @keydown.esc.prevent="closeGotoLine"
+    />
+  </div>
   <NTooltip
     :show="annotationTooltip.visible"
     trigger="manual"
@@ -1038,6 +1174,27 @@ watch(
 </template>
 
 <style scoped>
+/* A8 跳行浮层：用主题无关的半透明底（不依赖具体 --pvf-* 变量，明暗主题都能用） */
+.goto-line {
+  position: fixed;
+  z-index: 40;
+  padding: 5px 8px;
+  border: 1px solid rgb(127 127 127 / 35%);
+  border-radius: 6px;
+  background: rgb(127 127 127 / 14%);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.goto-line-input {
+  width: 150px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 .code-editor {
   flex: 1;
   min-width: 0;
