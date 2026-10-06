@@ -105,6 +105,8 @@ const contentScope = ref("");
 /** 扫描进度（active = 正在扫，点「停止」即中断）。 */
 const scanProgress = ref({ done: 0, total: 0, active: false });
 const scanStop = ref(false);
+/** 本轮扫描跳过的文件数（二进制 / 超大），显示在进度里，免得用户以为是"卡住了"。 */
+const scanSkipped = ref(0);
 
 /**
  * C（2026-10-06 用户要求）：**从左树点选目标文件夹**，不再手打路径。
@@ -318,6 +320,35 @@ function lineOf(item: SearchItem): number {
  * 现在：队列里只放"待展开的目录"（内存与目录数同量级），逐个文件交给 `SearchInFile`，
  * 因此**没有数量上限**；想停随时点「停止」（`keepGoing` 返回 false 即中断）。
  */
+/**
+ * 正文扫描**跳过**这些扩展名：图片/音频/动画是二进制，解码一次几十上百毫秒，
+ * 而"正文搜索"对它们毫无意义（用户实测慢的主因之一：`equipment/` 下大量 .img/.ani 白扫）。
+ */
+const SCAN_SKIP_EXT = new Set([
+  "img",
+  "npk",
+  "ani",
+  "als",
+  "atk",
+  "dds",
+  "png",
+  "jpg",
+  "jpeg",
+  "bmp",
+  "tga",
+  "gif",
+  "ogg",
+  "mp3",
+  "wav",
+  "wma",
+  "avi",
+  "wmv",
+]);
+/** 超过这个大小也不扫：解码大文件会长时间占用后端锁（列表文件动辄几十 MB）。 */
+const SCAN_MAX_BYTES = 2 * 1024 * 1024;
+/** 并发路数：每个文件是一次独立请求，互不依赖 ⇒ 近似线性提速。 */
+const SCAN_CONCURRENCY = 6;
+
 async function* walkScopeFiles(
   scope: string,
   keepGoing: () => boolean
@@ -367,6 +398,7 @@ async function runScopedContentScan(term: string): Promise<void> {
   const token = ++scanToken;
   scanStop.value = false;
   scanProgress.value = { done: 0, total: 0, active: true };
+  scanSkipped.value = 0;
   error.value = "";
   // 先探一下范围目录：路径不对/空目录时给明确提示，而不是让用户看到"扫完 0 个文件"
   try {
@@ -388,49 +420,70 @@ async function runScopedContentScan(term: string): Promise<void> {
     const lines = new Map<string, number>();
     const byFile = new Map<number, number[]>();
     let seq = 0;
-    for await (const file of walkScopeFiles(
-      scope,
-      () => token === scanToken && !scanStop.value
-    )) {
-      if (token !== scanToken || scanStop.value) break;
-      try {
-        const found = await SearchInFile(
-          file.fileIndex,
-          pattern.query,
-          false,
-          pattern.regex,
-          // 「精确匹配」对正文搜索 = **全词匹配**（正则里已含显式边界时空着即可，避免两种语义叠加）
-          exact.value && !pattern.regex,
-          50,
-          []
-        );
-        for (const match of found?.matches ?? []) {
-          seq += 1;
-          const key = `${file.fileIndex}#${match.line}#${seq}`;
-          lines.set(key, match.line);
-          const bucket = byFile.get(file.fileIndex);
-          if (bucket) bucket.push(match.line);
-          else byFile.set(file.fileIndex, [match.line]);
-          rows.push({
-            key,
-            label: (match.text ?? "").trim() || term,
-            path: file.path,
-            id: "",
-            name: file.name,
-            category: "正文",
-            fileIndex: file.fileIndex,
-            size: file.size,
-            dataType: file.dataType,
-          } as unknown as SearchItem);
+    // 【2026-10-06 用户反馈：太慢】原来严格"从头一个一个扫"，目标在后半段就得干等到底。
+    // 现在改两条：① 跳过二进制/超大文件（省掉最贵的解码）② 6 路并发（每文件独立请求）。
+    const iterator = walkScopeFiles(scope, () => token === scanToken && !scanStop.value);
+
+    const scanOne = async (file: {
+      fileIndex: number;
+      path: string;
+      name: string;
+      size: number;
+      dataType: number;
+    }): Promise<void> => {
+      const extension = (file.path.split(".").pop() ?? "").toLowerCase();
+      const skip = SCAN_SKIP_EXT.has(extension) || file.size > SCAN_MAX_BYTES;
+      if (skip) scanSkipped.value += 1;
+      if (!skip) {
+        try {
+          const found = await SearchInFile(
+            file.fileIndex,
+            pattern.query,
+            false,
+            pattern.regex,
+            // 「精确匹配」对正文搜索 = **全词匹配**（正则里已含显式边界时空着即可，避免两种语义叠加）
+            exact.value && !pattern.regex,
+            50,
+            []
+          );
+          for (const match of found?.matches ?? []) {
+            seq += 1;
+            const key = `${file.fileIndex}#${match.line}#${seq}`;
+            lines.set(key, match.line);
+            const bucket = byFile.get(file.fileIndex);
+            if (bucket) bucket.push(match.line);
+            else byFile.set(file.fileIndex, [match.line]);
+            rows.push({
+              key,
+              label: (match.text ?? "").trim() || term,
+              path: file.path,
+              id: "",
+              name: file.name,
+              category: "正文",
+              fileIndex: file.fileIndex,
+              size: file.size,
+              dataType: file.dataType,
+            } as unknown as SearchItem);
+          }
+        } catch {
+          // 单个文件失败（解不开/超大）不打断整轮：继续扫下一个
         }
-      } catch {
-        // 单个文件失败（解不开/超大）不打断整轮：继续扫下一个
       }
       const done = scanProgress.value.done + 1;
-      scanProgress.value = { done, total: scanProgress.value.done, active: true };
+      scanProgress.value = { done, total: 0, active: true };
       // 每 5 个文件刷一次列表：够"边扫边看"，又不会把大数组每文件重渲染一遍
       if (done % 5 === 0) hits.value = [...rows];
-    }
+    };
+
+    // 多个 worker 共享同一个枚举器：每个文件只会被其中一个 worker 取走
+    await Promise.all(
+      Array.from({ length: SCAN_CONCURRENCY }, async () => {
+        for await (const file of iterator) {
+          if (token !== scanToken || scanStop.value) return;
+          await scanOne(file);
+        }
+      })
+    );
 
     hits.value = rows;
     hitLines.value = lines;
@@ -761,7 +814,7 @@ function buildSearchIndex(): void {
               </div>
             </NPopover>
             <span v-if="scanProgress.active" class="as-meta">
-              已扫 {{ scanProgress.done }} 个文件…
+              已扫 {{ scanProgress.done }} 个文件（跳过 {{ scanSkipped }} 个非文本/超大）…
             </span>
             <NButton v-if="scanProgress.active" size="tiny" secondary @click="scanStop = true">停止</NButton>
           </template>
