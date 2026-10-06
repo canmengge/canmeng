@@ -161,15 +161,63 @@ const ruleLines = computed(() => {
 /** 面板顶部显示的行数 / 命中行数（模板里要显示，必须单独算出来）。 */
 const ruleLineCount = computed(() => ruleLines.value.length);
 
-/** 主表 = 行数最多的那一段（通常是主配置表，如「掉落配置行」）。 */
-const mainSection = computed<FormViewSection | null>(() => {
-  const sections = formView.projection?.sections ?? [];
+/**
+ * 段块标识：`段名小写#出现序号`（与已有关联段的键法一致）。
+ * 标记：pvfSectionBlocks_20261006
+ */
+function blockKey(section: FormViewSection): string {
+  return `${section.section.toLowerCase()}#${section.occurrence}`;
+}
+
+/**
+ * 投影里**所有段块**（按投影顺序），**含空块**。
+ *
+ * 为什么不把空块滤掉：投影对"段的每一次出现"都会产出一块（`project.go` 里逐次 append，
+ * 空段还会带"本段没有任何 token（空段）"告警），而**空页签正是以后要"添加物品"的目标**
+ * （商店 7 个页签里若有空的，用户得先能选中它）。列表里空块显示为"（0 行）"。
+ *
+ * 背景（用户 2026-10-06 实测报的 bug）：商店 `itemshop/*.shp` 有 7 个页签 = 7 处 `[item list]`，
+ * 界面却只显示第 2 页。原因：主表原来只会挑"行数最多的那一段"，而**其余段块在 2026-10-03
+ * 被明确从界面上去掉了**（`otherSections` 恒为空，见其注释）⇒ 除主块外的段块在界面上**无处可见**。
+ * 修法不是把"其它段"堆回来（那正是 2026-10-03 要去掉的噪声），而是让**主表本身可切块**：
+ * 默认仍是行数最多的那块（独立掉落观感零变化），上面多一个切换器切到其它块。
+ */
+const sectionBlocks = computed<FormViewSection[]>(
+  () => formView.projection?.sections ?? []
+);
+
+/** 默认主块 = 行数最多的那一段（沿用 2026-10-03 的口径）。 */
+const defaultBlockKey = computed(() => {
   let best: FormViewSection | null = null;
-  for (const section of sections) {
+  for (const section of sectionBlocks.value) {
     if (!best || section.rows.length > best.rows.length) best = section;
   }
-  return best;
+  return best ? blockKey(best) : "";
 });
+
+/** 用户手动选中的段块；空串 = 用默认（行数最多的那块）。 */
+const activeBlockKey = ref("");
+
+/** 主表 = 当前选中的段块（未选中时 = 行数最多的那块，即原行为）。 */
+const mainSection = computed<FormViewSection | null>(() => {
+  const key = activeBlockKey.value || defaultBlockKey.value;
+  if (key === "") return null;
+  return sectionBlocks.value.find((section) => blockKey(section) === key) ?? null;
+});
+
+/** 段块切换器选项（标题带行数，便于认哪一块是"有货的那页"）。 */
+const blockOptions = computed(() =>
+  sectionBlocks.value.map((section) => ({
+    label: `${sectionTitle(section)}（${section.rows.length} 行）`,
+    value: blockKey(section),
+  }))
+);
+
+/** 切块：回到第 1 页（搜索与草稿都按"段块 + 行 + 列"定位，切块后不共用）。 */
+function onBlockSelect(value: string): void {
+  activeBlockKey.value = value;
+  page.value = 1;
+}
 
 /**
  * 被「行 → 关联」认领过的段：已在主表里可双击查看，不再重复堆到「其它段」。
@@ -448,6 +496,8 @@ watch(
   () => formView.projection,
   () => {
     page.value = 1;
+    // 换文件族 / 重新解析 / 保存回传 ⇒ 段块可能整套变了，回到"默认主块"（行数最多的那块）。
+    activeBlockKey.value = "";
     // 每次重新解析都回到"按内容自适应"：避免上一次拖出来的宽度把撑开的空白冻住
     // （2026-10-03 事故：中间那一片空白一直消不掉）。
     columnWidths.value = {};
@@ -1730,6 +1780,17 @@ function resetColumnWidths(): void {
             <div class="fv-fixed">
             <div class="fv-section-head">
               <span class="fv-section-title">{{ sectionTitle(mainSection) }}</span>
+              <!-- 段块切换（2026-10-06）：同一段在本文件里出现多块时（如商店 7 个页签 = 7 处
+                   [item list]），默认仍显示"行数最多的那块"（独立掉落观感不变），这里可切到其它块。 -->
+              <NSelect
+                v-if="sectionBlocks.length > 1"
+                size="tiny"
+                style="width: 200px; flex: none; margin-left: 8px"
+                :value="mainSection ? blockKey(mainSection) : ''"
+                :options="blockOptions"
+                title="这个文件里同名的段出现了多块（如商店的 7 个页签），在这里切换"
+                @update:value="onBlockSelect"
+              />
               <span class="fv-section-meta">
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列 ·
                 单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 ·
