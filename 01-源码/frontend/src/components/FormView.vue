@@ -779,7 +779,9 @@ const viewerAdding = ref(false);
  */
 type PendingInsert =
   | { kind: "candidate"; section: string; occurrence: number; item: FormViewDropItem }
-  | { kind: "drop"; entry: FormViewDropEntry };
+  | { kind: "drop"; entry: FormViewDropEntry }
+  // 通用段行（非独立掉落文件族，如商店物品列表）：按规则列数往某个段块末尾追加一行。
+  | { kind: "row"; section: string; occurrence: number; values: string[] };
 
 const pendingInserts = ref<PendingInsert[]>([]);
 const pendingInsertCount = computed(() => pendingInserts.value.length);
@@ -791,6 +793,19 @@ const pendingInsertCount = computed(() => pendingInserts.value.length);
  */
 const pendingDeletes = ref<number[]>([]);
 const pendingDeleteCount = computed(() => pendingDeletes.value.length);
+
+/**
+ * 排队中的「通用段行删除」（只给非独立掉落文件族，如商店物品列表的某一行）。
+ *
+ * 为什么与上面的 `pendingDeletes` 分开：那个存的是"独立掉落主表的行号"，后端删除时会
+ * **连带删掉该行自己带的 `[list]` 块**（那是独立掉落的专属语义）；这里只是"删掉这个段块里的这一行"。
+ * 两条队列互不影响（用户 2026-10-06 要求模块独立），但**交互模型与独立掉落完全一致**：
+ * 先排队 → 点「保存改动」才写进归档内存。
+ * 标记：pvfRowEditQueue_20261006
+ */
+type PendingRowDelete = { section: string; occurrence: number; row: number };
+const pendingRowDeletes = ref<PendingRowDelete[]>([]);
+const pendingRowDeleteCount = computed(() => pendingRowDeletes.value.length);
 
 /**
  * 选中的行（可多选；用户 2026-10-03 要求与系统资源管理器同一套操作）：
@@ -812,8 +827,6 @@ const selectedRows = ref<Set<number>>(new Set());
 // 一套 UI / 功能的改动不能影响别的可视化模块。
 // 标记：pvfRowEditModule_20261006
 const rowEditValue = ref("");
-const rowEditBusy = ref(false);
-const rowEditError = ref("");
 
 /** 当前文件族是不是独立掉落（独立掉落走它自己那套 UI 与后端方法）。 */
 const isIndependentDrop = computed(
@@ -825,20 +838,33 @@ function rowEditItemName(id: string): string {
   return dropItemName(id);
 }
 
-/**
- * 行编辑后整份重投影。
- *
- * 段块**刻意不复位**：删掉一行后重新投影，用户应留在同一页签 —— 页签键是"段名#出现序号"，
- * 删行不改这个键；万一那一块真的没了，投影 watcher 会兜底回到默认主块。
- */
-async function refreshAfterRowEdit(note: string): Promise<void> {
-  await formView.project();
-  selectedRows.value = new Set();
-  message.success(`${note}（已写进归档内存，点主工具条「保存 PVF」才落盘）`);
+/** 当前段块里排队待新增的行（表里显示成"待保存追加"，与独立掉落的"加一条候选"同一套模型）。 */
+const pendingRowInserts = computed<Extract<PendingInsert, { kind: "row" }>[]>(() => {
+  const section = mainSection.value;
+  if (!section) return [];
+  const key = blockKey(section);
+  return pendingInserts.value.filter(
+    (item): item is Extract<PendingInsert, { kind: "row" }> =>
+      item.kind === "row" && `${item.section.toLowerCase()}#${item.occurrence}` === key
+  );
+});
+
+/** 某一行是否在"待删除"队列里（限当前段块）。 */
+function isPendingRowDelete(rowIndex: number): boolean {
+  const section = mainSection.value;
+  if (!section) return false;
+  const key = blockKey(section);
+  return pendingRowDeletes.value.some(
+    (item) => item.row === rowIndex && `${item.section.toLowerCase()}#${item.occurrence}` === key
+  );
 }
 
-/** 往**当前段块**（当前页）末尾追加一行。只对有 1 列的段开放（如商店物品列表）。 */
-async function insertRowNow(): Promise<void> {
+/**
+ * 把「添加物品」加入**待保存**队列（不碰归档）。
+ *
+ * 用户 2026-10-06 要求：与独立掉落**同一套规则** —— 先排队，点「保存改动」才真正写进归档内存。
+ */
+function queueRowInsert(): void {
   const section = mainSection.value;
   if (!section) return;
   const value = rowEditValue.value.trim();
@@ -846,51 +872,40 @@ async function insertRowNow(): Promise<void> {
     message.warning("先填物品编号");
     return;
   }
-  if (fileOpenInEditor()) {
-    message.warning(
-      "该文件正在编辑区打开：请先关掉那个标签页，再加（避免两处同时改同一份文本）"
-    );
-    return;
-  }
-  rowEditBusy.value = true;
-  rowEditError.value = "";
-  try {
-    await InsertSectionRow(formView.filePath.trim(), section.section, section.occurrence, [value]);
-    rowEditValue.value = "";
-    await refreshAfterRowEdit("已追加到该段块末尾");
-  } catch (issue: any) {
-    rowEditError.value = String(issue?.message ?? issue);
-  } finally {
-    rowEditBusy.value = false;
-  }
+  pendingInserts.value = [
+    ...pendingInserts.value,
+    { kind: "row", section: section.section, occurrence: section.occurrence, values: [value] },
+  ];
+  rowEditValue.value = "";
+  message.success(`已加入待保存：追加 ${value}（当前页末尾，点「保存改动」才写进归档内存）`);
 }
 
-/** 删除**当前段块**里选中的行（后端从后往前删，删完重新投影校验行数）。 */
-async function deleteRowsNow(): Promise<void> {
+/** 把选中的行加入**待删除**队列（不碰归档）。 */
+function queueRowDelete(): void {
   const section = mainSection.value;
-  if (!section || selectedRows.value.size === 0) return;
-  if (fileOpenInEditor()) {
-    message.warning(
-      "该文件正在编辑区打开：请先关掉那个标签页，再删（避免两处同时改同一份文本）"
-    );
+  if (!section) return;
+  const targets = [...selectedRows.value];
+  if (targets.length === 0) {
+    message.warning("先选中要删的行：单击一行 · Ctrl+左键多选 · Shift+左键连选一片");
     return;
   }
-  const indexes = [...selectedRows.value].sort((left, right) => left - right);
-  rowEditBusy.value = true;
-  rowEditError.value = "";
-  try {
-    await DeleteSectionRows(
-      formView.filePath.trim(),
-      section.section,
-      section.occurrence,
-      indexes
-    );
-    await refreshAfterRowEdit(`已删除 ${indexes.length} 行`);
-  } catch (issue: any) {
-    rowEditError.value = String(issue?.message ?? issue);
-  } finally {
-    rowEditBusy.value = false;
+  const key = blockKey(section);
+  const existing = new Set(
+    pendingRowDeletes.value
+      .filter((item) => `${item.section.toLowerCase()}#${item.occurrence}` === key)
+      .map((item) => item.row)
+  );
+  const fresh = targets.filter((row) => !existing.has(row));
+  if (fresh.length === 0) {
+    message.info("选中的行都已经在待删除列表里了");
+    return;
   }
+  pendingRowDeletes.value = [
+    ...pendingRowDeletes.value,
+    ...fresh.map((row) => ({ section: section.section, occurrence: section.occurrence, row })),
+  ];
+  clearSelection();
+  message.success(`已把 ${fresh.length} 行加入待删除（点上方「保存改动」才真正删除）`);
 }
 /** 连选的锚点：上一次不带 Shift 点击的那一行。 */
 const selectAnchor = ref<number | null>(null);
@@ -1465,6 +1480,7 @@ function discardDrafts(): void {
     pendingEdits.value.size === 0 &&
     pendingInserts.value.length === 0 &&
     pendingDeletes.value.length === 0 &&
+    pendingRowDeletes.value.length === 0 &&
     pendingCandidateDeletes.value.length === 0
   ) {
     return;
@@ -1472,6 +1488,7 @@ function discardDrafts(): void {
   pendingEdits.value = new Map();
   pendingInserts.value = [];
   pendingDeletes.value = [];
+  pendingRowDeletes.value = [];
   pendingCandidateDeletes.value = [];
   clearSelection();
   clearViewerSelection();
@@ -1484,11 +1501,13 @@ async function saveDrafts(): Promise<void> {
   const drafts = [...pendingEdits.value.values()];
   const queued = [...pendingInserts.value];
   const deletes = [...pendingDeletes.value];
+  const rowDeletes = [...pendingRowDeletes.value];
   const candidateDeletes = [...pendingCandidateDeletes.value];
   if (
     drafts.length === 0 &&
     queued.length === 0 &&
     deletes.length === 0 &&
+    rowDeletes.length === 0 &&
     candidateDeletes.length === 0
   ) {
     return;
@@ -1527,6 +1546,14 @@ async function saveDrafts(): Promise<void> {
     for (const item of queued) {
       if (item.kind === "drop") {
         await AddIndependentDrop(formView.filePath.trim(), item.entry);
+      } else if (item.kind === "row") {
+        // 通用段行（非独立掉落文件族）：按规则列数追加到该段块末尾。
+        await InsertSectionRow(
+          formView.filePath.trim(),
+          item.section,
+          item.occurrence,
+          item.values
+        );
       } else {
         await AddDropCandidate(
           formView.filePath.trim(),
@@ -1544,6 +1571,33 @@ async function saveDrafts(): Promise<void> {
       await DeleteIndependentDrop(formView.filePath.trim(), rowIndex);
     }
     pendingDeletes.value = [];
+    //    ③-c 通用段行删除（非独立掉落文件族，如商店物品列表）：按（段, 出现序号）分组，
+    //        每组一次调用（后端组内从后往前删），删完它会重新投影校验行数。
+    if (rowDeletes.length > 0) {
+      const groupedRows = new Map<
+        string,
+        { section: string; occurrence: number; rows: number[] }
+      >();
+      for (const item of rowDeletes) {
+        const key = `${item.section.toLowerCase()}#${item.occurrence}`;
+        const bucket = groupedRows.get(key) ?? {
+          section: item.section,
+          occurrence: item.occurrence,
+          rows: [],
+        };
+        bucket.rows.push(item.row);
+        groupedRows.set(key, bucket);
+      }
+      for (const bucket of groupedRows.values()) {
+        await DeleteSectionRows(
+          formView.filePath.trim(),
+          bucket.section,
+          bucket.occurrence,
+          [...bucket.rows].sort((left, right) => left - right)
+        );
+      }
+      pendingRowDeletes.value = [];
+    }
     //    ③-b 查看器里排队的**候选**删除：按（段, 出现序号）分组，组内同样从大到小
     if (candidateDeletes.length > 0) {
       const grouped = new Map<
@@ -1581,6 +1635,7 @@ async function saveDrafts(): Promise<void> {
     if (drafts.length > 0) parts.push(`${drafts.length} 格`);
     if (queued.length > 0) parts.push(`新增 ${queued.length} 条`);
     if (deletes.length > 0) parts.push(`删除 ${deletes.length} 条`);
+    if (rowDeletes.length > 0) parts.push(`删除 ${rowDeletes.length} 行`);
     if (candidateDeletes.length > 0) parts.push(`删除候选 ${candidateDeletes.length} 条`);
     message.success(`已保存 ${parts.join(" + ")} 到归档内存（点主工具条「保存 PVF」才落盘）`);
     // ⚠️ 红线（用户 2026-10-03 明确强调）：**写 PVF 文件只能由用户手动点主工具条
@@ -1973,8 +2028,8 @@ function resetColumnWidths(): void {
               </template>
 
               <!-- 通用段行编辑（非独立掉落文件族）：作用于**当前选中的段块**（如商店的某一页签）。
-                   与上面那套**完全分开**：这里点一下立即写归档内存，且不连带删 `[list]` 块。
-                   标记：pvfRowEditModule_20261006 -->
+                   交互模型与独立掉落**完全一致**（用户 2026-10-06 要求）：先排队（表格里看得到），
+                   点「保存改动」才写进归档内存；后端方法各用各的（标记 pvfRowEditQueue_20261006）。 -->
               <template v-else>
                 <template v-if="mainSection.columns.length === 1">
                   <span class="fv-label">物品</span>
@@ -1983,7 +2038,7 @@ function resetColumnWidths(): void {
                     size="small"
                     style="width: 140px"
                     placeholder="物品编号，如 14400"
-                    @keyup.enter="insertRowNow"
+                    @keyup.enter="queueRowInsert"
                   />
                   <span v-if="rowEditItemName(rowEditValue)" class="fv-drop-name">
                     {{ rowEditItemName(rowEditValue) }}
@@ -1991,10 +2046,9 @@ function resetColumnWidths(): void {
                   <NButton
                     size="tiny"
                     type="primary"
-                    :loading="rowEditBusy"
                     :disabled="rowEditValue.trim() === ''"
-                    title="追加到当前段块（当前页）的末尾；只写归档内存，点主工具条「保存 PVF」才落盘"
-                    @click="insertRowNow"
+                    title="加入待保存：追加到当前段块（当前页）末尾。点上方「保存改动」才写进归档内存"
+                    @click="queueRowInsert"
                   >
                     添加物品
                   </NButton>
@@ -2003,28 +2057,30 @@ function resetColumnWidths(): void {
                   size="tiny"
                   type="error"
                   ghost
-                  :loading="rowEditBusy"
                   :disabled="selectedRows.size === 0"
-                  title="删除当前段块里选中的行；只写归档内存，点主工具条「保存 PVF」才落盘"
-                  @click="deleteRowsNow"
+                  title="把选中的行加入待删除。点上方「保存改动」才真正删除"
+                  @click="queueRowDelete"
                 >
                   删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
                 </NButton>
-                <span v-if="rowEditError" class="fv-error">{{ rowEditError }}</span>
               </template>
               <span class="fv-tools-gap" />
               <span
-                v-if="pendingCount + pendingInsertCount + pendingDeleteCount > 0"
+                v-if="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingRowDeleteCount > 0"
                 class="fv-tools-dirty"
               >
                 未保存 {{ pendingCount }} 格{{
                   pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
-                }}{{ pendingDeleteCount > 0 ? ` + 删除 ${pendingDeleteCount} 条` : "" }}
+                }}{{
+                  pendingDeleteCount + pendingRowDeleteCount > 0
+                    ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount} 行`
+                    : ""
+                }}
               </span>
               <NButton
                 size="tiny"
                 quaternary
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount === 0"
                 @click="discardDrafts"
               >
                 放弃改动
@@ -2032,7 +2088,7 @@ function resetColumnWidths(): void {
               <NButton
                 size="tiny"
                 type="primary"
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount === 0"
+                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount === 0"
                 :loading="saving"
                 title="写进归档内存（等于保存这个掉落文本；写 PVF 文件仍由主工具条「保存 PVF」负责）"
                 @click="saveDrafts"
@@ -2139,7 +2195,8 @@ function resetColumnWidths(): void {
                   :class="{
                     'fv-row-incomplete': !row.complete,
                     'fv-row-selected': selectedRows.has(row.index),
-                    'fv-row-deleting': pendingDeletes.includes(row.index),
+                    'fv-row-deleting':
+                      pendingDeletes.includes(row.index) || isPendingRowDelete(row.index),
                   }"
                   @click="onRowClick(row, $event)"
                 >
@@ -2219,6 +2276,13 @@ function resetColumnWidths(): void {
             </div>
             <!-- /.fv-grid-scroll -->
           </template>
+
+          <!-- 通用段行的"待保存追加"（队列里看得见，与独立掉落的"加一条候选"同一套模型） -->
+          <div v-if="!isIndependentDrop && pendingRowInserts.length > 0" class="fv-rowedit-pending">
+            待保存追加 {{ pendingRowInserts.length }} 项：{{
+              pendingRowInserts.map((item) => item.values.join(" / ")).join("、")
+            }}（点上方「保存改动」才写进归档内存）
+          </div>
 
           <div v-if="otherSections.length" class="fv-others">
             <div class="fv-section-head">
