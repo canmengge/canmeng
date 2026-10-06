@@ -199,6 +199,22 @@ function onConsoleResizeEnd(): void {
   consoleResizeEnd = null;
 }
 
+/**
+ * A7（补齐）：把脚本诊断喂进编辑器的**行内错误标记** —— 与「清单查重」共用同一套机制
+ * （`CodeEditor` 的 `problems` prop ⇒ 行底红 + 行号旁红点 + 悬浮出原因）。
+ * 双击/点诊断条目跳转的既有行为不变；这里只是让错误"长到行上"。
+ * 标记：pvfScriptProblemsA7_20261006
+ */
+const scriptProblems = computed(() =>
+  script.diagnostics
+    // 先归一化再过滤：`line` 在 Go 侧是可选的，直接 filter 收不窄类型（TS18048）。
+    .map((item) => ({
+      line: Number.isFinite(item.line) ? Number(item.line) : 0,
+      message: item.message || item.kind || "脚本诊断",
+    }))
+    .filter((item) => item.line >= 1)
+);
+
 function focusDiagnostic(diagnostic: ScriptDiagnostic): void {
   if (!diagnostic.line || diagnostic.line < 1) return;
   consoleTab.value = "diagnostics";
@@ -499,6 +515,7 @@ onBeforeUnmount(() => {
               language="javascript"
               :theme-id="themeId"
               :vim-mode="settings.vimMode"
+              :problems="scriptProblems"
               @change="script.updateSource"
             />
           </div>
