@@ -4014,16 +4014,6 @@ function resetColumnWidths(): void {
 .fv-head-actions .fv-tools-dirty {
   font-size: 13px;
 }
-.fv-format-locked {
-  display: inline-block;
-  padding: 2px 10px;
-  border: 1px solid var(--pvf-border-faint);
-  border-radius: 4px;
-  background: var(--pvf-surface-subtle);
-  color: var(--pvf-text-secondary, inherit);
-  font-size: 13px;
-  line-height: 20px;
-}
 /* 商店文件下拉行 */
 .fv-filepick {
   display: flex;
