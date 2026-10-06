@@ -60,6 +60,10 @@ func (s *FormViewWindowService) OpenFormViewWindow(session FormViewSession) erro
 	s.storeSession(session)
 	if window, ok := s.host.findWindow(FormViewWindowName); ok {
 		window.Focus()
+		// 2026-10-06 修「壳和数据混搭」：窗口的 initFromSession **只在启动时跑一次**，
+		// 复用窗口时之前只 Focus，新板块参数进不去 ⇒ 出现「独立掉落的壳 + 商店的表」
+		//（用户多次实测）。这里把新 session 推给窗口，由窗口前端完整重初始化。
+		emitEvent("form-view:session-changed", session)
 		return nil
 	}
 

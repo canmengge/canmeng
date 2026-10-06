@@ -77,7 +77,12 @@ export const useFormViewStore = defineStore("formView", () => {
     }
   );
 
+  // 初始化（initFromSession）进行中为 true：此时 formatId/filePath 由 session 统一给定，
+  // watch(formatId) 不得再改 filePath（否则族和文件会被撕开，表格与路径框对不上）。
+  let initializing = false;
+
   watch(formatId, (next) => {
+    if (initializing) return;
     const format = formats.value.find((entry) => entry.id === next);
     if (format && format.files.length > 0) {
       filePath.value = format.files[0];
@@ -152,15 +157,20 @@ export const useFormViewStore = defineStore("formView", () => {
   /** 独立窗口启动时：用主窗口暂存的参数初始化，并立即投影一次。 */
   async function initFromSession(session: FormViewSession | null): Promise<void> {
     detached.value = true;
-    await loadFormats();
-    if (session) {
-      if (session.formatId) formatId.value = session.formatId;
-      if (session.filePath) filePath.value = session.filePath;
-    }
-    if (filePath.value.trim() !== "") {
-      // 先清掉上一轮的投影：初始化是异步的，不 cleared 的话用户会先看到旧板块的表闪一下。
-      projection.value = null;
-      await project();
+    initializing = true;
+    try {
+      await loadFormats();
+      if (session) {
+        if (session.formatId) formatId.value = session.formatId;
+        if (session.filePath) filePath.value = session.filePath;
+      }
+      if (filePath.value.trim() !== "") {
+        // 先清掉上一轮的投影：初始化是异步的，不 cleared 的话用户会先看到旧板块的表闪一下。
+        projection.value = null;
+        await project();
+      }
+    } finally {
+      initializing = false;
     }
   }
 

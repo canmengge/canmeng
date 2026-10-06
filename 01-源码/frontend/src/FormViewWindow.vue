@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { Events } from "@wailsio/runtime";
 import {
   dateZhCN,
   NConfigProvider,
@@ -65,6 +66,17 @@ onMounted(() => {
       bootError.value = String(issue?.message ?? issue);
     }
   })();
+  // 复用窗口时，主窗口的「可视化编辑区」菜单会推新 session（后端 OpenFormViewWindow
+  // 的复用分支 emit；窗口的 initFromSession 只在启动时跑一次，不监听的话新板块参数
+  // 进不来 ⇒「独立掉落的壳 + 商店的表」混搭，用户 2026-10-06 多次实测）。
+  // 收到就完整重初始化：清投影 → 换族/文件 → 重新投影。
+  Events.On("form-view:session-changed", (evt: { data?: unknown }) => {
+    const session = evt?.data as Parameters<typeof formView.initFromSession>[0] | undefined;
+    if (!session) return;
+    void formView.initFromSession(session).catch((issue: unknown) => {
+      bootError.value = String(issue);
+    });
+  });
   systemThemeQuery.addEventListener("change", onSystemThemeChange);
 });
 
