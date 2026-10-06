@@ -60,6 +60,8 @@ import {
   DeleteShopTab,
   InsertSectionRow,
 } from "../services/formViewApi";
+// 商店文件下拉：列 itemshop/ 目录用（与左侧文件树同一套接口，标签里带 NPC 名字注释）。
+import { ArchiveService } from "../../bindings/pvfine/services";
 
 const formView = useFormViewStore();
 const editor = useEditorStore();
@@ -213,19 +215,7 @@ const mainSection = computed<FormViewSection | null>(() => {
   return sectionBlocks.value.find((section) => blockKey(section) === key) ?? null;
 });
 
-/** 段块切换器选项（标题带行数，便于认哪一块是"有货的那页"）。 */
-const blockOptions = computed(() =>
-  sectionBlocks.value.map((section) => ({
-    label: `${sectionTitle(section)}（${section.rows.length} 行）`,
-    value: blockKey(section),
-  }))
-);
 
-/** 切块：回到第 1 页（搜索与草稿都按"段块 + 行 + 列"定位，切块后不共用）。 */
-function onBlockSelect(value: string): void {
-  activeBlockKey.value = value;
-  page.value = 1;
-}
 
 /**
  * 被「行 → 关联」认领过的段：已在主表里可双击查看，不再重复堆到「其它段」。
@@ -914,7 +904,8 @@ const slotEntries = computed(() =>
 );
 
 /** 每页 6 个槽（固定 6 个位置：不够就空置，超过就翻页，第 7 个回到第 1 槽）。 */
-const slotsPerPage = 6;
+// 用户 2026-10-06：条目槽从 6 个改为 8 个（固定 8 个位置，超过翻页）。
+const slotsPerPage = 8;
 const tabPage = ref(0);
 const slotPageCount = computed(() =>
   Math.max(1, Math.ceil(slotEntries.value.length / slotsPerPage))
@@ -954,6 +945,40 @@ function prevSlotPage(): void {
 }
 function nextSlotPage(): void {
   tabPage.value = (tabPage.value + 1) % slotPageCount.value;
+}
+
+// ---- 商店文件下拉（用户 2026-10-06）：路径不用手敲，从 itemshop/ 里选，选项带 NPC 名字 ----
+const shopFileOptions = ref<{ label: string; value: string }[]>([]);
+const shopFilesLoading = ref(false);
+
+/** 拉 itemshop/ 目录：label = 文件名 + 左树同源的翻译标签（NPC 名字就在这里）。 */
+async function loadShopFiles(): Promise<void> {
+  if (shopFilesLoading.value) return;
+  shopFilesLoading.value = true;
+  try {
+    const all = (await ArchiveService.ListChildren("itemshop")) ?? [];
+    const nodes = all.filter((node): node is NonNullable<typeof node> => !!node);
+    shopFileOptions.value = nodes
+      .filter((node) => /\.shp$/i.test(node.path))
+      .map((node) => {
+        const titles = (node.annotations ?? [])
+          .map((item) => (item?.title ?? "").trim())
+          .filter((title) => title !== "");
+        const name = node.path.split("/").filter(Boolean).pop() ?? node.path;
+        return { value: node.path, label: titles.length > 0 ? `${name}　${titles.join(" ")}` : name };
+      });
+  } catch {
+    // 归档还没打开 / 目录不存在：下拉保持为空，不弹错（用户开档后再进本窗口会重新拉）。
+  } finally {
+    shopFilesLoading.value = false;
+  }
+}
+
+/** 选中商店文件 → 直接重新解析（与手敲路径按回车同一效果）。 */
+function onPickShopFile(path: string): void {
+  if (path === "" || path === formView.filePath) return;
+  formView.filePath = path;
+  void formView.project();
 }
 
 /** 排队中的「删除整个条目」。 */
@@ -2118,24 +2143,45 @@ function resetColumnWidths(): void {
             <!-- 固定操作区（不滚动）：段标题 + 搜索行 + 操作按钮；滚动只发生在它下方的
                  .fv-grid-scroll 里（用户 2026-10-03："滑动浏览要在固定 UI 界面下面"） -->
             <div class="fv-fixed">
+            <!-- 商店文件下拉（只有商店文件族显示）：选项带 NPC 名字注释 -->
+            <div v-if="isShopLike" class="fv-filepick">
+              <span class="fv-label">商店文件</span>
+              <NSelect
+                size="small"
+                style="width: 380px; max-width: 46vw"
+                filterable
+                :value="formView.filePath"
+                :options="shopFileOptions"
+                :loading="shopFilesLoading"
+                placeholder="从 itemshop/ 里选一个商店文件"
+                @update:value="onPickShopFile"
+              />
+            </div>
             <div class="fv-section-head">
               <span class="fv-section-title">{{ currentBlockTitle }}</span>
-              <!-- 段块切换（2026-10-06）：同一段在本文件里出现多块时（如商店 7 个页签 = 7 处
-                   [item list]），默认仍显示"行数最多的那块"（独立掉落观感不变），这里可切到其它块。 -->
-              <NSelect
-                v-if="sectionBlocks.length > 1"
-                size="tiny"
-                style="width: 200px; flex: none; margin-left: 8px"
-                :value="mainSection ? blockKey(mainSection) : ''"
-                :options="blockOptions"
-                title="这个文件里同名的段出现了多块（如商店的 7 个页签），在这里切换"
-                @update:value="onBlockSelect"
-              />
+
               <span
                 class="fv-section-meta"
                 title="单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 · 带 🔗 的格双击查看关联列表"
               >
                 {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列
+              </span>
+              <!-- 未保存计数与「放弃改动 / 保存改动」上移到标题行（用户 2026-10-06），字号加大 -->
+              <span class="fv-head-actions">
+                <span
+                  v-if="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0"
+                  class="fv-tools-dirty"
+                >
+                  未保存 {{ pendingCount }} 格{{
+                    pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
+                  }}{{
+                    pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0
+                      ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount} 项`
+                      : ""
+                  }}
+                </span>
+                <NButton size="small" quaternary @click="discardDrafts">放弃改动</NButton>
+                <NButton size="small" type="primary" @click="saveDrafts">保存改动</NButton>
               </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
@@ -2272,6 +2318,7 @@ function resetColumnWidths(): void {
               <template v-else>
                 <!-- 2026-10-06 精简：原来两个输入框 + 两个按钮常驻，工具条太挤。
                      改成"按钮先点开、输入框才出现"，一次只展开一组（功能一个不少）。 -->
+                <span class="fv-tools-sep" />
                 <NButton
                   v-if="canAddItem"
                   size="tiny"
@@ -2303,6 +2350,7 @@ function resetColumnWidths(): void {
                     加入待保存
                   </NButton>
                 </template>
+                <span class="fv-tools-sep" />
                 <NButton
                   v-if="isShopLike"
                   size="tiny"
@@ -2341,6 +2389,7 @@ function resetColumnWidths(): void {
                     加入待保存
                   </NButton>
                 </template>
+                <span class="fv-tools-sep" />
                 <NButton
                   v-if="currentSlot"
                   size="tiny"
@@ -2362,37 +2411,7 @@ function resetColumnWidths(): void {
                   删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
                 </NButton>
               </template>
-              <span class="fv-tools-gap" />
-              <span
-                v-if="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingRowDeleteCount > 0"
-                class="fv-tools-dirty"
-              >
-                未保存 {{ pendingCount }} 格{{
-                  pendingInsertCount > 0 ? ` + 新增 ${pendingInsertCount} 条` : ""
-                }}{{
-                  pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount > 0
-                    ? ` + 删除 ${pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount} 项`
-                    : ""
-                }}
-              </span>
-              <NButton
-                size="tiny"
-                quaternary
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount === 0"
-                @click="discardDrafts"
-              >
-                放弃改动
-              </NButton>
-              <NButton
-                size="tiny"
-                type="primary"
-                :disabled="pendingCount + pendingInsertCount + pendingDeleteCount + pendingRowDeleteCount + pendingTabDeleteCount === 0"
-                :loading="saving"
-                title="写进归档内存（等于保存这个掉落文本；写 PVF 文件仍由主工具条「保存 PVF」负责）"
-                @click="saveDrafts"
-              >
-                保存改动
-              </NButton>
+
               <!-- 「批量改」按钮已按用户 2026-10-03 要求撤下（"现在那个有问题不好用，后续我再改"）：
                    面板与脚本都留着（batchVisible 控制，不会显示），下次接回来只加回这一颗按钮即可。 -->
             </div>
@@ -3852,5 +3871,32 @@ function resetColumnWidths(): void {
 }
 .fv-slot--empty:hover {
   border-color: var(--pvf-border-subtle, rgba(128, 128, 128, 0.2));
+}
+/* 工具条按功能分组：分隔符占满一行 ⇒ 搜索 / 添加物品 / 新建条目 / 删除类 各占一行，不重叠 */
+.fv-tools {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.fv-tools-sep {
+  flex-basis: 100%;
+  height: 0;
+}
+/* 标题行右侧：未保存计数 + 放弃/保存（字号已用 small 按钮） */
+.fv-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.fv-head-actions .fv-tools-dirty {
+  font-size: 13px;
+}
+/* 商店文件下拉行 */
+.fv-filepick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
 }
 </style>
