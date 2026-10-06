@@ -13,6 +13,7 @@ import {
   type FormViewSection,
 } from "../services/formViewApi";
 import {
+  CloseFormViewWindow,
   IsFormViewWindowOpen,
   OpenFormViewWindow,
   type FormViewSession,
@@ -156,7 +157,11 @@ export const useFormViewStore = defineStore("formView", () => {
       if (session.formatId) formatId.value = session.formatId;
       if (session.filePath) filePath.value = session.filePath;
     }
-    if (filePath.value.trim() !== "") await project();
+    if (filePath.value.trim() !== "") {
+      // 先清掉上一轮的投影：初始化是异步的，不 cleared 的话用户会先看到旧板块的表闪一下。
+      projection.value = null;
+      await project();
+    }
   }
 
   /**
@@ -167,6 +172,18 @@ export const useFormViewStore = defineStore("formView", () => {
    * 兜底一个文件，避免开出一个空窗口。
    */
   async function openInWindow(preferredFormatId = ""): Promise<void> {
+    // 2026-10-06 修「壳和数据混搭」（用户实测截图：点「独立掉落编辑」出来的是商店的表、
+    // 点「商店物品编辑」出来的是独立掉落的表）：窗口**已经开着**时会被复用 —— 标题/文件族
+    // 更新了、但投影不重跑 ⇒ 两个板块的壳和数据互相串。红线是商店与独立掉落完全独立，
+    // 所以已开着就先关掉，重开一个全新窗口走完整初始化（initFromSession 会重新投影）。
+    if (windowOpen.value) {
+      try {
+        await CloseFormViewWindow();
+      } catch {
+        // 关不掉也不挡流程：OpenFormViewWindow 自己会处理已存在的情况。
+      }
+      windowOpen.value = false;
+    }
     await loadFormats();
     const target = preferredFormatId || formatId.value || formats.value[0]?.id || "";
     if (target !== "") formatId.value = target;
