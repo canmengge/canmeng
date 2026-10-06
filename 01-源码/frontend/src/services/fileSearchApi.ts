@@ -70,3 +70,49 @@ export function SearchInFile(
     segments
   );
 }
+
+/** 对应 Go `services.ContentScanHit`：范围内的一处正文命中（带行号）。 */
+export interface ContentScanHit {
+  fileIndex: number;
+  path: string;
+  line: number;
+  text: string;
+}
+
+/** 对应 Go `services.ContentScanResult`：**一批**扫描结果（分页）。 */
+export interface ContentScanBatch {
+  hits: ContentScanHit[];
+  nextCursor: number;
+  scanned: number;
+  skipped: number;
+  done: boolean;
+}
+
+/**
+ * 服务端**分批**扫正文：一次请求处理一批（枚举与「跳过二进制/超大文件」都在服务端做）。
+ * fqn = `pvfine/services.ArchiveService.ScanContentInScope`
+ *
+ * 【2026-10-06 用户选择方案 2】原来前端逐文件调 `SearchInFile`：几千个文件 = 几千次 IPC +
+ * 几千次解码等待（实测"太慢、目标在后面要等很久"）。改批量后请求数降两个数量级。
+ * 走 `Call.ByName` 与本目录其它适配层一致，不碰 `bindings/`。
+ */
+export function ScanContentInScope(
+  scopePath: string,
+  query: string,
+  caseSensitive: boolean,
+  regex: boolean,
+  wholeWord: boolean,
+  cursor: number,
+  limit: number
+): $CancellablePromise<ContentScanBatch | null> {
+  return $Call.ByName(
+    "pvfine/services.ArchiveService.ScanContentInScope",
+    scopePath,
+    query,
+    caseSensitive,
+    regex,
+    wholeWord,
+    cursor,
+    limit
+  );
+}

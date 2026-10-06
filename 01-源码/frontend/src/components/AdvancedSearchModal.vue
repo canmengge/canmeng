@@ -25,7 +25,11 @@ import { useExplorerStore, type SearchItem } from "../stores/explorer";
 import { useSearchWindowStore } from "../stores/searchWindow";
 import { useSidebarStore } from "../stores/sidebar";
 import { clearSearchHitLines, publishSearchHitLines } from "../searchMarks";
-import { SearchInFile, queryToSearchPattern } from "../services/fileSearchApi";
+import {
+  ScanContentInScope,
+  SearchInFile,
+  queryToSearchPattern,
+} from "../services/fileSearchApi";
 
 /**
  * 「高级搜索」对话框：左侧文件树搜索引擎的图形化版本（原内容/字符串池搜索已停用）。
@@ -420,70 +424,48 @@ async function runScopedContentScan(term: string): Promise<void> {
     const lines = new Map<string, number>();
     const byFile = new Map<number, number[]>();
     let seq = 0;
-    // 【2026-10-06 用户反馈：太慢】原来严格"从头一个一个扫"，目标在后半段就得干等到底。
-    // 现在改两条：① 跳过二进制/超大文件（省掉最贵的解码）② 6 路并发（每文件独立请求）。
-    const iterator = walkScopeFiles(scope, () => token === scanToken && !scanStop.value);
-
-    const scanOne = async (file: {
-      fileIndex: number;
-      path: string;
-      name: string;
-      size: number;
-      dataType: number;
-    }): Promise<void> => {
-      const extension = (file.path.split(".").pop() ?? "").toLowerCase();
-      const skip = SCAN_SKIP_EXT.has(extension) || file.size > SCAN_MAX_BYTES;
-      if (skip) scanSkipped.value += 1;
-      if (!skip) {
-        try {
-          const found = await SearchInFile(
-            file.fileIndex,
-            pattern.query,
-            false,
-            pattern.regex,
-            // 「精确匹配」对正文搜索 = **全词匹配**（正则里已含显式边界时空着即可，避免两种语义叠加）
-            exact.value && !pattern.regex,
-            50,
-            []
-          );
-          for (const match of found?.matches ?? []) {
-            seq += 1;
-            const key = `${file.fileIndex}#${match.line}#${seq}`;
-            lines.set(key, match.line);
-            const bucket = byFile.get(file.fileIndex);
-            if (bucket) bucket.push(match.line);
-            else byFile.set(file.fileIndex, [match.line]);
-            rows.push({
-              key,
-              label: (match.text ?? "").trim() || term,
-              path: file.path,
-              id: "",
-              name: file.name,
-              category: "正文",
-              fileIndex: file.fileIndex,
-              size: file.size,
-              dataType: file.dataType,
-            } as unknown as SearchItem);
-          }
-        } catch {
-          // 单个文件失败（解不开/超大）不打断整轮：继续扫下一个
-        }
+    // 【2026-10-06 用户选择"方案 2"】服务端**分批**扫描：一次请求扫一批（服务端自己枚举 +
+    // 跳过二进制/超大文件 + 每个文件一次解码），请求数从"每个文件一次"降到"每批一次"。
+    // cursor 是**归档文件下标**：服务端从那儿继续往后走，前端不需要搬任何路径列表。
+    let cursor = 0;
+    while (token === scanToken && !scanStop.value) {
+      const batch = await ScanContentInScope(
+        scope,
+        pattern.query,
+        false,
+        pattern.regex,
+        // 「精确匹配」对正文搜索 = **全词匹配**（正则已含显式边界时不再叠加）
+        exact.value && !pattern.regex,
+        cursor,
+        30
+      );
+      if (token !== scanToken || !batch) break;
+      for (const hit of batch.hits ?? []) {
+        seq += 1;
+        const key = `${hit.fileIndex}#${hit.line}#${seq}`;
+        lines.set(key, hit.line);
+        const bucket = byFile.get(hit.fileIndex);
+        if (bucket) bucket.push(hit.line);
+        else byFile.set(hit.fileIndex, [hit.line]);
+        rows.push({
+          key,
+          label: (hit.text ?? "").trim() || term,
+          path: hit.path,
+          id: "",
+          name: "",
+          category: "正文",
+          fileIndex: hit.fileIndex,
+          size: 0,
+          dataType: 0,
+        } as unknown as SearchItem);
       }
-      const done = scanProgress.value.done + 1;
+      const done = scanProgress.value.done + (batch.scanned ?? 0);
+      scanSkipped.value += batch.skipped ?? 0;
       scanProgress.value = { done, total: 0, active: true };
-      // 每 5 个文件刷一次列表：够"边扫边看"，又不会把大数组每文件重渲染一遍
-      if (done % 5 === 0) hits.value = [...rows];
-    };
-
-    // 多个 worker 共享同一个枚举器：每个文件只会被其中一个 worker 取走
-    await Promise.all(
-      Array.from({ length: SCAN_CONCURRENCY }, async () => {
-        for await (const file of iterator) {
-          if (token !== scanToken || scanStop.value) return;
-          await scanOne(file);
-        }
-      })
-    );
+      hits.value = [...rows]; // 每批刷新一次列表：够"边扫边看"，也不会刷得太频繁
+      if (batch.done || (batch.nextCursor ?? -1) < 0) break;
+      cursor = batch.nextCursor;
+    }
 
     hits.value = rows;
     hitLines.value = lines;

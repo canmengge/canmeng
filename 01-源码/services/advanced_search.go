@@ -777,6 +777,124 @@ func (s *ArchiveService) decodedTextForLine(index int32) (string, bool) {
 	return "", false
 }
 
+// ContentScanHit 是「范围正文扫描」的一处命中。
+type ContentScanHit struct {
+	FileIndex int32  `json:"fileIndex"`
+	Path      string `json:"path"`
+	Line      int32  `json:"line"`
+	Text      string `json:"text"`
+}
+
+// ContentScanResult 是**一批**扫描结果（分页，不是全量）。
+type ContentScanResult struct {
+	Hits       []*ContentScanHit `json:"hits"`
+	NextCursor int               `json:"nextCursor"`
+	Scanned    int               `json:"scanned"`
+	Skipped    int               `json:"skipped"`
+	Done       bool              `json:"done"`
+}
+
+// contentScanSkipExt 与前端保持一致：这些是二进制/多媒体，解码贵且搜不到正文。
+var contentScanSkipExt = map[string]struct{}{
+	"img": {}, "npk": {}, "ani": {}, "als": {}, "atk": {}, "dds": {},
+	"png": {}, "jpg": {}, "jpeg": {}, "bmp": {}, "tga": {}, "gif": {},
+	"ogg": {}, "mp3": {}, "wav": {}, "wma": {}, "avi": {}, "wmv": {},
+}
+
+const (
+	contentScanMaxFileBytes = 2 << 20
+	contentScanHitsPerFile  = 20
+	// 单次请求里最多走多少个归档下标：范围很"稀"（目标目录文件少）时也不会一次跑几十万次
+	// 路径比较，保证每次请求都是毫秒级、随时可停。
+	contentScanIterBudget = 20000
+)
+
+// ScanContentInScope 在**指定目录范围内**分批扫正文（分页、不建索引、不常驻内存）。
+//
+// 【2026-10-06 用户选择"方案 2"】前端逐文件发请求时，几千个文件就是几千次 IPC + 几千次
+// 解码等待（实测"太慢、目标在后面要等很久"）。这里把 **枚举 + 跳过 + 扫描** 全放到服务端：
+// 一次请求处理一批，前端只要循环拿下一批 ⇒ 请求数降两个数量级。
+//
+// `cursor` 是**归档文件下标**（不是结果下标）：服务端从该下标继续往后走，因此**不需要**
+// 把上百万条路径搬到前端（那正是上一版卡死的原因）。`NextCursor < 0` / `Done=true` 表示
+// 该范围已经走完；`Skipped` 是二进制/超大/解不开而跳过的文件数。
+func (s *ArchiveService) ScanContentInScope(
+	scopePath, query string,
+	caseSensitive, regex, wholeWord bool,
+	cursor, limit int,
+) (*ContentScanResult, error) {
+	result := &ContentScanResult{Hits: []*ContentScanHit{}, NextCursor: -1}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		result.Done = true
+		return result, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 30
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	scope := strings.Trim(strings.ReplaceAll(strings.TrimSpace(scopePath), "\\", "/"), "/")
+	prefix := ""
+	if scope != "" {
+		prefix = strings.ToLower(scope) + "/"
+	}
+
+	s.c.mu.RLock()
+	archive := s.c.archive
+	s.c.mu.RUnlock()
+	if archive == nil {
+		return nil, ErrNoArchive
+	}
+
+	total := int(archive.FileCount())
+	editor := &EditorService{c: s.c}
+	i := cursor
+	iterations := 0
+	for ; i < total && result.Scanned < limit && iterations < contentScanIterBudget; i, iterations = i+1, iterations+1 {
+		index := int32(i)
+		s.c.mu.RLock()
+		path := archive.Path(index)
+		size := archive.File(index).DataSize
+		s.c.mu.RUnlock()
+		lower := strings.ToLower(path)
+		if prefix != "" && !strings.HasPrefix(lower, prefix) {
+			continue // 不在范围内：既不计数也不算"跳过"（只是枚举路过）
+		}
+		ext := lower
+		if dot := strings.LastIndex(lower, "."); dot >= 0 {
+			ext = lower[dot+1:]
+		}
+		if _, skip := contentScanSkipExt[ext]; skip || size > contentScanMaxFileBytes {
+			result.Skipped++
+			continue
+		}
+		found, err := editor.SearchInFile(
+			index, query, caseSensitive, regex, wholeWord, contentScanHitsPerFile, nil,
+		)
+		if err != nil {
+			result.Skipped++ // 解不开（其实是二进制/异常）也算跳过，不让整轮失败
+			continue
+		}
+		result.Scanned++
+		for _, match := range found.Matches {
+			result.Hits = append(result.Hits, &ContentScanHit{
+				FileIndex: index,
+				Path:      path,
+				Line:      match.Line,
+				Text:      match.Text,
+			})
+		}
+	}
+	if i < total {
+		result.NextCursor = i
+	} else {
+		result.Done = true
+	}
+	return result, nil
+}
+
 func (c *core) indexedFileNameLocked(index int32) string {
 	seen := make(map[string]struct{})
 	names := make([]string, 0, 1)
