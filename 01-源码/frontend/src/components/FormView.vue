@@ -2130,12 +2130,17 @@ function resetColumnWidths(): void {
     <section class="fv-form">
       <div class="fv-form-row">
         <span class="fv-label">文件族</span>
-        <!-- 2026-10-06（用户最终裁定）：**删掉文件族下拉，窗口锁死板块** ——
-             打开什么板块就是什么板块（独立掉落 / 商店互不串），要换板块从
-             主工具条「可视化编辑区」菜单另开窗口。窗口内不再有任何切换入口。 -->
-        <span class="fv-format-locked" :title="formView.currentFormat?.label ?? ''">
-          {{ formView.currentFormat?.label ?? "—" }}
-        </span>
+        <!-- 2026-10-06 应用户要求加回「文件族」下拉：切换链路已配套修稳 ——
+             切族时 watch(formatId) 会自动换该族的默认文件并重新投影（配套切换），
+             initFromSession 期间有 initializing 门禁，族与文件不会再被撕开。 -->
+        <NSelect
+          v-model:value="formView.formatId"
+          :options="formView.formatOptions"
+          :loading="formView.formatsLoading"
+          size="small"
+          placeholder="选择文件族"
+          class="fv-select"
+        />
         <span class="fv-label">文件</span>
         <NInput
           v-model:value="formView.filePath"
