@@ -618,6 +618,8 @@ function buildSearchIndex(): void {
           <!-- 精确匹配（整词相等 / 全词匹配）：合并到输入框内的图标按钮，
                观感与左侧文件树搜索框一致 —— **未开灰色、开启蓝色**（2026-10-06 用户要求） -->
           <template #suffix>
+            <!-- 灰色说明：告诉用户这里可以精确搜索（2026-10-06 用户要求放大图标 + 前面加说明） -->
+            <span class="as-word-hint">可精确搜索</span>
             <NTooltip trigger="hover">
               <template #trigger>
                 <button
@@ -627,7 +629,7 @@ function buildSearchIndex(): void {
                   :disabled="searching || scanProgress.active"
                   @click="exact = !exact"
                 >
-                  <NIcon :size="15"><Target20Regular /></NIcon>
+                  <NIcon :size="20"><Target20Regular /></NIcon>
                 </button>
               </template>
               {{ exact ? "精确匹配：已开启（整词相等 / 全词匹配）" : "精确匹配：点击开启（整词相等 / 全词匹配）" }}
@@ -860,12 +862,20 @@ function buildSearchIndex(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  padding: 4px;
   color: var(--pvf-text-muted, #9aa4b2);
   background: transparent;
   border: none;
   border-radius: 50%;
   cursor: pointer;
+}
+/* 图标前的灰色说明（告诉用户这里可以精确搜索） */
+.as-word-hint {
+  margin-right: 2px;
+  color: var(--pvf-text-muted, #9aa4b2);
+  font-size: 12px;
+  white-space: nowrap;
+  user-select: none;
 }
 .as-word-toggle:hover {
   color: var(--pvf-text-primary, #e6e8ec);
