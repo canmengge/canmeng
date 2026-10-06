@@ -348,7 +348,8 @@ async function runScopedContentScan(term: string): Promise<void> {
           pattern.query,
           false,
           pattern.regex,
-          false,
+          // 「精确匹配」对正文搜索 = **全词匹配**（正则里已含显式边界时空着即可，避免两种语义叠加）
+          exact.value && !pattern.regex,
           50,
           []
         );
@@ -614,6 +615,24 @@ function buildSearchIndex(): void {
           <template #prefix>
             <NIcon :size="16"><Search16Regular /></NIcon>
           </template>
+          <!-- 精确匹配（整词相等 / 全词匹配）：合并到输入框内的图标按钮，
+               观感与左侧文件树搜索框一致 —— **未开灰色、开启蓝色**（2026-10-06 用户要求） -->
+          <template #suffix>
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="as-word-toggle"
+                  :class="{ 'as-word-toggle--on': exact }"
+                  :disabled="searching || scanProgress.active"
+                  @click="exact = !exact"
+                >
+                  <NIcon :size="15"><Target20Regular /></NIcon>
+                </button>
+              </template>
+              {{ exact ? "精确匹配：已开启（整词相等 / 全词匹配）" : "精确匹配：点击开启（整词相等 / 全词匹配）" }}
+            </NTooltip>
+          </template>
         </NInput>
         <NButton size="large" type="primary" :loading="searching" :disabled="!archive.open || !query.trim()" @click="runSearch">
           搜索
@@ -622,9 +641,8 @@ function buildSearchIndex(): void {
 
       <div class="as-options-row">
         <template v-if="viewMode === 'locate'">
-          <NCheckbox v-model:checked="exact" size="small" :disabled="searching || contentMode">
-            精确匹配（整词相等，不再做子串匹配）
-          </NCheckbox>
+          <!-- 原先这里的「精确匹配」复选框已合并到搜索框右侧的图标按钮（用户 2026-10-06 要求：
+               勾选行只留「正文搜索」；不勾正文搜索 = 走正常的路径/名称/ID 搜索） -->
           <NCheckbox
             v-model:checked="contentMode"
             size="small"
@@ -836,6 +854,28 @@ function buildSearchIndex(): void {
 .as-search-row {
   display: flex;
   gap: 10px;
+}
+/* 精确匹配切换（搜索框内）：与左树搜索框同款观感 —— 未开灰色、开启蓝色 */
+.as-word-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--pvf-text-muted, #9aa4b2);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.as-word-toggle:hover {
+  color: var(--pvf-text-primary, #e6e8ec);
+}
+.as-word-toggle--on {
+  color: var(--pvf-primary, #4a9eff);
+}
+.as-word-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .as-options-row {
   display: flex;
