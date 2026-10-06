@@ -38,7 +38,7 @@ import {
   indentLess,
   insertTab,
 } from "@codemirror/commands";
-import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
@@ -52,6 +52,7 @@ import { useImageStore } from "../stores/images";
 import { scriptCompletionSource as declarationCompletionSource } from "../scriptLanguageService";
 import type { ResolvedThemeId } from "../theme";
 import { listLinkAt, listNamePlugin, resolveListLinkIndex } from "../listNames";
+import { searchPanelPhrases, searchPanelTheme } from "../searchPanel";
 
 const props = defineProps<{
   doc: string;
@@ -776,6 +777,10 @@ function makeExtensions(themeId: ResolvedThemeId) {
     rectangularSelection(),
     crosshairCursor(),
     highlightSelectionMatches(),
+    // Ctrl+F 文本内查找（本轮新增：普通编辑器此前没有这个面板）。
+    // 官方 search 面板 + 共用「中文文案/胶囊外观」（见 ../searchPanel.ts）。
+    // 大文件（props.largeFile）不装，保持原样。标记：pvfSearchPanelNormalFile_20261006
+    ...(large ? [] : [search(), searchPanelPhrases, searchPanelTheme]),
     // A2 段折叠：折叠边栏 + 折起占位 + 自定义「按 [段] 折叠」规则。
     // 大文件通道不装（用户 2026-10-06 明确）。
     ...(large ? [] : [codeFolding(), foldGutter(), pvfFoldService]),
