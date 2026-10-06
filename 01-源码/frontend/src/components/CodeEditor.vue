@@ -692,6 +692,74 @@ const problemsGutter = gutter({
 });
 
 /**
+ * A4 行内释义：**光标所在行**的右侧显示「这行每个 token 是什么字段」，数据来自 A1 的段目录
+ * （`CompletionCatalog` → `columns[].label`）—— 注释不再只能挤在悬浮框里。
+ *
+ * 为什么只画光标所在行、而不是每行都画：`etc/independent_drop.etc` 这类文件动辄上千行数据，
+ * 每行挂一个释义既是噪声、又要把整份文档过一遍；跟光标走则零噪声、每次只算一行。
+ * 只对**有列定义的段**生效（今天只有独立掉落那一族；规则补齐后自动铺开）。
+ * 标记：pvfLineDigestA4_20261006
+ */
+class LineDigestWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+  eq(other: LineDigestWidget): boolean {
+    return other.text === this.text;
+  }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-line-digest";
+    span.textContent = this.text;
+    return span;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** 段目录是异步取的，拿到后强制重算一次（否则要等下一次移动光标才出现）。 */
+const refreshLineDigest = StateEffect.define<null>();
+
+function buildLineDigest(state: EditorState): DecorationSet {
+  if (sectionCatalog.length === 0) return Decoration.none;
+  const pos = state.selection.main.head;
+  const spot = sectionPositionAt(state, pos);
+  if (!spot) return Decoration.none;
+  const section = catalogSection(spot.name);
+  if (!section) return Decoration.none;
+  if ((section.columns ?? []).length === 0) return Decoration.none;
+  const line = state.doc.lineAt(pos);
+  const tokens = line.text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return Decoration.none;
+  // 规则里的表格是「一行 = 一条记录、第 i 个 token 对应第 i 列」，所以行内序号可直接当列序号。
+  const labels = tokens.map((_, index) => (columnAt(section, index)?.label ?? "").trim());
+  if (labels.every((label) => label === "")) return Decoration.none;
+  return Decoration.set([
+    Decoration.widget({
+      widget: new LineDigestWidget(`‹ ${labels.map((label) => label || "?").join(" · ")} ›`),
+      side: 1,
+    }).range(line.to),
+  ]);
+}
+
+const lineDigestField = StateField.define<DecorationSet>({
+  create: (state) => buildLineDigest(state),
+  update(decorations, transaction) {
+    const next = decorations.map(transaction.changes);
+    if (
+      transaction.docChanged ||
+      transaction.selection ||
+      transaction.effects.some((effect) => effect.is(refreshLineDigest))
+    ) {
+      return buildLineDigest(transaction.state);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/**
  * tab 箭头的形状：**与 CodeMirror 内置完全相同的几何**（同一张 200×20 的 SVG、
  * 同样 `auto 100%` + `right 90%`，仍会随 tab 宽度被裁切 —— 观感与原版一致）。
  * 这里只把它当"形状遮罩"，颜色交给 `background-color: currentColor`：
@@ -1101,6 +1169,8 @@ function makeExtensions(themeId: ResolvedThemeId) {
     problemsField,
     problemsDeco,
     problemsGutter,
+    // A4：光标所在行的行内释义（字段名，数据来自 A1 段目录）
+    lineDigestField,
     indentUnit.of("\t"),
     // .lst 清单：可见行路径后显示目标文件名称（惰性，不影响打开速度）。
     ...(props.listNames ? [listNamePlugin] : []),
@@ -1225,6 +1295,10 @@ onMounted(() => {
   view = new EditorView({
     state: EditorState.create({ doc: props.doc, extensions: makeExtensions(props.themeId) }),
     parent: host.value!,
+  });
+  // A1 / A4 的数据源：段目录（异步）。拿到后刷新一次行内释义，用户不必先打字触发。
+  void loadSectionCatalog().then(() => {
+    view?.dispatch({ effects: refreshLineDigest.of(null) });
   });
   // 记下滚动位置：标签被隐藏（display:none）时它会被浏览器归零，切回来要写回去。
   view.scrollDOM.addEventListener("scroll", rememberScrollTop, { passive: true });
@@ -1613,6 +1687,15 @@ watch(
 }
 :global(.cm-problem-gutter) {
   width: 14px;
+}
+/* A4：光标所在行的行内释义（字段名，数据来自段目录） */
+.code-editor :deep(.cm-line-digest) {
+  margin-left: 12px;
+  color: var(--pvf-text-secondary, var(--pvf-text-primary));
+  font-size: 11px;
+  font-style: italic;
+  white-space: nowrap;
+  user-select: none;
 }
 /* A3：正文悬浮提示的外观（与注解胶囊的提示同款配色） */
 :global(.cm-annotation-hover) {
