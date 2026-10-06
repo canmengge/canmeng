@@ -536,6 +536,18 @@ function problemsFor(tab: { path: string }): { line: number; message: string }[]
   const current = listDuplicateProblems.value;
   return current.fileName === tab.path ? current.list : EMPTY_PROBLEMS;
 }
+
+/**
+ * A7/A6 自查修复：正文一改，查重结果的**行号就失效**了。
+ * 编辑器的行内标记自己会清（`problemsField` 遇 docChanged 即清空），但面板与概览红条不会 ——
+ * 三者必须同时失效，否则会出现"行标记没了、面板还列着、滚动条还有红条"的自相矛盾状态。
+ */
+function onEditorChange(index: number, path: string, text: string): void {
+  editor.updateContent(index, text);
+  if (listDuplicate.fileName === path && listDuplicate.issues.length > 0) {
+    listDuplicate.issues = [];
+  }
+}
 type FileTagKind = "id" | "name" | "path";
 interface FileTag {
   kind: FileTagKind;
@@ -1259,7 +1271,7 @@ function onDrop(event: DragEvent): void {
             :list-names="isListFile(tab.path)"
             :problems="problemsFor(tab)"
             :baseline="tab.original"
-            @change="(text: string) => editor.updateContent(tab.index, text)"
+            @change="(text: string) => onEditorChange(tab.index, tab.path, text)"
             @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"
             @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"
             @edit-placeholder="(request: PlaceholderEditRequest) => openPlaceholderEdit(tab.index, request)"

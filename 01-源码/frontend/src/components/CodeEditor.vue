@@ -682,12 +682,32 @@ interface OverviewMark {
   label: string;
 }
 
+/** A6 自查修复：概览条不需要"逐键精确"，用 250ms 防抖的文档快照，避免每次击键 split 整份文本。 */
+const overviewDoc = ref(props.doc);
+let overviewDocTimer: number | undefined;
+watch(
+  () => props.doc,
+  (doc) => {
+    if (overviewDocTimer !== undefined) window.clearTimeout(overviewDocTimer);
+    overviewDocTimer = window.setTimeout(() => {
+      overviewDocTimer = undefined;
+      overviewDoc.value = doc;
+      // 内容变长可能让竖向滚动条"从无到有" ⇒ 覆盖层相对滚动条的位置要重算一次
+      void nextTick(syncOverviewBox);
+    }, 250);
+  }
+);
+
 const overview = computed(() => {
   const marks: OverviewMark[] = [];
-  const current = props.doc.split("\n");
-  const total = Math.max(1, current.length);
-
   const problems = [...(props.problems ?? [])].sort((a, b) => a.line - b.line);
+  const base = props.baseline;
+  const canDiff = base != null && base !== overviewDoc.value;
+  // 自查修复：没有标记可画时**不做整份 split**（纯打字场景最常见的路径）
+  if (problems.length === 0 && !canDiff) return { total: 1, marks };
+
+  const current = overviewDoc.value.split("\n");
+  const total = Math.max(1, current.length);
   for (const item of problems) {
     if (!Number.isFinite(item.line) || item.line < 1) continue;
     const last = marks[marks.length - 1];
@@ -698,8 +718,7 @@ const overview = computed(() => {
     marks.push({ from: item.line, to: item.line, kind: "problem", label: item.message });
   }
 
-  const base = props.baseline;
-  if (base != null && base !== props.doc) {
+  if (canDiff && base != null) {
     const original = base.split("\n");
     let start = 0;
     while (start < current.length && start < original.length && current[start] === original[start]) {
@@ -993,6 +1012,9 @@ function pvfCompletionSource(context: CompletionContext): CompletionResult | nul
   // ② 段内位置：字段名 + 合法取值
   const spot = sectionPositionAt(state, context.pos);
   if (!spot) return null;
+  // A1 自查修复：段目录是异步取的，**这里也要预热** —— 否则"没先打过 `[` 就直接在段内打字"
+  // 会一直拿不到段目录（段内取值/位置提示恒为空）。
+  void loadSectionCatalog();
   const item = catalogSection(spot.name);
   if (!item) return null;
   const column = columnAt(item, spot.index);

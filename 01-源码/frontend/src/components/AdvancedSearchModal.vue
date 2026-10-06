@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
   NAlert,
   NButton,
@@ -93,10 +93,19 @@ watch(
   (visible) => {
     if (visible) {
       error.value = "";
+      // A9 自查修复：F3 挂在**窗口**上而不是结果区 —— 面板打开时焦点在搜索框（默认行为），
+      // 只挂结果区会导致"打开后直接按 F3 没反应"。
+      window.addEventListener("keydown", onResultsKeydown);
       window.setTimeout(() => inputEl.value?.focus(), 60);
+    } else {
+      window.removeEventListener("keydown", onResultsKeydown);
     }
   }
 );
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onResultsKeydown);
+});
 
 function resetResults(): void {
   hits.value = [];
@@ -213,6 +222,10 @@ async function jumpTo(index: number): Promise<void> {
   if (!item || item.fileIndex < 0) return;
   activeKey.value = item.key;
   try {
+    // A9 自查修复：与 openItem 对齐 —— 左树还在搜索模式时，revealPath 设了也没人渲染。
+    if (explorer.mode === "search") {
+      explorer.clearSearch();
+    }
     await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
     await explorer.revealPath(item.path);
   } catch (e: any) {
@@ -337,7 +350,7 @@ function buildSearchIndex(): void {
         {{ error }}
       </NAlert>
 
-      <div ref="listEl" class="as-results" @keydown="onResultsKeydown">
+      <div ref="listEl" class="as-results">
         <NSpin :show="searching && hits.length === 0">
           <NEmpty
             v-if="hits.length === 0 && !searching"
