@@ -1007,10 +1007,11 @@ function buildSearchIndex(): void {
   align-items: center;
   gap: 10px;
 }
-/* 固定宽度 ⇒ 所有目录的翻译对齐成一列（用户要的"图1 那种"观感） */
+/* 固定宽度 ⇒ 所有目录的翻译**对齐成一列**；宽度只留够常见最长的目录名（如 aradadventure /
+   passiveobject），标签紧跟其后，不飘到右边去（2026-10-06 用户：原来 132px 太远）。 */
 :global(.as-scope-name) {
   display: inline-block;
-  min-width: 132px;
+  min-width: 92px;
   white-space: nowrap;
 }
 /* 翻译标签：颜色 + 底色框 */
