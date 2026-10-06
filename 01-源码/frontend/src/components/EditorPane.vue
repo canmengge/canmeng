@@ -1258,6 +1258,7 @@ function onDrop(event: DragEvent): void {
             :active="activeKeyStr === String(tab.index)"
             :list-names="isListFile(tab.path)"
             :problems="problemsFor(tab)"
+            :baseline="tab.original"
             @change="(text: string) => editor.updateContent(tab.index, text)"
             @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"
             @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"

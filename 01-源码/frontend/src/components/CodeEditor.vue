@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   EditorView,
   keymap,
@@ -86,6 +86,11 @@ const props = defineProps<{
    * 只作用于普通文件通道，且**文档一改就自动清空**（行号会失效，重新查重再出现）。
    */
   problems?: { line: number; message: string }[] | null;
+  /**
+   * A6 概览标记条用：**打开该文件时的原始文本**（基线）。用它和当前文本比出"改过的区段"，
+   * 在滚动条旁打一个绿色标记；不传就不显示改动标记（其它两类标记不受影响）。
+   */
+  baseline?: string | null;
   /**
    * 本标签当前是否可见。标签切换走 v-show（NTabPane 的 `show:lazy`），隐藏时
    * display:none 会把编辑器滚动位置归零 —— 靠这个信号在重新可见时把位置写回去。
@@ -658,6 +663,88 @@ const problemsGutter = gutter({
 });
 
 /**
+ * A6 概览标记条（VS 式"滚动条打点"）。
+ *
+ * 为什么用自绘条而不是改滚动条：CodeMirror 没有滚动条打点 API，原生滚动条也画不了点；
+ * 所以贴着滚动条内侧立一条细窄覆盖层（**fixed 定位**，外框自己同步），点标记直接跳行。
+ *
+ * v1 打两类点（都用手上已有的数据，零后端改动）：
+ *  1. **错误行** —— 「清单查重」的问题行（与 A7 同源，相邻行自动并成一段）；
+ *  2. **改动区** —— 相对**打开基线**的改动：剔除首尾相同的行后取中间区段（不做完整 diff，
+ *     否则中间插一行就会把后面每一行都标成"改过"）。
+ * 搜索命中打点留 v2（普通通道要另调 SearchInFile 取行号）。
+ * 只作用于普通文件通道。标记：pvfOverviewMarksA6_20261006
+ */
+interface OverviewMark {
+  from: number;
+  to: number;
+  kind: "problem" | "change";
+  label: string;
+}
+
+const overview = computed(() => {
+  const marks: OverviewMark[] = [];
+  const current = props.doc.split("\n");
+  const total = Math.max(1, current.length);
+
+  const problems = [...(props.problems ?? [])].sort((a, b) => a.line - b.line);
+  for (const item of problems) {
+    if (!Number.isFinite(item.line) || item.line < 1) continue;
+    const last = marks[marks.length - 1];
+    if (last && last.kind === "problem" && item.line <= last.to + 1) {
+      last.to = item.line; // 相邻/连续行并成一段，避免上千个 1px 条
+      continue;
+    }
+    marks.push({ from: item.line, to: item.line, kind: "problem", label: item.message });
+  }
+
+  const base = props.baseline;
+  if (base != null && base !== props.doc) {
+    const original = base.split("\n");
+    let start = 0;
+    while (start < current.length && start < original.length && current[start] === original[start]) {
+      start += 1;
+    }
+    let endCurrent = current.length - 1;
+    let endOriginal = original.length - 1;
+    while (
+      endCurrent >= start &&
+      endOriginal >= start &&
+      current[endCurrent] === original[endOriginal]
+    ) {
+      endCurrent -= 1;
+      endOriginal -= 1;
+    }
+    if (endCurrent >= start) {
+      marks.push({
+        from: start + 1,
+        to: endCurrent + 1,
+        kind: "change",
+        label: "这段有未保存的改动",
+      });
+    }
+  }
+  return { total, marks };
+});
+
+/** 覆盖层是 fixed 定位 ⇒ 外框要自己跟（编辑器尺寸/窗口尺寸/标签切换都会变）。 */
+const overviewBox = ref({ top: 0, height: 0, right: 0 });
+let overviewObserver: ResizeObserver | null = null;
+
+function syncOverviewBox(): void {
+  const scroller = view?.scrollDOM;
+  if (!scroller) return;
+  const rect = scroller.getBoundingClientRect();
+  // 贴着滚动条内侧：用实测滚动条宽度，不写死数字（主题/DPI 不同宽度不同）
+  const scrollbar = Math.max(0, scroller.offsetWidth - scroller.clientWidth);
+  overviewBox.value = {
+    top: rect.top + 2,
+    height: Math.max(0, rect.height - 4),
+    right: window.innerWidth - rect.right + scrollbar + 3,
+  };
+}
+
+/**
  * tab 箭头的形状：**与 CodeMirror 内置完全相同的几何**（同一张 200×20 的 SVG、
  * 同样 `auto 100%` + `right 90%`，仍会随 tab 宽度被裁切 —— 观感与原版一致）。
  * 这里只把它当"形状遮罩"，颜色交给 `background-color: currentColor`：
@@ -1192,11 +1279,20 @@ onMounted(() => {
   });
   // 记下滚动位置：标签被隐藏（display:none）时它会被浏览器归零，切回来要写回去。
   view.scrollDOM.addEventListener("scroll", rememberScrollTop, { passive: true });
+  // A6：概览标记条走 fixed 定位 ⇒ 外框要跟着编辑器尺寸与窗口尺寸同步
+  syncOverviewBox();
+  window.addEventListener("resize", syncOverviewBox);
+  overviewObserver = new ResizeObserver(syncOverviewBox);
+  overviewObserver.observe(view.dom);
 });
 
 onBeforeUnmount(() => {
   hideAnnotationTooltip();
   flushPendingChange(); // 大文件的改动可能还在防抖窗口里，先补发再销毁
+  // A6：拆掉概览标记条的尺寸监听
+  window.removeEventListener("resize", syncOverviewBox);
+  overviewObserver?.disconnect();
+  overviewObserver = null;
   view?.scrollDOM.removeEventListener("scroll", rememberScrollTop);
   view?.destroy();
   view = null;
@@ -1326,6 +1422,14 @@ watch(
   }
 );
 
+// A6：标记条出现/消失、标签切回可见（display:none 会把编辑器盒子归零）时都要重新对位。
+watch(
+  [() => props.active, () => overview.value.marks.length],
+  () => {
+    void nextTick(syncOverviewBox);
+  }
+);
+
 watch(
   () => props.readOnly,
   (ro) => {
@@ -1356,6 +1460,29 @@ watch(
 
 <template>
   <div ref="host" class="code-editor" />
+  <!-- A6 概览标记条：贴着滚动条内侧，红色=查重问题行、绿色=当前未保存的改动；点一下跳过去 -->
+  <div
+    v-if="overview.marks.length > 0 && overviewBox.height > 0"
+    class="overview-marks"
+    :style="{
+      top: `${overviewBox.top}px`,
+      height: `${overviewBox.height}px`,
+      right: `${overviewBox.right}px`,
+    }"
+  >
+    <div
+      v-for="(mark, index) in overview.marks"
+      :key="index"
+      class="overview-mark"
+      :class="`overview-mark--${mark.kind}`"
+      :style="{
+        top: `${((mark.from - 1) / overview.total) * 100}%`,
+        height: `${Math.max(0.8, ((mark.to - mark.from + 1) / overview.total) * 100)}%`,
+      }"
+      :title="`${mark.label}（第 ${mark.from}${mark.to > mark.from ? `–${mark.to}` : ''} 行，点击跳转）`"
+      @click="revealPosition(mark.from)"
+    />
+  </div>
   <!-- A8 跳行浮层：Ctrl/Cmd+G 唤起；回车跳转、Esc 关闭 -->
   <div
     v-if="gotoOpen"
@@ -1577,6 +1704,31 @@ watch(
 }
 :global(.cm-problem-gutter) {
   width: 14px;
+}
+/* A6 概览标记条：细窄覆盖层贴在滚动条内侧（fixed，外框由 syncOverviewBox 同步） */
+.overview-marks {
+  position: fixed;
+  z-index: 18;
+  width: 5px;
+  pointer-events: none;
+}
+.overview-mark {
+  position: absolute;
+  right: 0;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 1px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.overview-mark--problem {
+  background: var(--pvf-error);
+}
+.overview-mark--change {
+  background: var(--pvf-success);
+}
+.overview-mark:hover {
+  width: 9px;
 }
 .code-editor :deep(.cm-scroller) {
   flex: 1 1 auto;
