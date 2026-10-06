@@ -716,10 +716,17 @@ func (s *ArchiveService) paginateAdvancedViewLocked(matches []advancedFileMatch,
 // （索引是"池值维度"的），所以拿 Value 在文本里正查一次最直接，行为与前端原先的
 // needle 定位等价、但**能给出准确行号**。解不开或找不到就留 0，前端退化为"只打开文件"。
 func (s *ArchiveService) fillAdvancedLines(pending []pendingAdvancedLine) {
+	// 单页最多算这些行号：即便命中的都是"已缓存的大文件"，也不让一次搜索做无上限的扫描
+	// （27MB 文本上一次 strings.Index 是十几毫秒，200 个文件叠起来就是秒级卡顿）。
+	budget := 80
 	for _, item := range pending {
+		if budget <= 0 {
+			break
+		}
 		if item.detail == nil || item.detail.Line > 0 {
 			continue
 		}
+		budget--
 		text, ok := s.decodedTextForLine(item.fileIndex)
 		if !ok || text == "" {
 			continue
@@ -737,19 +744,25 @@ func (s *ArchiveService) fillAdvancedLines(pending []pendingAdvancedLine) {
 // `cachedDecodedText` 要求调用方持 `c.mu`，所以这里自己加写锁 —— **调用方不得已持锁**，
 // 否则就是死锁（这正是行号计算被推出 RLock 段的原因）。
 func (s *ArchiveService) decodedTextForLine(index int32) (string, bool) {
-	s.c.mu.Lock()
-	defer s.c.mu.Unlock()
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
 	if s.c.archive == nil || index < 0 || index >= s.c.archive.FileCount() {
 		return "", false
 	}
 	if text, ok := s.c.editorText[index]; ok && text != "" {
 		return text, true
 	}
-	text, err := s.c.cachedDecodedText(index, s.c.archive)
-	if err != nil {
-		return "", false
+	// 【2026-10-06 卡死事故修复】这里**只能吃已经解过的缓存，绝不触发解码**。
+	//
+	// 上一版调的是 `cachedDecodedText`（会现场解码）：一页最多 200 个文件 ⇒ 200 次解码、
+	// 每次几百毫秒且进程内文本暴涨，而且全程占着全局写锁 —— 结果不只是搜索转圈，
+	// **整个程序的 c.mu 都被占住**，连文件树/打开文件都点了没反应（实测事故）。
+	// 现在改成：不在缓存里就留 `line = 0`，前端退化为原有的 needle 定位（功能不丢）。
+	// 用户先打开过（或用过预览）的文件本来就在缓存里，照样能显示行号。
+	if text, ok := s.c.textCache[index]; ok && text != "" {
+		return text, true
 	}
-	return text, true
+	return "", false
 }
 
 func (c *core) indexedFileNameLocked(index int32) string {
