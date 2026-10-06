@@ -26,8 +26,8 @@
 
 | # | 能力 | 来源文件 | 我们现状 | 备注 |
 | --- | --- | --- | --- | --- |
-| A1 | **脚本代码补全 + 参数提示（Insight/Overload）+ 用户自定义补全数据** | `DocumentFolder\CodeCompletion\*`（13 个：`CompletionList.cs` 9.9K、`WindowCompletion.cs` 11.8K、`InsightWindow.cs`、`OverloadInsightWindow.cs`、`NutCodeCompletion.cs`、`ScriptCodeCompletion.cs`、`WindowAddCodeCompletionData*.cs`） | **部分已有**：段名补全 + 脚本补全已实现（`CodeEditor.vue` 的 `pvfCompletionSource` / `scriptCompletionSource`，2026-10-06） | 只剩"合法取值提示 + 参数提示（Insight/Overload）+ 用户自定义补全数据"，需后端下发注释/枚举 |
-| A2 | **代码折叠（按段 / 括号）+ 折叠边栏 + 折叠引导线** | `DocumentFolder\Foldings\*`（10 个：`FoldingStrategyBase.cs` 13.5K、`FoldingMargin.cs` 13K、`TabFoldingStrategy.cs`、`BraceFoldingStrategy.cs`、`FoldingGuideLines.cs`） | 待确认 | 值高 |
+| A1 | **脚本代码补全 + 参数提示（Insight/Overload）+ 用户自定义补全数据** | `DocumentFolder\CodeCompletion\*`（13 个：`CompletionList.cs` 9.9K、`WindowCompletion.cs` 11.8K、`InsightWindow.cs`、`OverloadInsightWindow.cs`、`NutCodeCompletion.cs`、`ScriptCodeCompletion.cs`、`WindowAddCodeCompletionData*.cs`） | **已补齐**（2026-10-06，构建 4.10.2）：后端 `FormViewService.CompletionCatalog` 下发**全量段名** + 段内字段/枚举取值；前端 `pvfCompletionSource` 扩到全量段名并按位置给取值/字段提示 | 仍缺：Nut 脚本**参数提示（Insight/Overload，可走 TS 语言服务签名提示）**与用户自定义补全数据 |
+| A2 | **代码折叠（按段 / 括号）+ 折叠边栏 + 折叠引导线** | `DocumentFolder\Foldings\*`（10 个：`FoldingStrategyBase.cs` 13.5K、`FoldingMargin.cs` 13K、`TabFoldingStrategy.cs`、`BraceFoldingStrategy.cs`、`FoldingGuideLines.cs`） | **已有**（2026-10-06） | `codeFolding()` + `foldGutter()` + 自定义 `pvfFoldService`（按 `[段]` 折叠）+ `foldKeymap`；只装普通文件通道，**别圈** |
 | A3 | **悬浮提示体系**：段注释 / 物品编号 / 文件路径 / 折叠 | `DocumentFolder\EditorHoverTooltip\*`（9 个，`EditorHoverTooltipManager.cs` **24.4K**） | 有基础（注释数据 hover） | 可补齐 4 类 |
 | A4 | **段内注释行渲染**（注释画进行内） | `DocumentFolder\VisualLineElementGenerators\ScriptCommentLineGenerator.cs` 8.9K | 部分 | |
 | A5 | **同名词高亮 / 长行截断 / 搜索命中行背景标色** | `OffsetColorizers\MarkSameWord.cs`、`VisualLineElementGenerators\TruncateLongLines.cs`、`BackgroundRenderers\SearchResultBackgroundRenderer.cs` | **取消（不做）** | 同名高亮已有（`highlightSelectionMatches()`）；命中标色已有（官方 `cm-searchMatch` + 大文件自绘 2026-10-06）；长行**按用户要求折行、不截断**（2026-09-27 明确） |
