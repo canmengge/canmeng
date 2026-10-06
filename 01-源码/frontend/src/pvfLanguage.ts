@@ -47,7 +47,7 @@ function isTokenBoundary(ch: string): boolean {
 export const pvfLanguage = StreamLanguage.define<PvfState>({
   name: "pvf",
   // A11：显式映射，不赌 StreamLanguage 的默认 token 名表
-  tokenTable: { lineComment: tags.lineComment },
+  tokenTable: { lineComment: tags.lineComment, bracket: tags.bracket },
   startState: () => ({ mode: "normal" }),
   token(stream, state) {
     if (state.mode === "string") return consumeString(stream, state);
@@ -76,6 +76,12 @@ export const pvfLanguage = StreamLanguage.define<PvfState>({
     // 只认**同一行内闭合**的 `<>`；孤立的 `<` 不吞整行（PVF 文本里 `<` 罕见，但别赌）。
     if (stream.match(/^<[^>\n]*>/)) {
       return "string";
+    }
+
+    // A11：花括号块（UT `Script.xshd:64-82`）—— 只给括号本身着色，不解析块结构
+    // （PVF 的 `{}` 不构成嵌套语义，做块解析只会徒增误判）。
+    if (stream.eat("{") || stream.eat("}")) {
+      return "bracket";
     }
 
     if (stream.eat("`")) {
@@ -107,9 +113,10 @@ const pvfHighlightStyle = HighlightStyle.define([
     color: "var(--pvf-editor-syntax-heading)",
     fontWeight: "600",
   },
-  // A11：`//` 注释按"不上色"处理（与 `#` 的既有约定一致）—— 这里只给一个极轻的
-  // 斜体，让注释在满屏数据里可辨但不抢眼；不引入新的主题变量，避免主题漂移。
+  // A11：`//` 注释只给一个极轻的斜体，让它在满屏数据里可辨但不抢眼；
+  // 不引入新的主题变量，避免主题漂移（`#` 仍然不上色，保持既有约定）。
   { tag: tags.lineComment, fontStyle: "italic", opacity: "0.75" },
+  { tag: tags.bracket, color: "var(--pvf-editor-syntax-heading)" },
 ]);
 
 export const pvfHighlighting = syntaxHighlighting(pvfHighlightStyle);
