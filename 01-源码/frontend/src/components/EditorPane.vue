@@ -513,6 +513,29 @@ function onListDuplicateLocate(line: number): void {
   if (!tab) return;
   void editor.revealFileLine(tab.index, line);
 }
+
+/**
+ * A7 行内错误标记：把「清单查重」的问题行喂给编辑器（行底红 + 行号旁红点 + 悬浮原因）。
+ *
+ * 稳定引用 = 不抖动：computed 只在查重结果变化时重算，所以编辑器的 watch 不会被
+ * 每次渲染触发；不匹配当前文件时返回同一个常量空数组。
+ * 标记：pvfInlineProblemsA7_20261006
+ */
+const EMPTY_PROBLEMS: { line: number; message: string }[] = [];
+const listDuplicateProblems = computed(() => {
+  const out: { line: number; message: string }[] = [];
+  for (const issue of listDuplicate.issues ?? []) {
+    for (const entry of issue.entries ?? []) {
+      out.push({ line: entry.line, message: issue.message });
+    }
+  }
+  return { fileName: listDuplicate.fileName, list: out };
+});
+
+function problemsFor(tab: { path: string }): { line: number; message: string }[] {
+  const current = listDuplicateProblems.value;
+  return current.fileName === tab.path ? current.list : EMPTY_PROBLEMS;
+}
 type FileTagKind = "id" | "name" | "path";
 interface FileTag {
   kind: FileTagKind;
@@ -1234,6 +1257,7 @@ function onDrop(event: DragEvent): void {
             :reveal="revealFor(tab.index)"
             :active="activeKeyStr === String(tab.index)"
             :list-names="isListFile(tab.path)"
+            :problems="problemsFor(tab)"
             @change="(text: string) => editor.updateContent(tab.index, text)"
             @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"
             @activate-reference="(fileIndex: number) => onActivateReference(fileIndex, paneId)"

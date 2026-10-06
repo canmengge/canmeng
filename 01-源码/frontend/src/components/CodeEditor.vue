@@ -11,6 +11,8 @@ import {
   rectangularSelection,
   crosshairCursor,
   Decoration,
+  GutterMarker,
+  gutter,
   hoverTooltip,
   tooltips,
   WidgetType,
@@ -80,6 +82,11 @@ const props = defineProps<{
   reveal?: { seq: number; needles: string[]; line?: number } | null;
   /** .lst 清单文件：在可见行路径后显示目标文件名称（惰性，见 listNames.ts）。 */
   listNames?: boolean;
+  /**
+   * A7 行内错误标记：`{ line, message }`（**1 基**行号）。数据来自「清单查重」结果；
+   * 只作用于普通文件通道，且**文档一改就自动清空**（行号会失效，重新查重再出现）。
+   */
+  problems?: { line: number; message: string }[] | null;
   /**
    * 本标签当前是否可见。标签切换走 v-show（NTabPane 的 `show:lazy`），隐藏时
    * display:none 会把编辑器滚动位置归零 —— 靠这个信号在重新可见时把位置写回去。
@@ -619,6 +626,72 @@ const diagnosticLineField = StateField.define<DecorationSet>({
 });
 
 /**
+ * A7 行内错误标记：把校验问题（当前接「清单查重」）画到行上 —— 行底红色 + 行号旁红点，
+ * 鼠标停在行号红点或该行上直接显示原因（原生 `title`，不再引入浮层机制）。
+ *
+ * 语义约定：**文档一改就清空**（存的是"查重那一刻"的行号，正文改过就不再对应），
+ * 用户重新查重即再次出现。只装普通文件通道。
+ * 标记：pvfInlineProblemsA7_20261006
+ */
+const setProblems = StateEffect.define<{ line: number; message: string }[]>();
+
+const problemsField = StateField.define<readonly { line: number; message: string }[]>({
+  create: () => [],
+  update(list, transaction) {
+    if (transaction.docChanged) return [];
+    for (const effect of transaction.effects) {
+      if (effect.is(setProblems)) return effect.value;
+    }
+    return list;
+  },
+});
+
+/** 行底高亮 + `title`（鼠标停在该行即显示原因）。 */
+const problemsDeco = EditorView.decorations.compute([problemsField], (state) => {
+  const list = state.field(problemsField);
+  if (list.length === 0) return Decoration.none;
+  const ranges: Range<Decoration>[] = [];
+  for (const item of list) {
+    if (!Number.isFinite(item.line) || item.line < 1 || item.line > state.doc.lines) continue;
+    ranges.push(
+      Decoration.line({
+        class: "cm-problem-line",
+        attributes: { title: item.message },
+      }).range(state.doc.line(item.line).from)
+    );
+  }
+  return Decoration.set(ranges, true);
+});
+
+class ProblemMarker extends GutterMarker {
+  constructor(readonly message: string) {
+    super();
+  }
+  eq(other: ProblemMarker): boolean {
+    return other.message === this.message;
+  }
+  toDOM(): HTMLElement {
+    const dom = document.createElement("div");
+    dom.className = "cm-problem-marker";
+    dom.textContent = "●";
+    dom.title = this.message;
+    return dom;
+  }
+}
+
+/** 行号旁的红点：只在有问题的行上出现，`title` 直接说明原因。 */
+const problemsGutter = gutter({
+  class: "cm-problem-gutter",
+  lineMarker(view, line) {
+    const list = view.state.field(problemsField, false);
+    if (!list || list.length === 0) return null;
+    const number = view.state.doc.lineAt(line.from).number;
+    const hit = list.find((item) => item.line === number);
+    return hit ? new ProblemMarker(hit.message) : null;
+  },
+});
+
+/**
  * tab 箭头的形状：**与 CodeMirror 内置完全相同的几何**（同一张 200×20 的 SVG、
  * 同样 `auto 100%` + `right 90%`，仍会随 tab 宽度被裁切 —— 观感与原版一致）。
  * 这里只把它当"形状遮罩"，颜色交给 `background-color: currentColor`：
@@ -1024,6 +1097,10 @@ function makeExtensions(themeId: ResolvedThemeId) {
     // A3：正文 token 悬浮提示（段注释 / 物品编号 / 文件路径）
     annotationHover,
     diagnosticLineField,
+    // A7：行内错误标记（行底 + 行号旁红点 + 原生 title 说明原因）
+    problemsField,
+    problemsDeco,
+    problemsGutter,
     indentUnit.of("\t"),
     // .lst 清单：可见行路径后显示目标文件名称（惰性，不影响打开速度）。
     ...(props.listNames ? [listNamePlugin] : []),
@@ -1277,6 +1354,14 @@ watch(
   // 遍历几十万条标注做依赖收集，是打开大清单时卡顿的次要来源。
 );
 
+// A7：行内错误标记。同样是整份替换语义（引用变才 dispatch），不做 deep 比较。
+watch(
+  () => props.problems,
+  (problems) => {
+    view?.dispatch({ effects: setProblems.of(problems ?? []) });
+  }
+);
+
 watch(
   () => props.readOnly,
   (ro) => {
@@ -1512,6 +1597,22 @@ watch(
 .code-editor :deep(.cm-diagnostic-line) {
   background: var(--pvf-error-surface);
   box-shadow: inset 3px 0 0 var(--pvf-error);
+}
+/* A7：行内错误标记（行底同款红底 + 行号旁红点，原因走原生 title） */
+.code-editor :deep(.cm-problem-line) {
+  background: var(--pvf-error-surface);
+  box-shadow: inset 3px 0 0 var(--pvf-error);
+}
+.code-editor :deep(.cm-problem-marker) {
+  height: 100%;
+  padding: 0 2px;
+  color: var(--pvf-error);
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+}
+:global(.cm-problem-gutter) {
+  width: 14px;
 }
 /* A3：正文悬浮提示的外观（与注解胶囊的提示同款配色） */
 :global(.cm-annotation-hover) {
