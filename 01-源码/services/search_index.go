@@ -382,6 +382,7 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 				}
 			}
 			records, recordsByFile := buildSearchRecords(paths, metadata, byFile)
+			enrichItemShopNames(a, records, nil)
 			treeTagsByFile := buildTreeTags(records, recordsByFile)
 			if c.publishSearchCandidate(a, gen, ctx, startedAt, records, recordsByFile, metadata, treeTagsByFile, visuals, cached.Total, cached.Skipped, cached.SpecsFingerprint, false, true) {
 				indexLog.Info("搜索索引直接命中磁盘缓存",
@@ -501,6 +502,7 @@ func (c *core) buildSearchIndex(ctx context.Context, gen uint64, a *pvf.Archive,
 	}
 
 	records, recordsByFile := buildSearchRecords(paths, metadata, byFile)
+	enrichItemShopNames(a, records, nil)
 	treeTagsByFile := buildTreeTags(records, recordsByFile)
 	visualsByFile := make(map[int32]fileVisuals, len(metadataByIndex))
 	for fileIndex, scriptMetadata := range metadataByIndex {
@@ -730,6 +732,7 @@ func (c *core) buildSearchIndexDelta(ctx context.Context, gen uint64, a *pvf.Arc
 		}
 	}
 	records, recordsByFile := buildSearchRecords(paths, metadata, byFile)
+	enrichItemShopNames(a, records, nil)
 	treeTagsByFile := buildTreeTags(records, recordsByFile)
 	total := len(metadata) + oldSkipped
 	if !c.publishSearchCandidate(a, gen, ctx, startedAt, records, recordsByFile, metadata, treeTagsByFile, visuals, total, oldSkipped, searchIndexSpecFingerprint(specs), false, false) {
@@ -1522,6 +1525,38 @@ func lowerNameFromPath(name, lowerPath string) string {
 	return lowerPath[start:]
 }
 
+// enrichItemShopNames 把「商店 → 配属 NPC 的名字」补到这些索引记录上。
+//
+// 背景（2026-10-06 用户实测）：商店文件自己没有 [name]，名字要靠它的 [NPC] 去 NPC 名字表里查；
+// 而 refreshItemShopNamesLocked 只在**编辑 NPC 文件**时才跑 ⇒ 初次建索引（以及命中磁盘缓存）时
+// 商店名一直是空，文件树 / 标签上就只剩商店编号（用户看到的 `100000307`）。
+// 这里在"建完记录 → 组装标签"之间统一补一次，树标签就会显示 [编号] [配属 NPC 名]。
+func enrichItemShopNames(a *pvf.Archive, records []searchRecord, npcNames map[string]string) {
+	if a == nil || len(records) == 0 {
+		return
+	}
+	if npcNames == nil {
+		npcNames = buildNPCNameIndexFromArchive(a)
+	}
+	if len(npcNames) == 0 {
+		return
+	}
+	for index := range records {
+		record := &records[index]
+		if record.hit.Category == SearchCategoryFile || !isItemShopEntry("", record.hit.Path) {
+			continue
+		}
+		if strings.TrimSpace(record.hit.Name) != "" {
+			continue
+		}
+		name, _, err := readIndexedNameFromArchive(a, record.hit.FileIndex, itemShopListPath, npcNames)
+		if err != nil || strings.TrimSpace(name) == "" {
+			continue
+		}
+		record.hit.Name = name
+		record.lowerName = strings.ToLower(name)
+	}
+}
 func buildTreeTags(records []searchRecord, recordsByFile map[int32][]int) map[int32][]TreeTag {
 	tagsByFile := make(map[int32][]TreeTag)
 	for fileIndex, recordIndexes := range recordsByFile {
