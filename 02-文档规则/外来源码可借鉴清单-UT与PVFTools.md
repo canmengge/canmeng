@@ -3,7 +3,7 @@
 > 位置：`d:\110AI\02-文档规则\外来源码可借鉴清单-UT与PVFTools.md`
 > 用途：**PVF工坊（编辑器）可拓展 / 可优化项的全量清单**。用户圈定编号后按项目规矩开工（动 Go 走「构建→核验→告知」三步，改完提交打标签）。
 > **用户决策版（先看那份）**：`编辑器可加功能一览.md` —— 同一编号体系，按「作用 / 优先级 / 成本 / 风险」组织；本文件只管施工细节。
-> 最后更新：2026-10-06
+> 最后更新：2026-10-06（口径修正：A1 只剩"Nut 参数提示 / 自定义补全数据"、A2/A8 已完成归入第八节、A5 标取消、A3/A4 已撤销；**B1 第 1/2 批已落地（4.10.7 / 4.10.9）**；**C5 + D2 合并为「可视化商店」**：物品增删、页签切换、新建条目已做，价格待查来源）
 > 相关文档：`源码落点速查.md`（落点+踩坑）、`编辑器内核红线.md`（F1/F2/F3 冻结层）、`01-项目开发规则.md` §0/§C
 
 ---
@@ -42,7 +42,7 @@
 
 | # | 能力 | 来源文件 | 我们现状 | 备注 |
 | --- | --- | --- | --- | --- |
-| B1 | **30 个特殊段专属格式规则** | `SourceLibraries\PvfCode.Services\PvfCode\Services\PvfParsingNew\CustomSectionFormat\*`（`independent_drop`、`independent_drop_list`、`Worlddrop`、`map_monster`、`etc_shp`、`Stk_Blueprint`、`Stk_upgradable_legacy`、`recipelistmakeequip`、`ShopItemList`、`qst_reward__selection_int_data`、`RegenerationPrice`、`EquipmentLotteryList`、`PremiumTerm`、`RandomCategory`、`VariableGroup`、`UpgradeEffect`、`SpecialPassiveObject(Item)`、`LevelInfo`、`DungeonName`、`DungeonPartyBalance`、`compoundavatar`、`BookTitle`、`AvatarSelectAbility`、`CountPrefixedGrid`…） | **第 1 批已落地**（2026-10-06，构建 4.10.7，纯 `config\formats.json` 数据）：`装备升级系统`（need item / fusion need item / addition need item / add upgrade rate / add separate rate）、`NPC 商店物品`（item list）；真实归档实测「0 个不完整行」才收 | 形态③④（`[dungeon condition]` 固定头+N 组、`[replace list]` / `[shop]` 包装与键值块）**用户 2026-10-06 明确不做**（已有独立可视化编辑）；UT 清单里 `Worlddrop` / `VariableGroup` / `UpgradeEffect` / `Stk_*` / `recipelistmakeequip` 等留待后续批次，口径先出样张 |
+| B1 | **30 个特殊段专属格式规则** | `SourceLibraries\PvfCode.Services\PvfCode\Services\PvfParsingNew\CustomSectionFormat\*`（`independent_drop`、`independent_drop_list`、`Worlddrop`、`map_monster`、`etc_shp`、`Stk_Blueprint`、`Stk_upgradable_legacy`、`recipelistmakeequip`、`ShopItemList`、`qst_reward__selection_int_data`、`RegenerationPrice`、`EquipmentLotteryList`、`PremiumTerm`、`RandomCategory`、`VariableGroup`、`UpgradeEffect`、`SpecialPassiveObject(Item)`、`LevelInfo`、`DungeonName`、`DungeonPartyBalance`、`compoundavatar`、`BookTitle`、`AvatarSelectAbility`、`CountPrefixedGrid`…） | **第 1 / 2 批已落地**（2026-10-06，构建 4.10.7 → 4.10.9，纯 `config\formats.json` 数据）：第 1 批 `装备升级系统`（need item / fusion need item / addition need item / add upgrade rate / add separate rate）；第 2 批 **NPC 商店**（`tab` / `item list` / `npc` / `type` / `message`）；真实归档实测「0 个不完整行 / 0 告警」才收 | 形态③④（`[dungeon condition]` 固定头+N 组、`[replace list]` / `[shop]` 包装与键值块）**用户 2026-10-06 明确不做**（已有独立可视化编辑）；UT 清单里 `Worlddrop` / `VariableGroup` / `UpgradeEffect` / `Stk_*` / `recipelistmakeequip` 等留待后续批次，口径先出样张 |
 | B2 | **表格行格式化**（固定列 / 两列 / 五列 / 物品字典） | `PvfParsingNew\TableFormatters\*`（5 个） | FormView 表格视图 | 提升可读性 |
 | B3 | **PraseInfo「每行 token 数」规则** | `PvfParsingNew\PraserInfoProviderConfiger.cs` 37K、`ScriptFileParserNew.cs` 41K | **数据已落地未消费**（待办 P4-21） | 直接接 |
 
@@ -54,7 +54,7 @@
 | C2 | **装备预览数据构建（词条 / 套装）** | `PreviewPvfFileFolder\FilePreviewData_Equ.cs` 11.6K、`PvfFilePreviewHelper.cs` 29K、`EquPartsetFile.cs`、`PieceSetAbility.cs` | 有 `EquipmentPreview.vue` | 可补齐套装 |
 | C3 | **时装「选择能力」预览** | `PreviewPvfFileFolder\avatar_select_ability*.cs` | 无 | |
 | C4 | **技能树 / 套装技能解析** | `DocumentFolder\PvfSkillTreeParser.cs`、`PvfEquipmentSetSkillDataParser.cs`、`PvfBoosterPreviewParser.cs` | 无 | |
-| C5 | **NpcShop 预览** | `PreviewPvfFileFolder\NpcShop\*` | 无 | 配合 D2 |
+| C5 | **NpcShop 预览** | `PreviewPvfFileFolder\NpcShop\*` | **已并入「可视化商店」**（2026-10-06，构建 4.10.9）：NPC（编号+名字，走 `npc` ref）/ 商店类型 / 条目（页签）/ 物品列表 / 提示语都在表格里 | **"什么价"没做**：实测 `.shp` 无价格字段（权威注释 60 段里也无 price），价格来源待查 |
 | C6 | **NPK 读取 / 图标表** | `PvfCode.Services\PvfCode\Services\Npk\NpkImageArchiveReader.cs` 12.9K、`ImagePack2Service.cs` 23.9K；`godof\npk\img\`（v1/v2/v4/v5 + 1555/4444/8888 格式） | 有缩略图 / 预览 | 对照补格式 |
 | C7 | ANI / NPK 内联预览窗口 | `DocumentFolder\AniNpkLineElement\*` | 有 `AniPreview.vue` | 对照 |
 
@@ -65,7 +65,7 @@
 | # | 能力 | 来源文件 | 我们现状 |
 | --- | --- | --- | --- |
 | D1 | **掉率管理 / 世界掉落**（怪物掉率·深渊掉率·翻牌掉率·世界掉落） | UT：`Views\Tools\DropRateManagementWindow.cs` 9.9K、`Views\Tools\WorlddropTool*.cs`、`ViewModels\DropRateManagement\DropRateDocument.cs` 9K；PVFTools：`views\WorldDropView.vue`/`MonsterDrop.vue`/`HellDrop.vue`/`ClearRewardDrop.vue` + `internal\world_drop\mgr.go` | 无 |
-| D2 | **NPC 商店编辑器 / 新建商店条目** | UT：`Views\NpcShopEditor\*`（`WinNpcShopEditor.cs` 8K、`NpcShopEditorViewModel.cs` 19.8K、`NpcShopItem.cs` 7.3K）、`Views\PvfTreeFolder\CreateShopItem.cs`、`Views\Tools\ShopManager\WinShopManager.cs` | 无 |
+| D2 | **NPC 商店编辑器 / 新建商店条目** | UT：`Views\NpcShopEditor\*`（`WinNpcShopEditor.cs` 8K、`NpcShopEditorViewModel.cs` 19.8K、`NpcShopItem.cs` 7.3K）、`Views\PvfTreeFolder\CreateShopItem.cs`、`Views\Tools\ShopManager\WinShopManager.cs` | **部分已落地**（2026-10-06，构建 4.10.9）：物品增删（排队 → 保存改动）、页签切换、**新建商店条目**（`AppendShopTab`：`[tab]` + 反引号条目名 + 含首个物品的 `[item list]`；落点认同缩进的 `[/tab]` 之后 + 重新投影校验） | 价格 / 限购未做（`.shp` 无价格字段，先查来源）；`.lst` 只是**文件清单**，不是商店条目（用户 2026-10-06 纠正） |
 | D3 | **独立掉落编辑** | UT：`Views\independent_drop\*` + `ViewModels\independent_drop\*`（`Independent_drop_ViewModel.cs` 23.4K）+ B1 的 `independent_drop*` 格式 | **已有**（P0 同一功能）⇒ 拿来对照 / 补齐 |
 | D4 | **LST 工具集**（排序 / 合并 / 批量） | UT：`Views\LstTools\WinLstTools.cs` + `WinLstToolsViewModel.cs` 16.9K | 有查重，缺工具集 |
 | D5 | **批量重命名 / 树内剪贴板** | UT：`ViewModels\TreeFolder\ViewReNmaeNodesViewMode.cs` 15K、`TreeFileClipboardManager.cs` | 待确认 |
