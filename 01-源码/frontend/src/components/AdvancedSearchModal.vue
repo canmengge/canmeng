@@ -998,21 +998,30 @@ function buildSearchIndex(): void {
   color: var(--pvf-text-muted, #9aa4b2);
   font-size: 12px;
 }
-/* C：目录行 = 目录名 + 中文翻译标签（与左侧文件树同源；用户 2026-10-06 要求） */
-.as-scope-label {
+/* C：目录行 = 目录名 + 中文翻译标签（与左侧文件树同源；用户 2026-10-06 要求）。
+   注意：这一行的 DOM 是 NTree 的 `render-label` 生成的，**不在本组件模板里**，
+   本文件又是 scoped CSS（会带 data-v-*）⇒ 普通类选择器匹配不到、样式不生效
+   （实测症状：标签与目录名粘连、没有底色框）。所以这三条必须用 `:global`。 */
+:global(.as-scope-label) {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
-.as-scope-name {
+/* 固定宽度 ⇒ 所有目录的翻译对齐成一列（用户要的"图1 那种"观感） */
+:global(.as-scope-name) {
+  display: inline-block;
+  min-width: 132px;
   white-space: nowrap;
 }
-.as-scope-tag {
-  padding: 0 4px;
-  color: var(--pvf-text-muted, #9aa4b2);
+/* 翻译标签：颜色 + 底色框 */
+:global(.as-scope-tag) {
+  padding: 0 6px;
+  color: var(--pvf-primary, #4a9eff);
   font-size: 11px;
+  line-height: 16px;
   white-space: nowrap;
-  background: rgba(127, 127, 127, 0.16);
+  background: rgba(74, 158, 255, 0.16);
+  border: 1px solid rgba(74, 158, 255, 0.3);
   border-radius: 3px;
 }
 </style>
