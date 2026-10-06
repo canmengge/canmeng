@@ -620,6 +620,25 @@ function buildSearchIndex(): void {
           <template #suffix>
             <!-- 灰色说明：告诉用户这里可以精确搜索（2026-10-06 用户要求放大图标 + 前面加说明） -->
             <span class="as-word-hint">可精确搜索</span>
+            <!-- 细线箭头指向右侧的 ◎（2026-10-06 用户要求"回字后面加个箭头指向 UI"）：
+                 静止时低调灰，鼠标移到说明或箭头上会变蓝并轻微右移，引导视线到按钮 -->
+            <span class="as-word-arrow" aria-hidden="true">
+              <svg viewBox="0 0 16 8" width="16" height="8" fill="none">
+                <path
+                  d="M0.5 4 H12.6"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M9.4 1.2 L12.8 4 L9.4 6.8"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
             <NTooltip trigger="hover">
               <template #trigger>
                 <button
@@ -876,6 +895,21 @@ function buildSearchIndex(): void {
   font-size: 12px;
   white-space: nowrap;
   user-select: none;
+}
+/* 说明与图标之间的细线箭头：低调灰，悬停变蓝并轻微右移（引导视线） */
+.as-word-arrow {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px 0 0;
+  color: #8a93a6;
+  opacity: 0.8;
+  transition: transform 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+.as-word-hint:hover + .as-word-arrow,
+.as-word-arrow:hover {
+  color: var(--pvf-primary, #4a9eff);
+  opacity: 1;
+  transform: translateX(2px);
 }
 .as-word-toggle:hover {
   color: var(--pvf-text-primary, #e6e8ec);
