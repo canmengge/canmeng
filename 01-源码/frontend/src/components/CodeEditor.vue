@@ -11,6 +11,7 @@ import {
   rectangularSelection,
   crosshairCursor,
   Decoration,
+  hoverTooltip,
   tooltips,
   WidgetType,
   type DecorationSet,
@@ -564,6 +565,39 @@ const annotationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/**
+ * A3 正文悬浮提示：把已有注解（**段注释 / 物品编号 / 文件路径**）挂到正文 token 上。
+ *
+ * 此前只有「注解胶囊」自己能弹提示（自绘 NTooltip），鼠标停在被注解的**原文**上没有任何
+ * 反馈；这里用 CodeMirror 官方 `hoverTooltip` 统一补上，数据仍走同一份
+ * `annotationDisplayField` —— 不新增后端、不新增数据源。
+ * 标记：pvfAnnotationHoverA3_20261006
+ */
+const annotationHover = hoverTooltip(
+  (view, pos) => {
+    const display = view.state.field(annotationDisplayField, false);
+    if (!display) return null;
+    const hit = display.annotations.find(
+      (item) => pos >= item.start && pos <= item.end && !!(item.title || item.content)
+    );
+    if (!hit) return null;
+    const text = [hit.title, hit.content].filter(Boolean).join("\n\n");
+    if (!text) return null;
+    return {
+      pos: hit.start,
+      end: hit.end,
+      above: true,
+      create: () => {
+        const dom = document.createElement("div");
+        dom.className = "cm-annotation-hover";
+        dom.textContent = text;
+        return { dom };
+      },
+    };
+  },
+  { hoverTime: 220 }
+);
+
 const diagnosticLineField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
   update(decorations, transaction) {
@@ -987,6 +1021,8 @@ function makeExtensions(themeId: ResolvedThemeId) {
     readOnlyComp.of(EditorState.readOnly.of(!!props.readOnly)),
     annotationDisplayField,
     annotationField,
+    // A3：正文 token 悬浮提示（段注释 / 物品编号 / 文件路径）
+    annotationHover,
     diagnosticLineField,
     indentUnit.of("\t"),
     // .lst 清单：可见行路径后显示目标文件名称（惰性，不影响打开速度）。
@@ -1476,6 +1512,19 @@ watch(
 .code-editor :deep(.cm-diagnostic-line) {
   background: var(--pvf-error-surface);
   box-shadow: inset 3px 0 0 var(--pvf-error);
+}
+/* A3：正文悬浮提示的外观（与注解胶囊的提示同款配色） */
+:global(.cm-annotation-hover) {
+  max-width: 360px;
+  padding: 8px 10px;
+  color: var(--pvf-text-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  background: var(--pvf-surface-elevated);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px var(--pvf-effect-tooltip-shadow);
 }
 .code-editor :deep(.cm-scroller) {
   flex: 1 1 auto;
