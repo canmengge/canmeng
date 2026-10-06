@@ -52,6 +52,9 @@ import { useEditorStore } from "../stores/editor";
 import { useFormViewStore } from "../stores/formView";
 import { FormViewRuleText } from "../services/saveApi";
 import type { FormViewRow, FormViewSection } from "../services/formViewApi";
+// 通用段行增删（只给"非独立掉落"文件族用）：与独立掉落那套**分开做、互不影响**
+// （用户 2026-10-06 要求：每个可视化 UI 的 UI 与功能都要独立）。
+import { DeleteSectionRows, InsertSectionRow } from "../services/formViewApi";
 
 const formView = useFormViewStore();
 const editor = useEditorStore();
@@ -496,8 +499,16 @@ watch(
   () => formView.projection,
   () => {
     page.value = 1;
-    // 换文件族 / 重新解析 / 保存回传 ⇒ 段块可能整套变了，回到"默认主块"（行数最多的那块）。
-    activeBlockKey.value = "";
+    // 段块**不复位**：只要用户选中的那一块还在（例如删掉一行后重新投影，键"S段名#出现序号"不变），
+    // 就留在原地 —— 否则每改一次都会跳回默认主块，体验很差。
+    // 换了文件族 / 那一块确实没了，才回到默认主块（行数最多的那块）。
+    const blocks = formView.projection?.sections ?? [];
+    if (
+      activeBlockKey.value !== "" &&
+      !blocks.some((section) => blockKey(section) === activeBlockKey.value)
+    ) {
+      activeBlockKey.value = "";
+    }
     // 每次重新解析都回到"按内容自适应"：避免上一次拖出来的宽度把撑开的空白冻住
     // （2026-10-03 事故：中间那一片空白一直消不掉）。
     columnWidths.value = {};
@@ -792,6 +803,95 @@ const pendingDeleteCount = computed(() => pendingDeletes.value.length);
  * "删除那边可以选择删除多个列表掉落"）。
  */
 const selectedRows = ref<Set<number>>(new Set());
+
+// ---- 通用段行编辑（只给"非独立掉落"文件族用）----
+//
+// 与独立掉落那套刻意**分开**：独立掉落是"先本地排队 → 点「保存改动」批量提交"，且删除会连带
+// 它自己的 `[list]` 块；这里是"点一下立即写归档内存"（后端返回重新投影的这一段），只作用于
+// **当前选中的段块**（如商店的某一页签）。分开的原因（用户 2026-10-06 明确要求）：
+// 一套 UI / 功能的改动不能影响别的可视化模块。
+// 标记：pvfRowEditModule_20261006
+const rowEditValue = ref("");
+const rowEditBusy = ref(false);
+const rowEditError = ref("");
+
+/** 当前文件族是不是独立掉落（独立掉落走它自己那套 UI 与后端方法）。 */
+const isIndependentDrop = computed(
+  () => (formView.formatId ?? "").trim().toLowerCase() === "independent_drop"
+);
+
+/** 输入编号时实时显示名称（复用现有的物品名解析）。 */
+function rowEditItemName(id: string): string {
+  return dropItemName(id);
+}
+
+/**
+ * 行编辑后整份重投影。
+ *
+ * 段块**刻意不复位**：删掉一行后重新投影，用户应留在同一页签 —— 页签键是"段名#出现序号"，
+ * 删行不改这个键；万一那一块真的没了，投影 watcher 会兜底回到默认主块。
+ */
+async function refreshAfterRowEdit(note: string): Promise<void> {
+  await formView.project();
+  selectedRows.value = new Set();
+  message.success(`${note}（已写进归档内存，点主工具条「保存 PVF」才落盘）`);
+}
+
+/** 往**当前段块**（当前页）末尾追加一行。只对有 1 列的段开放（如商店物品列表）。 */
+async function insertRowNow(): Promise<void> {
+  const section = mainSection.value;
+  if (!section) return;
+  const value = rowEditValue.value.trim();
+  if (value === "") {
+    message.warning("先填物品编号");
+    return;
+  }
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再加（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  rowEditBusy.value = true;
+  rowEditError.value = "";
+  try {
+    await InsertSectionRow(formView.filePath.trim(), section.section, section.occurrence, [value]);
+    rowEditValue.value = "";
+    await refreshAfterRowEdit("已追加到该段块末尾");
+  } catch (issue: any) {
+    rowEditError.value = String(issue?.message ?? issue);
+  } finally {
+    rowEditBusy.value = false;
+  }
+}
+
+/** 删除**当前段块**里选中的行（后端从后往前删，删完重新投影校验行数）。 */
+async function deleteRowsNow(): Promise<void> {
+  const section = mainSection.value;
+  if (!section || selectedRows.value.size === 0) return;
+  if (fileOpenInEditor()) {
+    message.warning(
+      "该文件正在编辑区打开：请先关掉那个标签页，再删（避免两处同时改同一份文本）"
+    );
+    return;
+  }
+  const indexes = [...selectedRows.value].sort((left, right) => left - right);
+  rowEditBusy.value = true;
+  rowEditError.value = "";
+  try {
+    await DeleteSectionRows(
+      formView.filePath.trim(),
+      section.section,
+      section.occurrence,
+      indexes
+    );
+    await refreshAfterRowEdit(`已删除 ${indexes.length} 行`);
+  } catch (issue: any) {
+    rowEditError.value = String(issue?.message ?? issue);
+  } finally {
+    rowEditBusy.value = false;
+  }
+}
 /** 连选的锚点：上一次不带 Shift 点击的那一行。 */
 const selectAnchor = ref<number | null>(null);
 
@@ -1853,19 +1953,65 @@ function resetColumnWidths(): void {
               <NButton v-if="searchActive" size="tiny" quaternary @click="clearSearch">
                 清除
               </NButton>
-              <NButton size="tiny" type="primary" @click="dropFormVisible = true">
-                添加掉落
-              </NButton>
-              <NButton
-                size="tiny"
-                type="error"
-                ghost
-                :disabled="selectedRows.size === 0"
-                title="先选中要删的行：单击一行 · Ctrl+左键多选 · Shift+左键连选一片（会把这些掉落整条删掉，含各自的候选列表）"
-                @click="queueDeleteSelected"
-              >
-                删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
-              </NButton>
+              <!-- 独立掉落**专属**工具：从 2026-10-06 起加了门禁 —— 以前它对所有文件族都显示，
+                   于是在商店里点「删除选中」走的是写死 `[independent drop]` 的删除函数，
+                   报「规则里段 [independent drop] 的 rowTokens 无效」（用户实测截图里的报错）。 -->
+              <template v-if="isIndependentDrop">
+                <NButton size="tiny" type="primary" @click="dropFormVisible = true">
+                  添加掉落
+                </NButton>
+                <NButton
+                  size="tiny"
+                  type="error"
+                  ghost
+                  :disabled="selectedRows.size === 0"
+                  title="先选中要删的行：单击一行 · Ctrl+左键多选 · Shift+左键连选一片（会把这些掉落整条删掉，含各自的候选列表）"
+                  @click="queueDeleteSelected"
+                >
+                  删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
+                </NButton>
+              </template>
+
+              <!-- 通用段行编辑（非独立掉落文件族）：作用于**当前选中的段块**（如商店的某一页签）。
+                   与上面那套**完全分开**：这里点一下立即写归档内存，且不连带删 `[list]` 块。
+                   标记：pvfRowEditModule_20261006 -->
+              <template v-else>
+                <template v-if="mainSection.columns.length === 1">
+                  <span class="fv-label">物品</span>
+                  <NInput
+                    v-model:value="rowEditValue"
+                    size="small"
+                    style="width: 140px"
+                    placeholder="物品编号，如 14400"
+                    @keyup.enter="insertRowNow"
+                  />
+                  <span v-if="rowEditItemName(rowEditValue)" class="fv-drop-name">
+                    {{ rowEditItemName(rowEditValue) }}
+                  </span>
+                  <NButton
+                    size="tiny"
+                    type="primary"
+                    :loading="rowEditBusy"
+                    :disabled="rowEditValue.trim() === ''"
+                    title="追加到当前段块（当前页）的末尾；只写归档内存，点主工具条「保存 PVF」才落盘"
+                    @click="insertRowNow"
+                  >
+                    添加物品
+                  </NButton>
+                </template>
+                <NButton
+                  size="tiny"
+                  type="error"
+                  ghost
+                  :loading="rowEditBusy"
+                  :disabled="selectedRows.size === 0"
+                  title="删除当前段块里选中的行；只写归档内存，点主工具条「保存 PVF」才落盘"
+                  @click="deleteRowsNow"
+                >
+                  删除选中{{ selectedRows.size > 0 ? ` (${selectedRows.size})` : "" }}
+                </NButton>
+                <span v-if="rowEditError" class="fv-error">{{ rowEditError }}</span>
+              </template>
               <span class="fv-tools-gap" />
               <span
                 v-if="pendingCount + pendingInsertCount + pendingDeleteCount > 0"

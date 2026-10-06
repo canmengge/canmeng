@@ -81,6 +81,10 @@ export const useFormViewStore = defineStore("formView", () => {
     if (format && format.files.length > 0) {
       filePath.value = format.files[0];
     }
+    // 用户 2026-10-06 实测：在下拉里换了文件族，表格却还是上一个文件族的
+    //（原来要手动在路径框里按回车才重新解析）⇒ 切族后**自动重新解析**，做到"丝滑切换"。
+    // 归档没打开 / 正在解析时 project() 自己会跳过，不会出错。
+    void project();
   });
 
   // 独立窗口关掉后复位标记（工具条「可视化编辑区」按钮的已打开状态）。

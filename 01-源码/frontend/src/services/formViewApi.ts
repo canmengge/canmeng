@@ -320,3 +320,34 @@ export interface FormViewCompletionCatalog {
 export function CompletionCatalog(): $CancellablePromise<FormViewCompletionCatalog> {
   return $Call.ByID(3329411431);
 }
+
+/**
+ * 往「段 + 第几次出现」的末尾追加一行（`values` 个数必须等于规则里该段的 rowTokens）。
+ *
+ * 这是**通用的段行编辑**，与独立掉落那套（`AddIndependentDrop` / `AddDropCandidate`）**互不影响**：
+ * 独立掉落有自己的语义（一行 + 紧跟的 `[list]` 块、17 列写死），见 `formview_add.go` / `formview_delete.go`。
+ * fqn = pvfine/services.FormViewService.InsertSectionRow
+ * 方法 ID 用已知的 `ListFormats`(3541309786) 反验 FNV-1a-32 算法后复算。
+ */
+export function InsertSectionRow(
+  filePath: string,
+  section: string,
+  occurrence: number,
+  values: string[]
+): $CancellablePromise<FormViewSection> {
+  return $Call.ByID(3375162946, filePath, section, occurrence, values);
+}
+
+/**
+ * 删除「段 + 第几次出现」里的若干行（0 基行号；后端从后往前删，删完重新投影校验）。
+ * 同样**不连带删** `[list]` 块 —— 那是独立掉落的专属语义。
+ * fqn = pvfine/services.FormViewService.DeleteSectionRows
+ */
+export function DeleteSectionRows(
+  filePath: string,
+  section: string,
+  occurrence: number,
+  rowIndexes: number[]
+): $CancellablePromise<FormViewSection> {
+  return $Call.ByID(4041113065, filePath, section, occurrence, rowIndexes);
+}
