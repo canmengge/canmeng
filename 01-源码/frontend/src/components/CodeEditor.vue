@@ -63,7 +63,8 @@ import {
   type FormViewCompletionColumn,
   type FormViewCompletionSection,
 } from "../services/formViewApi";
-import { searchHitLines } from "../searchMarks";
+import { clearSearchHitLines, publishSearchHitLines, searchHitLines } from "../searchMarks";
+import { SearchInFile, type FileSearchMatch } from "../services/fileSearchApi";
 
 const props = defineProps<{
   doc: string;
@@ -1137,6 +1138,88 @@ const gotoText = ref("");
 const gotoInput = ref<HTMLInputElement | null>(null);
 const gotoPos = ref({ left: 0, top: 0 });
 
+/**
+ * B（2026-10-06）：**当前文件搜索**（在一个文件里搜正文，带结果列表 + 行号）。
+ *
+ * 为什么单独做一个、而不是用 Ctrl+F：Ctrl+F 那个面板只有输入框与高亮，**没有结果列表**，
+ * 也拿不到"命中行号列表"（于是没法喂给概览条打点）；而这里走的是后端 `SearchInFile` ——
+ * **扫整个文件**（大文件也扫全）、**秒回、零索引、零额外常驻内存**。
+ * 结果行点击即跳到该行；F3 / Shift+F3 前后走；命中行同时发布给概览条打黄点。
+ * 打开方式：Ctrl+Shift+F。标记：pvfFileFindB_20261006
+ */
+const fileFindOpen = ref(false);
+const fileFindText = ref("");
+const fileFindBusy = ref(false);
+const fileFindMatches = ref<FileSearchMatch[]>([]);
+const fileFindTotal = ref(0);
+const fileFindTruncated = ref(false);
+const fileFindCursor = ref(-1);
+const fileFindError = ref("");
+const fileFindInput = ref<HTMLInputElement | null>(null);
+let fileFindRequest = 0;
+
+function openFileFind(): void {
+  if (props.fileIndex == null) return;
+  // 复用 Ctrl+G 浮层的定位方式（同一个 rect 计算，跟着编辑器走）
+  const rect = view?.dom.getBoundingClientRect();
+  if (rect) gotoPos.value = { left: rect.left + 12, top: rect.top + 12 };
+  fileFindOpen.value = true;
+  void nextTick(() => fileFindInput.value?.focus());
+}
+
+function closeFileFind(): void {
+  fileFindOpen.value = false;
+  fileFindMatches.value = [];
+  fileFindTotal.value = 0;
+  fileFindCursor.value = -1;
+  fileFindError.value = "";
+  // B：面板关了就不再宣称"这些行有命中"，把打点清掉（避免留下幽灵点）
+  clearSearchHitLines();
+  view?.focus();
+}
+
+function jumpToFileFind(index: number): void {
+  const match = fileFindMatches.value[index];
+  if (!match) return;
+  fileFindCursor.value = index;
+  revealPosition(match.line);
+}
+
+function stepFileFind(delta: number): void {
+  const total = fileFindMatches.value.length;
+  if (total === 0) return;
+  jumpToFileFind((fileFindCursor.value + delta + total) % total);
+}
+
+async function runFileFind(): Promise<void> {
+  const query = fileFindText.value.trim();
+  if (props.fileIndex == null || query === "" || fileFindBusy.value) return;
+  const request = ++fileFindRequest;
+  fileFindBusy.value = true;
+  fileFindError.value = "";
+  try {
+    // segments 传空：这一版搜的是归档里已保存的文本（未保存改动不入搜，行号才与归档一致）
+    const result = await SearchInFile(props.fileIndex, query, false, false, false, 500, []);
+    if (request !== fileFindRequest) return;
+    const matches = result?.matches ?? [];
+    fileFindMatches.value = matches;
+    fileFindTotal.value = result?.total ?? matches.length;
+    fileFindTruncated.value = result?.truncated ?? false;
+    fileFindCursor.value = matches.length > 0 ? 0 : -1;
+    // 命中行发布给概览条（复用 A6 v2 的通道：黄点）
+    publishSearchHitLines(new Map([[props.fileIndex, matches.map((item) => item.line)]]));
+    if (matches.length > 0) revealPosition(matches[0].line);
+  } catch (error: any) {
+    if (request !== fileFindRequest) return;
+    fileFindError.value = String(error?.message ?? error);
+    fileFindMatches.value = [];
+    fileFindCursor.value = -1;
+    clearSearchHitLines();
+  } finally {
+    if (request === fileFindRequest) fileFindBusy.value = false;
+  }
+}
+
 function openGotoLine(): void {
   if (!view) return;
   const rect = view.dom.getBoundingClientRect();
@@ -1201,6 +1284,15 @@ function makeExtensions(themeId: ResolvedThemeId) {
       ...historyKeymap,
       ...searchKeymap,
       ...foldKeymap,
+      // B：Ctrl/Cmd+Shift+F = 在**当前文件**里搜正文（带结果列表与行号；与 Ctrl+F 的
+      // "只有输入框"面板互补）。标记：pvfFileFindB_20261006
+      {
+        key: "Mod-Shift-f",
+        run: () => {
+          openFileFind();
+          return true;
+        },
+      },
       { key: "Tab", run: insertTab, shift: indentLess },
     ]),
     EditorView.domEventHandlers({
@@ -1572,6 +1664,43 @@ watch(
 
 <template>
   <div ref="host" class="code-editor" />
+  <!-- B 当前文件搜索：结果列表 + 行号；点行跳转、F3/Shift+F3 前后走；命中行会在右侧打黄点 -->
+  <div
+    v-if="fileFindOpen"
+    class="file-find"
+    :style="{ left: `${gotoPos.left}px`, top: `${gotoPos.top}px` }"
+  >
+    <div class="file-find-row">
+      <input
+        ref="fileFindInput"
+        v-model="fileFindText"
+        class="file-find-input"
+        placeholder="在本文件里找（回车搜索 / F3 下一处）"
+        @keydown.stop
+        @keydown.enter.prevent="runFileFind"
+        @keydown.esc.prevent="closeFileFind"
+        @keydown.f3.prevent="stepFileFind($event.shiftKey ? -1 : 1)"
+      />
+      <button class="file-find-btn" :disabled="fileFindBusy" @click="runFileFind">搜索</button>
+      <span v-if="fileFindBusy" class="file-find-meta">搜索中…</span>
+      <span v-else-if="fileFindMatches.length > 0" class="file-find-meta">
+        {{ fileFindCursor + 1 }} / {{ fileFindTotal }}{{ fileFindTruncated ? "（只列前 500 处）" : "" }}
+      </span>
+    </div>
+    <div v-if="fileFindError" class="file-find-error">{{ fileFindError }}</div>
+    <div v-if="fileFindMatches.length > 0" class="file-find-list">
+      <div
+        v-for="(match, index) in fileFindMatches"
+        :key="index"
+        class="file-find-item"
+        :class="{ 'file-find-item--active': index === fileFindCursor }"
+        @click="jumpToFileFind(index)"
+      >
+        <span class="file-find-line">{{ match.line }}</span>
+        <span class="file-find-text">{{ match.text }}</span>
+      </div>
+    </div>
+  </div>
   <!-- A6 概览标记条：贴着滚动条内侧，红色=查重问题行、绿色=当前未保存的改动；点一下跳过去 -->
   <div
     v-if="overview.marks.length > 0 && overviewBox.height > 0"
@@ -1816,6 +1945,88 @@ watch(
 }
 :global(.cm-problem-gutter) {
   width: 14px;
+}
+/* B 当前文件搜索面板（贴在编辑器左上，复用 Ctrl+G 浮层的坐标方式） */
+.file-find {
+  position: fixed;
+  z-index: 30;
+  width: min(520px, 46vw);
+  padding: 8px;
+  background: var(--pvf-surface-elevated);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px var(--pvf-effect-tooltip-shadow);
+}
+.file-find-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.file-find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  color: var(--pvf-text-primary);
+  font-size: 12px;
+  background: var(--pvf-surface-base, transparent);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 4px;
+  outline: none;
+}
+.file-find-btn {
+  padding: 4px 10px;
+  color: var(--pvf-text-primary);
+  font-size: 12px;
+  background: var(--pvf-surface-base, transparent);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.file-find-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.file-find-meta {
+  color: var(--pvf-text-secondary, var(--pvf-text-primary));
+  font-size: 11px;
+  white-space: nowrap;
+}
+.file-find-error {
+  margin-top: 6px;
+  color: var(--pvf-error);
+  font-size: 11px;
+}
+.file-find-list {
+  max-height: 260px;
+  margin-top: 6px;
+  overflow: auto;
+}
+.file-find-item {
+  display: flex;
+  gap: 8px;
+  padding: 2px 4px;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.file-find-item:hover {
+  background: var(--pvf-surface-hover, rgba(127, 127, 127, 0.14));
+}
+.file-find-item--active {
+  background: var(--pvf-surface-hover, rgba(127, 127, 127, 0.22));
+}
+.file-find-line {
+  flex: 0 0 auto;
+  min-width: 48px;
+  color: var(--pvf-editor-syntax-number);
+  text-align: right;
+}
+.file-find-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--pvf-text-primary);
+  white-space: pre;
+  text-overflow: ellipsis;
 }
 /* A6 概览标记条：细窄覆盖层贴在滚动条内侧（fixed，外框由 syncOverviewBox 同步） */
 .overview-marks {
