@@ -28,11 +28,11 @@
 | --- | --- | --- | --- | --- |
 | A1 | **脚本代码补全 + 参数提示（Insight/Overload）+ 用户自定义补全数据** | `DocumentFolder\CodeCompletion\*`（13 个：`CompletionList.cs` 9.9K、`WindowCompletion.cs` 11.8K、`InsightWindow.cs`、`OverloadInsightWindow.cs`、`NutCodeCompletion.cs`、`ScriptCodeCompletion.cs`、`WindowAddCodeCompletionData*.cs`） | **已补齐**（2026-10-06，构建 4.10.2）：后端 `FormViewService.CompletionCatalog` 下发**全量段名** + 段内字段/枚举取值；前端 `pvfCompletionSource` 扩到全量段名并按位置给取值/字段提示 | 仍缺：Nut 脚本**参数提示（Insight/Overload，可走 TS 语言服务签名提示）**与用户自定义补全数据 |
 | A2 | **代码折叠（按段 / 括号）+ 折叠边栏 + 折叠引导线** | `DocumentFolder\Foldings\*`（10 个：`FoldingStrategyBase.cs` 13.5K、`FoldingMargin.cs` 13K、`TabFoldingStrategy.cs`、`BraceFoldingStrategy.cs`、`FoldingGuideLines.cs`） | **已有**（2026-10-06） | `codeFolding()` + `foldGutter()` + 自定义 `pvfFoldService`（按 `[段]` 折叠）+ `foldKeymap`；只装普通文件通道，**别圈** |
-| A3 | **悬浮提示体系**：段注释 / 物品编号 / 文件路径 / 折叠 | `DocumentFolder\EditorHoverTooltip\*`（9 个，`EditorHoverTooltipManager.cs` **24.4K**） | 有基础（注释数据 hover） | 可补齐 4 类 |
-| A4 | **段内注释行渲染**（注释画进行内） | `DocumentFolder\VisualLineElementGenerators\ScriptCommentLineGenerator.cs` 8.9K | 部分 | |
+| A3 | **悬浮提示体系**：段注释 / 物品编号 / 文件路径 / 折叠 | `DocumentFolder\EditorHoverTooltip\*`（9 个，`EditorHoverTooltipManager.cs` **24.4K**） | **已补 3 类**（2026-10-06）：段注释 / 物品编号 / 文件路径 走 `hoverTooltip` 挂在**正文 token** 上（`CodeEditor.vue` 的 `annotationHover`，复用 `annotationDisplayField`，零后端改动） | 仍缺**折叠提示**（折起占位上的 hover） |
+| A4 | **段内注释行渲染**（注释画进行内） | `DocumentFolder\VisualLineElementGenerators\ScriptCommentLineGenerator.cs` 8.9K | **已有**（2026-10-06）：`CodeEditor.vue` 的 `buildLineDigest` + `LineDigestWidget` —— 光标所在行行尾显示各 token 字段名（数据来自 `CompletionCatalog` 的 `columns[].label`） | 刻意不做"每行都挂"（上千行数据会变噪声）；只对**有列定义的段**生效 |
 | A5 | **同名词高亮 / 长行截断 / 搜索命中行背景标色** | `OffsetColorizers\MarkSameWord.cs`、`VisualLineElementGenerators\TruncateLongLines.cs`、`BackgroundRenderers\SearchResultBackgroundRenderer.cs` | **取消（不做）** | 同名高亮已有（`highlightSelectionMatches()`）；命中标色已有（官方 `cm-searchMatch` + 大文件自绘 2026-10-06）；长行**按用户要求折行、不截断**（2026-09-27 明确） |
 | A6 | **滚动条里标记 + 增强滚动条**（VS 式打点） | `VerticalScrollBarHighlighted\*`、`BackgroundRenderers\EnhancedScrollBar.cs` 6.9K | 无 | |
-| A7 | **行内错误标记服务** | `TextMarker\TextMarkerService.cs` 7K | 有 DoctorPanel / 校验 | 可并入 |
+| A7 | **行内错误标记服务** | `TextMarker\TextMarkerService.cs` 7K | **部分已有**（2026-10-06）：清单查重问题行 → 行底红 + 行号旁红点（`problemsField` / `problemsGutter`，数据由 `EditorPane.vue` 的 `problemsFor()` 喂入）+ 原生 `title` 说明原因 | 通用行级校验**缺后端行号**：Doctor 体检无行号、脚本诊断只在脚本通道 |
 | A8 | **跳转行 / 编辑器内搜索面板** | `Controls\TextEditorFolder\WindowGotoLine.cs`、`SearchPanel.cs` 6.7K | **已有**（2026-10-06） | `Ctrl+G` 跳行 + `Ctrl+F` 段内搜索面板，两编辑器共用 `../searchPanel.ts` 中文文案；**别圈** |
 | A9 | **跨文档搜索管理器** | `DocumentFolder\SearchViewModels\DocumentsSearchManager.cs` 13.1K、`SearchViewModel.cs` 14.6K | 有高级搜索 | 对照 |
 | A10 | 文件路径可点击跳转 | `LinkFolder\FilePathLinkVisualLine.cs` 10.5K | **已有**（Ctrl+单击） | 不重复做 |
