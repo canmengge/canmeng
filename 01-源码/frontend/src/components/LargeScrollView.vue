@@ -163,6 +163,29 @@ const windowAnnotationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+const setFindRanges = StateEffect.define<Range<Decoration>[]>();
+
+/**
+ * 全文查找的命中高亮（2026-10-06）。
+ *
+ * 为什么不能靠"选区"：查找时焦点在查找框里，编辑器是**失焦**状态，且选中的只是命中那几列，
+ * 视觉上等于没有提示（普通编辑器有 `cm-searchMatch` 的底色，大文件窗口没有）。所以自己画：
+ * 窗口内所有命中铺黄底，当前那处用橙底 + 描边。
+ */
+const findRangesField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(setFindRanges)) {
+        deco = Decoration.set(effect.value, true);
+      }
+    }
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 const largeWindowTheme = EditorView.theme({
   // 高度交给内容自己撑开：搜索面板出现时不会把正文顶掉（窗口是顶部锚定的，
   // 向下长出去不会让行号与 spacer 错位）。
@@ -186,6 +209,12 @@ const largeWindowTheme = EditorView.theme({
   ".cm-line": { padding: "0", lineHeight: "20px" },
   ".cm-cursor": { borderLeftWidth: "1px" },
   "&.cm-focused": { outline: "none" },
+  // 全文查找命中高亮（普通编辑器由 cm-searchMatch 提供，大文件窗口没有，只能自己画）
+  ".lsc-find-hit": { backgroundColor: "#ffff0054", borderRadius: "2px" },
+  ".lsc-find-hit-current": {
+    backgroundColor: "#ff6a0054",
+    boxShadow: "inset 0 0 0 1px #ff6a0099",
+  },
   // Ctrl+F 查找面板的中文文案与外观已抽到共享模块：见 ../searchPanel.ts
   // （普通编辑器 CodeEditor 与大文件视图共用同一份定义，不要再往这里加面板样式）
 });
@@ -218,6 +247,8 @@ let pendingMatch: FileSearchMatch | null = null;
 
 function openFind(): void {
   findOpen.value = true;
+  // 重新打开时把已有关键词的命中底色补回来（关掉时会清干净）
+  refreshFindDecorations();
   void nextTick(() => {
     findInput.value?.focus();
     findInput.value?.select();
@@ -227,6 +258,7 @@ function openFind(): void {
 function closeFind(): void {
   findOpen.value = false;
   pendingMatch = null;
+  if (cmView) cmView.dispatch({ effects: setFindRanges.of([]) });
   cmView?.focus();
 }
 
@@ -240,6 +272,7 @@ async function runFind(): Promise<void> {
     findCursor.value = -1;
     findError.value = "";
     findLoading.value = false;
+    refreshFindDecorations();
     return;
   }
   findLoading.value = true;
@@ -267,6 +300,7 @@ async function runFind(): Promise<void> {
     findTruncated.value = false;
     findCursor.value = -1;
     findError.value = String(error?.message ?? error);
+    refreshFindDecorations();
   } finally {
     if (request === findRequest) findLoading.value = false;
   }
@@ -289,11 +323,39 @@ function stepFind(delta: number): void {
   revealMatch(findMatches.value[findCursor.value]);
 }
 
+/** 把当前窗口内的命中画成底色（黄=全部命中，橙=当前这处）。 */
+function refreshFindDecorations(): void {
+  if (!cmView) return;
+  const ranges: Range<Decoration>[] = [];
+  const current = findCursor.value >= 0 ? findMatches.value[findCursor.value] : null;
+  if (findQuery.value.trim() !== "" && findMatches.value.length > 0) {
+    const doc = cmView.state.doc;
+    for (const match of findMatches.value) {
+      const local = match.line - winStart.value + 1;
+      if (local < 1 || local > doc.lines) continue; // 不在当前窗口里，等它滚进来
+      const line = doc.line(local);
+      const from = Math.min(line.to, line.from + match.column);
+      const to = Math.min(line.to, from + match.length);
+      if (to <= from) continue;
+      const isCurrent =
+        current !== null && match.line === current.line && match.column === current.column;
+      ranges.push(
+        Decoration.mark({
+          class: isCurrent ? "lsc-find-hit lsc-find-hit-current" : "lsc-find-hit",
+        }).range(from, to)
+      );
+    }
+  }
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  cmView.dispatch({ effects: setFindRanges.of(ranges) });
+}
+
 /** 跳到某处命中：先换窗口，窗口到位后再选中它（选中时机见 applyPendingMatch）。 */
 function revealMatch(match: FileSearchMatch): void {
   pendingMatch = match;
   void gotoLine(match.line);
   applyPendingMatch();
+  refreshFindDecorations();
 }
 
 /**
@@ -320,6 +382,8 @@ function applyPendingMatch(): void {
 
 watch([winStart, winText], () => {
   applyPendingMatch();
+  // 换窗口后必须重画：命中位置是相对当前窗口算的
+  refreshFindDecorations();
 });
 
 function makeExtensions(): Extension[] {
@@ -337,6 +401,7 @@ function makeExtensions(): Extension[] {
     searchPanelPhrases,
     searchPanelTheme,
     windowAnnotationField,
+    findRangesField,
     // PVF 语法着色（与普通编辑器同一套语言与高亮规则）
     pvfLanguage.extension,
     pvfHighlighting,
