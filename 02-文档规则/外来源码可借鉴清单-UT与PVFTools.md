@@ -26,14 +26,14 @@
 
 | # | 能力 | 来源文件 | 我们现状 | 备注 |
 | --- | --- | --- | --- | --- |
-| A1 | **脚本代码补全 + 参数提示（Insight/Overload）+ 用户自定义补全数据** | `DocumentFolder\CodeCompletion\*`（13 个：`CompletionList.cs` 9.9K、`WindowCompletion.cs` 11.8K、`InsightWindow.cs`、`OverloadInsightWindow.cs`、`NutCodeCompletion.cs`、`ScriptCodeCompletion.cs`、`WindowAddCodeCompletionData*.cs`） | 待确认（`CodeEditor.vue` 44K） | 值高、纯前端 |
+| A1 | **脚本代码补全 + 参数提示（Insight/Overload）+ 用户自定义补全数据** | `DocumentFolder\CodeCompletion\*`（13 个：`CompletionList.cs` 9.9K、`WindowCompletion.cs` 11.8K、`InsightWindow.cs`、`OverloadInsightWindow.cs`、`NutCodeCompletion.cs`、`ScriptCodeCompletion.cs`、`WindowAddCodeCompletionData*.cs`） | **部分已有**：段名补全 + 脚本补全已实现（`CodeEditor.vue` 的 `pvfCompletionSource` / `scriptCompletionSource`，2026-10-06） | 只剩"合法取值提示 + 参数提示（Insight/Overload）+ 用户自定义补全数据"，需后端下发注释/枚举 |
 | A2 | **代码折叠（按段 / 括号）+ 折叠边栏 + 折叠引导线** | `DocumentFolder\Foldings\*`（10 个：`FoldingStrategyBase.cs` 13.5K、`FoldingMargin.cs` 13K、`TabFoldingStrategy.cs`、`BraceFoldingStrategy.cs`、`FoldingGuideLines.cs`） | 待确认 | 值高 |
 | A3 | **悬浮提示体系**：段注释 / 物品编号 / 文件路径 / 折叠 | `DocumentFolder\EditorHoverTooltip\*`（9 个，`EditorHoverTooltipManager.cs` **24.4K**） | 有基础（注释数据 hover） | 可补齐 4 类 |
 | A4 | **段内注释行渲染**（注释画进行内） | `DocumentFolder\VisualLineElementGenerators\ScriptCommentLineGenerator.cs` 8.9K | 部分 | |
-| A5 | **同名词高亮 / 长行截断 / 搜索命中行背景标色** | `OffsetColorizers\MarkSameWord.cs`、`VisualLineElementGenerators\TruncateLongLines.cs`、`BackgroundRenderers\SearchResultBackgroundRenderer.cs` | 待确认 | 小快灵 |
+| A5 | **同名词高亮 / 长行截断 / 搜索命中行背景标色** | `OffsetColorizers\MarkSameWord.cs`、`VisualLineElementGenerators\TruncateLongLines.cs`、`BackgroundRenderers\SearchResultBackgroundRenderer.cs` | **取消（不做）** | 同名高亮已有（`highlightSelectionMatches()`）；命中标色已有（官方 `cm-searchMatch` + 大文件自绘 2026-10-06）；长行**按用户要求折行、不截断**（2026-09-27 明确） |
 | A6 | **滚动条里标记 + 增强滚动条**（VS 式打点） | `VerticalScrollBarHighlighted\*`、`BackgroundRenderers\EnhancedScrollBar.cs` 6.9K | 无 | |
 | A7 | **行内错误标记服务** | `TextMarker\TextMarkerService.cs` 7K | 有 DoctorPanel / 校验 | 可并入 |
-| A8 | **跳转行 / 编辑器内搜索面板** | `Controls\TextEditorFolder\WindowGotoLine.cs`、`SearchPanel.cs` 6.7K | 跳转行待确认 | 最小成本 |
+| A8 | **跳转行 / 编辑器内搜索面板** | `Controls\TextEditorFolder\WindowGotoLine.cs`、`SearchPanel.cs` 6.7K | **已有**（2026-10-06） | `Ctrl+G` 跳行 + `Ctrl+F` 段内搜索面板，两编辑器共用 `../searchPanel.ts` 中文文案；**别圈** |
 | A9 | **跨文档搜索管理器** | `DocumentFolder\SearchViewModels\DocumentsSearchManager.cs` 13.1K、`SearchViewModel.cs` 14.6K | 有高级搜索 | 对照 |
 | A10 | 文件路径可点击跳转 | `LinkFolder\FilePathLinkVisualLine.cs` 10.5K | **已有**（Ctrl+单击） | 不重复做 |
 | A11 | **语法高亮定义（36 份 `.xshd`）** | `SourceLibraries\HL\*.xshd` | 有 `pvfLanguage.ts` / `luaLanguage.ts` | 可对照补关键字 |
