@@ -837,6 +837,12 @@ const rowEditValue = ref("");
 // 交互与其它模块一致：先排队，点「保存改动」才写进归档内存。
 // 标记：pvfShopTabModule_20261006
 const shopTabName = ref("");
+
+/** 添加类操作的展开状态：一次只展开一组输入，工具条保持干净（功能不减）。 */
+const addMode = ref<"" | "item" | "tab">("");
+function toggleAddMode(mode: "item" | "tab"): void {
+  addMode.value = addMode.value === mode ? "" : mode;
+}
 const shopTabFirstItem = ref("");
 
 /** 当前段块的唯一一列是不是"物品"（ref 含 equipment / stackable）—— 决定显示不显示「添加物品」。 */
@@ -2005,10 +2011,11 @@ function resetColumnWidths(): void {
                 title="这个文件里同名的段出现了多块（如商店的 7 个页签），在这里切换"
                 @update:value="onBlockSelect"
               />
-              <span class="fv-section-meta">
-                {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列 ·
-                单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 ·
-                带 🔗 的格双击查看关联列表
+              <span
+                class="fv-section-meta"
+                title="单击选行（Ctrl 多选 / Shift 连选）· 双击格改值 · 拖表头右边缘调列宽 · 带 🔗 的格双击查看关联列表"
+              >
+                {{ mainSection.rows.length }} 行 × {{ mainSection.columns.length }} 列
               </span>
             </div>
             <ul v-if="mainSection.warnings?.length" class="fv-warnings">
@@ -2019,7 +2026,7 @@ function resetColumnWidths(): void {
 
             <!-- 搜索 + 批量改（都作用在下方这张主表上） -->
             <div class="fv-tools">
-              <span class="fv-tools-label">搜索</span>
+
               <NSelect
                 v-model:value="searchRef"
                 :options="searchScopes.map((scope) => ({ label: scope.label, value: scope.ref }))"
@@ -2059,7 +2066,7 @@ function resetColumnWidths(): void {
                 "
                 @click="searchExact = !searchExact"
               >
-                ◎ 精确
+                ◎
               </NButton>
               <span v-if="searchActive" class="fv-tools-hit">
                 命中 {{ searchHits.size }} / {{ mainSection.rows.length }} 行
@@ -2090,12 +2097,23 @@ function resetColumnWidths(): void {
                    交互模型与独立掉落**完全一致**（用户 2026-10-06 要求）：先排队（表格里看得到），
                    点「保存改动」才写进归档内存；后端方法各用各的（标记 pvfRowEditQueue_20261006）。 -->
               <template v-else>
-                <template v-if="canAddItem">
-                  <span class="fv-label">物品</span>
+                <!-- 2026-10-06 精简：原来两个输入框 + 两个按钮常驻，工具条太挤。
+                     改成"按钮先点开、输入框才出现"，一次只展开一组（功能一个不少）。 -->
+                <NButton
+                  v-if="canAddItem"
+                  size="tiny"
+                  :type="addMode === 'item' ? 'primary' : 'default'"
+                  :ghost="addMode !== 'item'"
+                  title="往当前条目（当前页）末尾追加一个物品"
+                  @click="toggleAddMode('item')"
+                >
+                  ＋ 添加物品
+                </NButton>
+                <template v-if="canAddItem && addMode === 'item'">
                   <NInput
                     v-model:value="rowEditValue"
                     size="small"
-                    style="width: 140px"
+                    style="width: 150px"
                     placeholder="物品编号，如 14400"
                     @keyup.enter="queueRowInsert"
                   />
@@ -2106,27 +2124,35 @@ function resetColumnWidths(): void {
                     size="tiny"
                     type="primary"
                     :disabled="rowEditValue.trim() === ''"
-                    title="加入待保存：追加到当前段块（当前页）末尾。点上方「保存改动」才写进归档内存"
+                    title="加入待保存；点「保存改动」才写进归档内存"
                     @click="queueRowInsert"
                   >
-                    添加物品
+                    加入待保存
                   </NButton>
                 </template>
-                <template v-if="isShopLike">
-                  <span class="fv-label">新条目</span>
+                <NButton
+                  v-if="isShopLike"
+                  size="tiny"
+                  :type="addMode === 'tab' ? 'primary' : 'default'"
+                  :ghost="addMode !== 'tab'"
+                  title="新建一个商店条目：[tab] + `条目名`（反引号对）+ 含首个物品的 [item list]"
+                  @click="toggleAddMode('tab')"
+                >
+                  ＋ 新建条目
+                </NButton>
+                <template v-if="isShopLike && addMode === 'tab'">
                   <NInput
                     v-model:value="shopTabName"
                     size="small"
-                    style="width: 110px"
+                    style="width: 130px"
                     placeholder="条目名，如 特色物品"
                     @keyup.enter="queueShopTab"
                   />
-                  <span class="fv-label">首个物品</span>
                   <NInput
                     v-model:value="shopTabFirstItem"
                     size="small"
-                    style="width: 130px"
-                    placeholder="物品编号，如 756000007"
+                    style="width: 140px"
+                    placeholder="首个物品编号，如 756000007"
                     @keyup.enter="queueShopTab"
                   />
                   <span v-if="rowEditItemName(shopTabFirstItem)" class="fv-drop-name">
@@ -2136,10 +2162,10 @@ function resetColumnWidths(): void {
                     size="tiny"
                     type="primary"
                     :disabled="shopTabName.trim() === '' || shopTabFirstItem.trim() === ''"
-                    title="新建一个商店条目：`[tab]` + `条目名`（反引号对）+ 一个含首个物品的 `[item list]`。先排队，点上方「保存改动」才写进归档内存"
+                    title="加入待保存；点「保存改动」才写进归档内存"
                     @click="queueShopTab"
                   >
-                    新建商店条目
+                    加入待保存
                   </NButton>
                 </template>
                 <NButton
