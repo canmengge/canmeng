@@ -189,12 +189,49 @@ async function openItem(item: SearchItem): Promise<void> {
     if (explorer.mode === "search") {
       explorer.clearSearch();
     }
-    await editor.openFile(item.fileIndex);
+    // A9：不再只是"打开文件"——直接把编辑器**滚到并高亮命中内容**（needles 依次尝试，
+    // 全部落空才退化为"只打开文件"；见 stores/editor.ts 的 revealInFile）。
+    // 标记：pvfAdvancedSearchStepA9_20261006
+    await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
     await explorer.revealPath(item.path);
     search.close();
   } catch (e: any) {
     error.value = String(e?.message ?? e);
   }
+}
+
+/**
+ * A9「跨文档跳下一处 / 上一处」。
+ *
+ * 与 `openItem` 刻意分开：`openItem` 会**关闭搜索框**（定位完就该看文件），
+ * 而连续查看时必须**留着面板**，否则每跳一次就要重新搜一遍。
+ * 行光标复用既有的 `activeKey`（单击行即设），到末尾**环绕**。
+ * 快捷键：F3 = 下一处，Shift+F3 = 上一处（与主流编辑器一致）。
+ */
+async function jumpTo(index: number): Promise<void> {
+  const item = hits.value[index];
+  if (!item || item.fileIndex < 0) return;
+  activeKey.value = item.key;
+  try {
+    await editor.revealInFile(item.fileIndex, [query.value, item.label, item.name, item.id]);
+    await explorer.revealPath(item.path);
+  } catch (e: any) {
+    error.value = String(e?.message ?? e);
+  }
+}
+
+async function stepHit(delta: number): Promise<void> {
+  const total = hits.value.length;
+  if (total === 0) return;
+  const current = hits.value.findIndex((item) => item.key === activeKey.value);
+  const next = current < 0 ? (delta > 0 ? 0 : total - 1) : (current + delta + total) % total;
+  await jumpTo(next);
+}
+
+function onResultsKeydown(event: KeyboardEvent): void {
+  if (event.key !== "F3") return;
+  event.preventDefault();
+  void stepHit(event.shiftKey ? -1 : 1);
 }
 
 function onRowKeydown(event: KeyboardEvent, item: SearchItem): void {
@@ -300,7 +337,7 @@ function buildSearchIndex(): void {
         {{ error }}
       </NAlert>
 
-      <div ref="listEl" class="as-results">
+      <div ref="listEl" class="as-results" @keydown="onResultsKeydown">
         <NSpin :show="searching && hits.length === 0">
           <NEmpty
             v-if="hits.length === 0 && !searching"
@@ -360,7 +397,7 @@ function buildSearchIndex(): void {
     <template #footer>
       <div class="as-footer">
         <span class="as-footer-hint">
-          {{ viewMode === "locate" ? "双击命中项打开文件并定位到左树；通配符 * 匹配任意字符、? 匹配单个字符" : "勾选文件后点「添加到视图」，添加结果在右侧搜索视窗查看" }}
+          {{ viewMode === "locate" ? "双击命中项：打开文件并定位到命中内容；F3 / Shift+F3：跳到下一处 / 上一处（不关面板）；通配符 * 匹配任意字符、? 匹配单个字符" : "勾选文件后点「添加到视图」，添加结果在右侧搜索视窗查看" }}
         </span>
         <div class="as-footer-actions">
           <NButton size="small" quaternary :disabled="searching || (!searched && hits.length === 0)" @click="clearAll">
